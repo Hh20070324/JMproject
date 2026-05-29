@@ -1,0 +1,16 @@
+# ============ 下载目录配置 ============
+dir_rule:
+  # 下载到项目根目录下，按 [本子编号_本子名] 命名子目录
+  base_dir: .
+  rule: Bd_Aid_Pname
+
+# ============ 下载配置 ============
+download:
+  # 多线程加速（同时下载 16 张图片）
+  threading:
+    batch_count: 16
+  # 图片格式
+  image:
+    suffix: .jpg
+  # 下载失败自动重试
+  retry_times: 3

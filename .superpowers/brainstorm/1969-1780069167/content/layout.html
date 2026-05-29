@@ -1,0 +1,36 @@
+<h2>单页布局怎么安排？</h2>
+<p class="subtitle">选一个你觉得最顺手的信息结构</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>📋 队列式</h3>
+      <p>顶部是输入区，下方是大大的下载队列列表，每个条目显示车号→标题→进度条→状态。重点全在队列管理上。</p>
+      <div style="margin-top:12px;border:1px solid #e0d4d4;border-radius:8px;padding:10px 14px;background:#fff5f5;font-size:13px;">
+        <div style="font-weight:600;margin-bottom:8px;color:#d46a6a;">📌 输入区</div>
+        <div style="border:1px dashed #e0c0c0;border-radius:4px;padding:6px;text-align:center;color:#999;margin-bottom:8px;">+ 输入车号...</div>
+        <div style="font-weight:600;margin-bottom:4px;color:#d46a6a;">📋 下载队列</div>
+        <div style="border:1px solid #f0d0d0;border-radius:4px;padding:6px 10px;margin-bottom:4px;background:#fff;">123456 ━━━━━━ 45%</div>
+        <div style="border:1px solid #f0d0d0;border-radius:4px;padding:6px 10px;margin-bottom:4px;background:#fff;">789012 ━━━━━━ 78%</div>
+        <div style="border:1px solid #d4e8d4;border-radius:4px;padding:6px 10px;background:#f0fff0;">345678 ✅ 已完成</div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>🗂 标签分屏式</h3>
+      <p>左侧/顶部标签切换：「下载中」「已完成」「PDF打包」，互不干扰。每个标签页内是独立列表。</p>
+      <div style="margin-top:12px;border:1px solid #e0d4d4;border-radius:8px;padding:10px 14px;background:#fff5f5;font-size:13px;">
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <span style="background:#f8c0c0;color:#fff;padding:3px 10px;border-radius:4px;font-size:12px;">下载中</span>
+          <span style="background:#fff;color:#999;padding:3px 10px;border-radius:4px;font-size:12px;border:1px solid #ddd;">已完成</span>
+          <span style="background:#fff;color:#999;padding:3px 10px;border-radius:4px;font-size:12px;border:1px solid #ddd;">PDF</span>
+        </div>
+        <div style="border:1px solid #f0d0d0;border-radius:4px;padding:6px 10px;margin-bottom:4px;background:#fff;">123456 ━━━━━━ 45%</div>
+        <div style="border:1px solid #f0d0d0;border-radius:4px;padding:6px 10px;background:#fff;">789012 ━━━━━━ 78%</div>
+      </div>
+    </div>
+  </div>
+</div>
