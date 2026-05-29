@@ -1,11 +1,8 @@
-import os
-import sys
 import threading
 import traceback
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
-os.chdir(str(PROJECT_ROOT))
 
 import jmcomic
 from jpg2pdf import album_to_pdf
@@ -20,7 +17,12 @@ class DownloadWorker:
         on_complete(album_id, pdf_path)
         on_error(album_id, error_message)
         on_info(album_id, title, cover_url)
+
+    Note: stop() sets a flag checked between download phases, but cannot
+    interrupt an in-progress jmcomic.download_album() call mid-stream.
     """
+
+    PDF_PCT = 95  # progress value indicating "packing PDF" phase
 
     def __init__(
         self,
@@ -37,6 +39,7 @@ class DownloadWorker:
         self.on_info = on_info or (lambda *a: None)
         self._stop_flag = threading.Event()
         self._thread = None
+        self._total_photos = 0
 
         # Output directories
         self.pictures_dir = PROJECT_ROOT / "Pictures"
@@ -44,53 +47,63 @@ class DownloadWorker:
         self.pictures_dir.mkdir(parents=True, exist_ok=True)
         self.pdfs_dir.mkdir(parents=True, exist_ok=True)
 
+    def _make_option(self):
+        """Create a jmcomic option from the project's option.yml."""
+        return jmcomic.create_option_by_file(str(PROJECT_ROOT / "option.yml"))
+
     def fetch_info(self):
-        """Fetch album title and cover before downloading. Returns (title, cover_url) or (None, None)."""
+        """
+        Fetch album title, cover URL, and total photo count.
+        Returns (title, cover_url, total_photos) or (None, None, 0) on failure.
+        """
         try:
-            option = jmcomic.create_option_by_file(str(PROJECT_ROOT / "option.yml"))
+            option = self._make_option()
             client = option.build_jm_client()
             album = client.get_album_detail(self.album_id)
             title = album.title if hasattr(album, "title") else album.name
-            cover_path = None
-            try:
-                cover_path = album.cover if hasattr(album, "cover") else None
-            except Exception:
-                cover_path = None
-            return (title, cover_path)
-        except Exception as e:
-            return (None, None)
+            cover_url = album.cover if hasattr(album, "cover") else None
+            total = len(album) if hasattr(album, "__len__") else 0
+            return (title, cover_url, total)
+        except Exception:
+            return (None, None, 0)
 
     def run(self):
         """Main download flow, designed to run in a thread."""
         try:
             # Step 1: Fetch info
-            title, cover = self.fetch_info()
+            title, cover, total = self.fetch_info()
+            self._total_photos = total
             self.on_info(self.album_id, title, cover)
 
             if self._stop_flag.is_set():
                 return
 
             # Step 2: Configure option
-            option = jmcomic.create_option_by_file(str(PROJECT_ROOT / "option.yml"))
+            option = self._make_option()
             album_dir = self.pictures_dir / self.album_id
             album_dir.mkdir(parents=True, exist_ok=True)
 
             option.dir_rule.base_dir = str(self.pictures_dir)
 
             # Step 3: Download with progress callback
-            downloaded_count = [0]
+            downloaded_count = 0
 
             def download_callback(photo, downloader):
-                downloaded_count[0] += 1
-                pct = min(99, 5 + downloaded_count[0] % 90)
-                chapter = photo.from_album if hasattr(photo, "from_album") else ""
-                if hasattr(chapter, "title"):
-                    chapter = chapter.title
+                nonlocal downloaded_count
+                downloaded_count += 1
+                if self._total_photos > 0:
+                    pct = min(94, int(downloaded_count / self._total_photos * 94))
+                else:
+                    pct = min(94, 5 + int(downloaded_count / 40 * 89))
+
+                chapter = ""
+                if hasattr(photo, "from_album") and photo.from_album:
+                    chapter = getattr(photo.from_album, "title", "") or ""
                 self.on_progress(
                     self.album_id,
                     pct,
-                    str(chapter) if chapter else "",
-                    f"{downloaded_count[0]}",
+                    str(chapter),
+                    f"{downloaded_count}/{self._total_photos or '?'}",
                 )
 
             jmcomic.download_album(
@@ -103,12 +116,11 @@ class DownloadWorker:
                 return
 
             # Step 4: Pack PDF
-            self.on_progress(self.album_id, 95, "打包 PDF", "")
+            self.on_progress(self.album_id, self.PDF_PCT, "打包 PDF", "")
             pdf_path = album_to_pdf(str(album_dir), str(self.pdfs_dir))
             self.on_complete(self.album_id, pdf_path)
 
         except Exception as e:
-            traceback.print_exc()
             self.on_error(self.album_id, str(e))
 
     def start(self):
@@ -118,5 +130,5 @@ class DownloadWorker:
         return self._thread
 
     def stop(self):
-        """Request graceful stop."""
+        """Request graceful stop (checked between phases, not mid-download)."""
         self._stop_flag.set()
