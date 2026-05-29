@@ -253,6 +253,7 @@ def api_events():
 
 def main():
     port = 58080
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(f"🌸 JM 漫画下载器 v2 启动中...")
     print(f"📂 Pictures 目录: {PROJECT_ROOT / 'Pictures'}")
     print(f"📂 PDFs 目录: {PROJECT_ROOT / 'PDFs'}")
