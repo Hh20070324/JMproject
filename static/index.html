@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JM 漫画下载器</title>
+<style>
+/* ---- Reset & Base ---- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #fef9f4;
+  --card-bg: #ffffff;
+  --primary: #e8a0b4;
+  --primary-dark: #d4859b;
+  --accent: #f2c4d0;
+  --text: #4a3f47;
+  --text-light: #8c7d85;
+  --success: #7bc4a0;
+  --danger: #e07b7b;
+  --border: #f0e0e0;
+  --shadow: 0 2px 12px rgba(0,0,0,0.06);
+  --radius: 12px;
+}
+
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Header ---- */
+.header {
+  background: linear-gradient(135deg, #f8d0dc 0%, #f0b8c8 50%, #e8a0b4 100%);
+  padding: 18px 28px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(232,160,180,0.3);
+}
+
+.header-icon { font-size: 28px; }
+
+.header h1 { font-size: 20px; font-weight: 600; letter-spacing: 0.5px; }
+
+/* ---- Main Container ---- */
+.container {
+  max-width: 800px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 20px;
+  flex: 1;
+}
+
+/* ---- Input Section ---- */
+.input-section {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.input-section input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+
+.input-section input:focus {
+  border-color: var(--primary);
+}
+
+.btn {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.btn-retry { background: #fff0d0; color: #b8860b; }
+.btn-retry:hover { background: #ffe8a0; }
+.btn-remove { background: #f8e0e0; color: var(--danger); }
+.btn-remove:hover { background: #f5d0d0; }
+
+/* ---- Queue Section ---- */
+.queue-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-light);
+}
+
+.empty-state .empty-icon { font-size: 48px; margin-bottom: 12px; }
+
+.empty-state p { font-size: 15px; }
+
+/* ---- Task Card ---- */
+.task-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  transition: all 0.3s;
+  border-left: 4px solid transparent;
+  position: relative;
+}
+
+.task-card.status-pending { border-left-color: #d0d0d0; }
+.task-card.status-fetching { border-left-color: #f0c040; }
+.task-card.status-downloading { border-left-color: var(--primary); }
+.task-card.status-completed { border-left-color: var(--success); background: #f6fdf8; }
+.task-card.status-failed { border-left-color: var(--danger); background: #fdf6f6; }
+
+.task-cover {
+  width: 60px;
+  height: 60px;
+  border-radius: 6px;
+  background: var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  overflow: hidden;
+}
+
+.task-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.task-info { flex: 1; min-width: 0; }
+
+.task-album-id {
+  font-size: 12px;
+  color: var(--text-light);
+  margin-bottom: 2px;
+  font-weight: 500;
+}
+
+.task-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Progress Bar ---- */
+.progress-bar-wrap {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+  background: var(--primary);
+}
+
+.status-completed .progress-bar-fill { background: var(--success); }
+.status-failed .progress-bar-fill { background: var(--danger); }
+
+.progress-detail {
+  font-size: 11px;
+  color: var(--text-light);
+}
+
+.task-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ---- Status Badge ---- */
+.status-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.badge-pending { background: #eee; color: #999; }
+.badge-fetching { background: #fff5d0; color: #b8860b; }
+.badge-downloading { background: #fde8ef; color: #c05070; }
+.badge-completed { background: #e0f5ea; color: #4a9a6e; }
+.badge-failed { background: #fce0e0; color: #c05050; }
+
+/* ---- Stats Bar ---- */
+.stats-bar {
+  margin-top: 20px;
+  padding: 12px 16px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 20px;
+  font-size: 13px;
+  color: var(--text-light);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.stats-bar span { white-space: nowrap; }
+
+.stats-bar .count { font-weight: 700; color: var(--text); }
+
+/* ---- Footer ---- */
+.footer {
+  text-align: center;
+  padding: 12px;
+  font-size: 11px;
+  color: var(--text-light);
+  opacity: 0.7;
+}
+
+/* ---- Pulse animation for downloading ---- */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.status-downloading .task-cover { animation: pulse 1.5s ease-in-out infinite; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="header-icon">🌸</span>
+  <h1>JM 漫画下载器</h1>
+</div>
+
+<div class="container">
+
+  <div class="input-section">
+    <input type="text" id="input-album" placeholder="输入禁漫车号，回车添加..." autofocus>
+    <button class="btn btn-primary" id="btn-add">添加</button>
+  </div>
+
+  <div class="queue-section" id="queue">
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">📭</div>
+      <p>还没有下载任务，输入车号开始吧~</p>
+    </div>
+  </div>
+
+  <div class="stats-bar" id="stats-bar" style="display:none;">
+    <span>⏳ 等待: <span class="count" id="stat-pending">0</span></span>
+    <span>📥 下载中: <span class="count" id="stat-downloading">0</span></span>
+    <span>✅ 完成: <span class="count" id="stat-completed">0</span></span>
+    <span>❌ 失败: <span class="count" id="stat-failed">0</span></span>
+  </div>
+
+</div>
+
+<div class="footer">JM 漫画下载器 v2 · Powered by jmcomic</div>
+
+<script>
+// ---- State ----
+let tasks = [];
+
+// ---- DOM ----
+const inputEl = document.getElementById("input-album");
+const btnAdd = document.getElementById("btn-add");
+const queueEl = document.getElementById("queue");
+const emptyState = document.getElementById("empty-state");
+const statsBar = document.getElementById("stats-bar");
+
+// ---- SSE Connection ----
+const evtSource = new EventSource("/api/events");
+
+evtSource.addEventListener("init", (e) => {
+  tasks = JSON.parse(e.data);
+  render();
+});
+
+evtSource.addEventListener("message", (e) => {
+  const event = JSON.parse(e.data);
+  handleEvent(event);
+});
+
+evtSource.onerror = () => {
+  console.warn("SSE connection lost, will auto-reconnect...");
+};
+
+// ---- Event Handlers ----
+function handleEvent(event)
+{
+  switch (event.type)
+  {
+    case "added":
+      tasks.push({
+        id: event.id,
+        album_id: event.album_id,
+        title: null,
+        cover: null,
+        status: "pending",
+        progress: 0,
+        chapter: "",
+        error: null,
+        pdf: null,
+      });
+      break;
+
+    case "info":
+      updateTask(event.id, {
+        title: event.title,
+        cover: event.cover,
+        status: "downloading",
+      });
+      break;
+
+    case "progress":
+      updateTask(event.id, {
+        progress: event.percent,
+        chapter: event.chapter,
+        status: "downloading",
+      });
+      break;
+
+    case "completed":
+      updateTask(event.id, {
+        status: "completed",
+        progress: 100,
+        pdf: event.pdf,
+      });
+      break;
+
+    case "failed":
+      updateTask(event.id, {
+        status: "failed",
+        error: event.error,
+      });
+      break;
+
+    case "removed":
+      tasks = tasks.filter((t) => t.id !== event.id);
+      break;
+
+    case "retry":
+      updateTask(event.id, {
+        status: "pending",
+        error: null,
+        progress: 0,
+      });
+      break;
+  }
+  render();
+}
+
+function updateTask(id, patch)
+{
+  const t = tasks.find((t) => t.id === id);
+  if (t)
+  {
+    Object.assign(t, patch);
+  }
+}
+
+// ---- Actions ----
+function addAlbum()
+{
+  const albumId = inputEl.value.trim();
+  if (!albumId)
+  {
+    return;
+  }
+
+  fetch("/api/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ album_id: albumId }),
+  })
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.error)
+      {
+        alert(data.error);
+      }
+      else
+      {
+        inputEl.value = "";
+      }
+    })
+    .catch((err) => {
+      alert("添加失败: " + err.message);
+    });
+
+  inputEl.value = "";
+  inputEl.focus();
+}
+
+function removeTask(id)
+{
+  fetch("/api/remove/" + id, { method: "DELETE" }).catch(console.error);
+}
+
+function retryTask(id)
+{
+  fetch("/api/retry/" + id, { method: "POST" }).catch(console.error);
+}
+
+// ---- Render ----
+function getStatusClass(status)
+{
+  const map = {
+    pending: "badge-pending",
+    fetching: "badge-fetching",
+    downloading: "badge-downloading",
+    completed: "badge-completed",
+    failed: "badge-failed",
+  };
+  return map[status] || "";
+}
+
+function getStatusText(status)
+{
+  const map = {
+    pending: "等待中",
+    fetching: "查询中",
+    downloading: "下载中",
+    completed: "已完成",
+    failed: "失败",
+  };
+  return map[status] || status;
+}
+
+function render()
+{
+  if (tasks.length === 0)
+  {
+    emptyState.style.display = "";
+    statsBar.style.display = "none";
+  }
+  else
+  {
+    emptyState.style.display = "none";
+    statsBar.style.display = "";
+  }
+
+  // Stats
+  const pending = tasks.filter((t) => t.status === "pending").length;
+  const downloading = tasks.filter((t) =>
+    ["downloading", "fetching"].includes(t.status)
+  ).length;
+  const completed = tasks.filter((t) => t.status === "completed").length;
+  const failed = tasks.filter((t) => t.status === "failed").length;
+  document.getElementById("stat-pending").textContent = pending;
+  document.getElementById("stat-downloading").textContent = downloading;
+  document.getElementById("stat-completed").textContent = completed;
+  document.getElementById("stat-failed").textContent = failed;
+
+  // Cards
+  queueEl.innerHTML = tasks
+    .map(
+      (t) => `
+    <div class="task-card status-${t.status}">
+      <div class="task-cover">
+        ${t.cover ? `<img src="${t.cover}" alt="" onerror="this.parentElement.textContent='📖'">` : "📖"}
+      </div>
+      <div class="task-info">
+        <div class="task-album-id">#${t.album_id}</div>
+        <div class="task-title">${t.title || "查询中..."}</div>
+        ${t.status !== "failed" ? `
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" style="width:${t.progress}%"></div>
+        </div>
+        ` : ""}
+        <div class="progress-detail">
+          <span class="status-badge ${getStatusClass(t.status)}">${getStatusText(t.status)}</span>
+          ${t.chapter ? ` · ${t.chapter}` : ""}
+          ${t.status === "completed" ? " · ✅ PDF 已生成" : ""}
+          ${t.status === "failed" ? ` · ${t.error || "未知错误"}` : ""}
+        </div>
+      </div>
+      <div class="task-actions">
+        ${t.status === "failed" ? `<button class="btn btn-sm btn-retry" onclick="retryTask('${t.id}')">重试</button>` : ""}
+        ${t.status === "completed" || t.status === "failed" ? `<button class="btn btn-sm btn-remove" onclick="removeTask('${t.id}')">移除</button>` : ""}
+      </div>
+    </div>
+  `
+    )
+    .join("");
+
+  if (tasks.length === 0)
+  {
+    queueEl.innerHTML = `
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">📭</div>
+        <p>还没有下载任务，输入车号开始吧~</p>
+      </div>
+    `;
+  }
+}
+
+// ---- Bind Events ----
+btnAdd.addEventListener("click", addAlbum);
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter")
+  {
+    addAlbum();
+  }
+});
+
+// Initial render
+render();
+</script>
+</body>
+</html>
