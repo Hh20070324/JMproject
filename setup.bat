@@ -24,9 +24,9 @@ python --version
 echo.
 
 :: 安装依赖
-echo 正在安装依赖包 (jmcomic + Pillow) ...
+echo 正在安装依赖包 (jmcomic + Pillow + Flask) ...
 echo.
-python -m pip install jmcomic Pillow -U
+python -m pip install jmcomic Pillow Flask -U
 
 if errorlevel 1 (
     echo.
