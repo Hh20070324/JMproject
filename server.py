@@ -18,20 +18,18 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 # ---- Queue State ----
 _task_lock = threading.Lock()
 _tasks: list[dict] = []
-_events: list[dict] = []
 _active_workers: dict[str, DownloadWorker] = {}
 MAX_CONCURRENT = 2
 
 # ---- SSE Helpers ----
+_sse_lock = threading.Lock()
 _sse_listeners: list[queue.Queue] = []
 
 
 def broadcast_event(event: dict):
-    global _events
-    _events.append(event)
-    if len(_events) > 500:
-        _events = _events[-500:]
-    for q in _sse_listeners:
+    with _sse_lock:
+        listeners = list(_sse_listeners)
+    for q in listeners:
         try:
             q.put_nowait(event)
         except queue.Full:
@@ -39,11 +37,11 @@ def broadcast_event(event: dict):
 
 
 def _schedule_next():
-    active_count = len([t for t in _tasks if t["status"] in ("fetching", "downloading")])
-    if active_count >= MAX_CONCURRENT:
-        return
-
     with _task_lock:
+        active_count = len([t for t in _tasks if t["status"] in ("fetching", "downloading")])
+        if active_count >= MAX_CONCURRENT:
+            return
+
         for t in _tasks:
             if t["status"] == "pending":
                 t["status"] = "fetching"
@@ -63,12 +61,19 @@ def _schedule_next():
 
     with _task_lock:
         _active_workers[task_id] = worker
-        for t in _tasks:
-            if t["id"] == task_id:
-                t["status"] = "fetching"
-                break
 
-    worker.start()
+    try:
+        worker.start()
+    except Exception as e:
+        with _task_lock:
+            _active_workers.pop(task_id, None)
+            for t in _tasks:
+                if t["id"] == task_id:
+                    t["status"] = "failed"
+                    t["error"] = f"启动失败: {e}"
+                    break
+        broadcast_event({"type": "failed", "id": task_id, "error": str(e)})
+        _schedule_next()
 
 
 def _on_info(task_id: str, title: str, cover: str):
@@ -137,7 +142,10 @@ def index():
 
 @app.route("/api/add", methods=["POST"])
 def api_add():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "无效的请求数据"}), 400
+
     album_id = str(data.get("album_id", "")).strip()
     if not album_id:
         return jsonify({"error": "车号不能为空"}), 400
@@ -211,14 +219,12 @@ def api_retry(task_id):
 def api_events():
     def event_stream():
         q: queue.Queue = queue.Queue(maxsize=200)
-        _sse_listeners.append(q)
+        with _sse_lock:
+            _sse_listeners.append(q)
 
-        try:
-            with _task_lock:
-                initial = json.dumps(list(_tasks))
-            yield f"event: init\ndata: {initial}\n\n"
-        except GeneratorExit:
-            pass
+        with _task_lock:
+            initial = json.dumps(list(_tasks))
+        yield f"event: init\ndata: {initial}\n\n"
 
         try:
             while True:
@@ -227,11 +233,10 @@ def api_events():
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 except queue.Empty:
                     yield ": keepalive\n\n"
-        except GeneratorExit:
-            pass
         finally:
-            if q in _sse_listeners:
-                _sse_listeners.remove(q)
+            with _sse_lock:
+                if q in _sse_listeners:
+                    _sse_listeners.remove(q)
 
     return Response(
         event_stream(),
