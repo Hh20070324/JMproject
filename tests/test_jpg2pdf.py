@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from jpg2pdf import album_to_pdf, natural_key
+from jm_downloader.pdf import album_to_pdf, natural_key
 
 
 class NaturalKeyTests(unittest.TestCase):
@@ -36,7 +36,7 @@ class AlbumToPdfTests(unittest.TestCase):
                 opened_paths.append(Path(path).relative_to(album_dir).as_posix())
                 return original_open(path, *args, **kwargs)
 
-            with patch("jpg2pdf.Image.open", side_effect=record_open):
+            with patch("jm_downloader.pdf.Image.open", side_effect=record_open):
                 result = album_to_pdf(str(album_dir), str(output_dir))
 
             pdf_path = output_dir / "123456.pdf"

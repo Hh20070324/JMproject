@@ -39,9 +39,11 @@ v2 全新升级：**Web 界面 + 批量下载 + 实时进度**。
 
 ```
 JM-Download&wrap_program/
-├── server.py             ← Flask 服务器
-├── download_worker.py    ← 下载引擎
-├── jpg2pdf.py            ← PDF 打包引擎
+├── app.py                ← 程序入口
+├── jm_downloader/        ← API、任务调度、下载及 PDF 模块
+├── server.py             ← 旧启动方式兼容入口
+├── download_worker.py    ← 旧导入方式兼容模块
+├── jpg2pdf.py            ← PDF 命令行兼容入口
 ├── option.yml            ← 下载配置
 ├── requirements.txt      ← 固定版本依赖清单
 ├── static/
@@ -61,7 +63,7 @@ JM-Download&wrap_program/
 ## 常见问题
 
 **Q: 双击 bat 闪退？**
-A: 在该文件夹空白处按 `Shift + 右键` → 「在此处打开 PowerShell 窗口」，输入 `.\.venv\Scripts\python.exe server.py` 回车，看报错信息。
+A: 在该文件夹空白处按 `Shift + 右键` → 「在此处打开 PowerShell 窗口」，输入 `.\.venv\Scripts\python.exe app.py` 回车，看报错信息。
 
 **Q: 下载报错 "Restricted Access"？**
 A: 你的 IP 被禁漫限制了。开启代理后重试。

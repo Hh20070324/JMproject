@@ -342,6 +342,7 @@ function handleEvent(event)
         album_id: event.album_id,
         title: null,
         cover: null,
+        preview: null,
         status: "pending",
         progress: 0,
         chapter: "",
@@ -363,6 +364,12 @@ function handleEvent(event)
         progress: event.percent,
         chapter: event.chapter,
         status: "downloading",
+      });
+      break;
+
+    case "preview":
+      updateTask(event.id, {
+        preview: event.preview,
       });
       break;
 
@@ -504,7 +511,7 @@ function render()
       (t) => `
     <div class="task-card status-${t.status}">
       <div class="task-cover">
-        ${t.cover ? `<img src="${t.cover}" alt="" onerror="this.parentElement.textContent='📖'">` : "📖"}
+        ${t.preview || t.cover ? `<img src="${t.preview || t.cover}" alt="" onerror="this.parentElement.textContent='📖'">` : "📖"}
       </div>
       <div class="task-info">
         <div class="task-album-id">#${t.album_id}</div>

@@ -22,7 +22,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-"%VENV_PYTHON%" server.py
+"%VENV_PYTHON%" app.py
 set "SERVER_RESULT=%ERRORLEVEL%"
 if not "%SERVER_RESULT%"=="0" (
     echo.
