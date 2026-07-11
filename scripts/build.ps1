@@ -65,6 +65,8 @@ try
     Copy-Item -LiteralPath "option.yml" -Destination $AppDir
     Copy-Item -LiteralPath "README.md" -Destination $AppDir
     Copy-Item -LiteralPath "用户指南.md" -Destination $AppDir
+    Copy-Item -LiteralPath "LICENSE" -Destination $AppDir
+    Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $AppDir
 
     New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
     Push-Location $DistDir
