@@ -86,6 +86,28 @@ class TaskManager:
         self.schedule()
         return dict(task)
 
+    def is_active(self, album_id: str) -> bool:
+        with self._lock:
+            return any(
+                task["album_id"] == album_id
+                and task["status"] in ("pending", *self.ACTIVE_STATUSES)
+                for task in self._tasks
+            )
+
+    def has_active_tasks(self) -> bool:
+        with self._lock:
+            return any(
+                task["status"] in ("pending", *self.ACTIVE_STATUSES)
+                for task in self._tasks
+            )
+
+    def stop_all(self) -> None:
+        with self._lock:
+            workers = list(self._workers.values())
+            self._workers.clear()
+        for worker in workers:
+            worker.stop()
+
     def remove(self, task_id: str) -> None:
         worker = None
         with self._lock:

@@ -9,3 +9,8 @@ __pycache__/
 1323964/
 打包专用/
 python installer/
+build/
+dist/
+release/
+JM-Downloader-*.zip
+logs/

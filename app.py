@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import webbrowser
@@ -19,7 +20,8 @@ def main():
     print("按 Ctrl+C 停止服务器")
     print()
 
-    threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
+    if os.environ.get("JM_NO_BROWSER") != "1":
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
 
 

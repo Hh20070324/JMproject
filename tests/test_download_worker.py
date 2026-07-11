@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from jm_downloader import downloader
 from jm_downloader.settings import AppPaths
@@ -26,18 +26,26 @@ class DownloadWorkerTests(unittest.TestCase):
                 on_preview=lambda *args: events.append(("preview", args)),
                 paths=paths,
             )
-            worker.fetch_info = Mock(return_value=("测试漫画", "https://example.test/cover.jpg", 2))
             worker._make_option = Mock(return_value=option)
 
             def fake_download(album_id, received_option, downloader):
                 self.assertEqual(album_id, "123456")
                 self.assertIs(received_option, option)
                 active_downloader = downloader(received_option)
-                album = Mock()
+                album = MagicMock()
+                album.id = "123456"
+                album.author = "作者"
+                album.page_count = 2
+                album.name = "测试漫画"
+                album.title = None
+                album.cover = "https://example.test/cover.jpg"
+                album.tags = []
+                album.__len__.return_value = 1
                 photo = Mock(from_album=album, title="第一章")
                 first_image = Mock(from_photo=photo)
                 second_image = Mock(from_photo=photo)
                 active_downloader.download_success_dict = {album: {photo: []}}
+                active_downloader.before_album(album)
 
                 chapter_dir = project_root / "Pictures" / "123456" / "第一章"
                 self._write_image(chapter_dir / "2.jpg")
@@ -77,7 +85,7 @@ class DownloadWorkerTests(unittest.TestCase):
                 on_error=lambda album_id, message: errors.append((album_id, message)),
                 paths=AppPaths(Path(temp_dir)),
             )
-            worker.fetch_info = Mock(side_effect=RuntimeError("network failed"))
+            worker._make_option = Mock(side_effect=RuntimeError("network failed"))
 
             worker.run()
 

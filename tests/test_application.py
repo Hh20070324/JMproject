@@ -81,6 +81,15 @@ class ApplicationTests(unittest.TestCase):
             ["fetching", "fetching"],
         )
 
+    def test_stop_all_notifies_active_workers(self):
+        self.client.post("/api/add", json={"album_id": "1"})
+        self.client.post("/api/add", json={"album_id": "2"})
+
+        self.assertTrue(self.manager.has_active_tasks())
+        self.manager.stop_all()
+
+        self.assertTrue(all(worker.stopped for worker in WaitingWorker.instances))
+
     def test_preview_event_exposes_only_a_controlled_image_route(self):
         task_id = self.client.post(
             "/api/add", json={"album_id": "123456"}
@@ -102,6 +111,30 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b"preview image")
         response.close()
+
+    def test_library_api_reads_existing_files(self):
+        image_path = self.paths.pictures / "99" / "1" / "1.jpg"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"image")
+
+        response = self.client.get("/api/library")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()[0]["album_id"], "99")
+        preview = self.client.get("/api/library/99/preview")
+        self.assertEqual(preview.data, b"image")
+        preview.close()
+
+    def test_library_mutation_is_blocked_during_download(self):
+        image_path = self.paths.pictures / "99" / "1" / "1.jpg"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"image")
+        self.client.post("/api/add", json={"album_id": "99"})
+
+        response = self.client.delete("/api/library/99/images")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(image_path.is_file())
 
 
 if __name__ == "__main__":

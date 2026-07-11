@@ -1,0 +1,17 @@
+# Normalize text files so checkouts remain consistent across platforms.
+* text=auto eol=lf
+
+# Windows entry points need CRLF for reliable double-click execution.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Treat generated and media assets as binary.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary

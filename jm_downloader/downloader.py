@@ -30,6 +30,7 @@ class DownloadWorker:
         self._stop_flag = threading.Event()
         self._thread = None
         self._total_photos = 0
+        self._album_total_known = False
         self._downloaded_count = 0
         self._progress_lock = threading.Lock()
         self._preview_path = None
@@ -51,12 +52,6 @@ class DownloadWorker:
 
     def run(self):
         try:
-            title, cover, total = self.fetch_info()
-            self._total_photos = total
-            self.on_info(self.album_id, title, cover)
-            if self._stop_flag.is_set():
-                return
-
             option = self._make_option()
             album_dir = self.paths.pictures / self.album_id
             album_dir.mkdir(parents=True, exist_ok=True)
@@ -64,6 +59,20 @@ class DownloadWorker:
             owner = self
 
             class ProgressDownloader(jmcomic.JmDownloader):
+                def before_album(self, album):
+                    super().before_album(album)
+                    owner._total_photos = getattr(album, "page_count", 0) or 0
+                    owner._album_total_known = owner._total_photos > 0
+                    title = getattr(album, "title", None) or getattr(album, "name", None)
+                    cover = getattr(album, "cover", None)
+                    owner.on_info(owner.album_id, title, cover)
+
+                def before_photo(self, photo):
+                    super().before_photo(photo)
+                    if not owner._album_total_known:
+                        with owner._progress_lock:
+                            owner._total_photos += len(photo)
+
                 def before_image(self, image, image_path):
                     super().before_image(image, image_path)
                     if image.cache and image.exists:
