@@ -107,3 +107,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
 脚本会运行测试、构建 PyInstaller `onedir` 目录，并生成 `release/JM-Downloader-v2.1.0-Windows-x64.zip`。
+
+## License
+
+This project is licensed under the MIT License.
+
+This project contains code derived from
+[JMComic-Crawler-Python](https://github.com/hect0x7/JMComic-Crawler-Python),
+originally created by hect0x7 and licensed under the MIT License.
+
+See [LICENSE](./LICENSE) and
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for details.
