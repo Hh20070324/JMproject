@@ -8,25 +8,17 @@ v2 全新升级：**Web 界面 + 批量下载 + 实时进度**。
 
 ## 第一次使用（只需做一次）
 
-### 第 1 步：安装 Python
+### 第 1 步：一键安装环境
 
-如果你电脑上已经装过 Python，跳过这一步。
+1. 双击 `一键安装.bat`
+2. 脚本会检测 Python 3.10–3.14；如果没有兼容版本，会自动运行项目附带的 Python 3.14.5 安装程序并加入 PATH
+3. 脚本会在项目中创建独立的 `.venv` 虚拟环境，不会把依赖安装到用户的全局 Python
+4. 随后脚本会按照 `requirements.txt` 安装经过验证的固定版本依赖（需要联网，约 1-2 分钟）
+5. 脚本完成依赖导入检查后会显示「安装完成」
 
-1. 打开 https://www.python.org/downloads/
-2. 点击黄色大按钮下载最新版
-3. 运行下载的安装包
-4. **务必勾选底部的 `Add python.exe to PATH`**
-5. 点击 Install Now，等待安装完成
+如果自动安装失败，也可以运行 `setup.bat` 重试并查看具体错误。
 
-> 验证方法：按 `Win + R`，输入 `cmd` 回车，在黑色窗口里输入 `python --version` 回车。如果显示 `Python 3.x.x` 就说明装好了。
-
-### 第 2 步：安装依赖包
-
-1. 双击 `setup.bat`
-2. 等待自动安装完成（需要联网，约 1-2 分钟）
-3. 看到「安装完成」提示后按任意键关闭
-
-### 第 3 步：开启代理（可选但建议）
+### 第 2 步：开启代理（可选但建议）
 
 禁漫对部分 IP 地区有限制。开启 Clash Verge Rev 等代理工具后，程序会自动走系统代理。
 
@@ -51,11 +43,15 @@ JM-Download&wrap_program/
 ├── download_worker.py    ← 下载引擎
 ├── jpg2pdf.py            ← PDF 打包引擎
 ├── option.yml            ← 下载配置
+├── requirements.txt      ← 固定版本依赖清单
 ├── static/
 │   └── index.html        ← Web 前端界面
 ├── Pictures/             ← 图片输出（自动创建）
 ├── PDFs/                 ← PDF 输出（自动创建）
-├── setup.bat             ← 首次安装依赖
+├── python installer/     ← 内置 Python 安装程序
+├── .venv/                ← 本机虚拟环境（安装时生成，不参与分发）
+├── setup.bat             ← 环境安装实现
+├── 一键安装.bat           ← 首次使用时双击
 ├── 一键下载.bat           ← 启动下载器
 └── README.md             ← 本说明文件
 ```
@@ -65,13 +61,16 @@ JM-Download&wrap_program/
 ## 常见问题
 
 **Q: 双击 bat 闪退？**
-A: 在该文件夹空白处按 `Shift + 右键` → 「在此处打开 PowerShell 窗口」，输入 `python server.py` 回车，看报错信息。
+A: 在该文件夹空白处按 `Shift + 右键` → 「在此处打开 PowerShell 窗口」，输入 `.\.venv\Scripts\python.exe server.py` 回车，看报错信息。
 
 **Q: 下载报错 "Restricted Access"？**
 A: 你的 IP 被禁漫限制了。开启代理后重试。
 
 **Q: 下载报错类似 ModuleNotFoundError: No module named 'xxxx'？**
-A: 依赖没装好。重新双击 `setup.bat` 安装。
+A: 项目虚拟环境中的依赖不完整。重新双击 `一键安装.bat` 修复。
+
+**Q: 可以复制到另一台电脑直接使用吗？**
+A: 可以复制整个项目，但不要复制 `.venv`。目标电脑应为 64 位 Windows 10/11，并保留 `python installer` 文件夹，然后在目标电脑重新双击 `一键安装.bat`。脚本支持 PATH 中已有的 Python 3.10–3.14；其他版本会改用内置 Python 3.14.5。
 
 **Q: 想改下载速度/图片格式？**
 A: 用记事本打开 `option.yml`，修改配置。

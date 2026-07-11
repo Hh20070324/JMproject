@@ -4,6 +4,7 @@ PDFs/
 .superpowers/
 __pycache__/
 *.pyc
+.venv/
 1236513/
 1323964/
 打包专用/
