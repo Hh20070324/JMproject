@@ -6,7 +6,6 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-$SevenZip = "D:\7zip\7-Zip\7z.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
 $ReleaseDir = Join-Path $ProjectRoot "release"
@@ -35,11 +34,6 @@ if (-not (Test-Path -LiteralPath $Python))
 {
     throw "没有找到项目虚拟环境，请先运行 start.bat。"
 }
-if (-not (Test-Path -LiteralPath $SevenZip))
-{
-    throw "没有找到 7-Zip：$SevenZip"
-}
-
 Push-Location $ProjectRoot
 try
 {
@@ -72,8 +66,7 @@ try
     Push-Location $DistDir
     try
     {
-        & $SevenZip a -tzip $Archive "JM-Downloader"
-        if ($LASTEXITCODE -ne 0) { throw "ZIP 打包失败。" }
+        Compress-Archive -LiteralPath "JM-Downloader" -DestinationPath $Archive -CompressionLevel Optimal -Force
     }
     finally
     {
