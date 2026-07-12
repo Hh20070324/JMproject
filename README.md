@@ -59,7 +59,8 @@ JM-Download&wrap_program/
 │   ├── app.css           ← 界面样式
 │   └── app.js            ← 前端交互
 ├── scripts/
-│   └── setup.ps1         ← 环境配置实现
+│   ├── setup.ps1         ← 环境配置实现
+│   └── build.ps1         ← 发行包构建脚本
 ├── Pictures/             ← 图片输出（自动创建）
 ├── PDFs/                 ← PDF 输出（自动创建）
 ├── python installer/     ← 内置 Python 安装程序
@@ -106,7 +107,7 @@ A: 用记事本打开 `option.yml`，修改配置。
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-脚本会运行测试、构建 PyInstaller `onedir` 目录，并生成 `release/JM-Downloader-v2.1.0-Windows-x64.zip`。
+脚本会运行测试、构建 PyInstaller `onedir` 目录，并生成 `release/JM-Downloader-v2.1.0-Windows-x64.zip`。ZIP 由 Windows PowerShell 内置功能创建，不依赖 7-Zip；发行包会包含许可证和第三方声明。
 
 ## License
 
