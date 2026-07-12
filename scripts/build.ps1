@@ -61,6 +61,8 @@ try
     Copy-Item -LiteralPath "用户指南.md" -Destination $AppDir
     Copy-Item -LiteralPath "LICENSE" -Destination $AppDir
     Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $AppDir
+    Copy-Item -LiteralPath "scripts\windows-dotnet.config" -Destination (Join-Path $AppDir "JM-Downloader.exe.config")
+    Copy-Item -LiteralPath "scripts\windows-dotnet.config" -Destination (Join-Path $AppDir "JM-Downloader-Debug.exe.config")
 
     New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
     Push-Location $DistDir
