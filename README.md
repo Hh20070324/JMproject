@@ -1,14 +1,15 @@
-# JM 漫画下载器
+# JM 漫画下载器 v2.2.0
 
 一个 Windows 原生漫画下载工具。输入 JM 号后，程序会下载全部章节图片、显示首张图片预览，并自动生成 PDF。
 
-当前版本提供 PySide6 原生桌面界面、批量任务、实时进度、本地漫画库和便携设置。发行版已经包含 Python 与运行依赖，解压即可使用。
+v2.2.0 提供 PySide6 原生桌面界面、批量任务、实时进度、本地漫画库和便携设置。发行版已经包含 Python 与运行依赖，解压即可使用。
 
 ## 开箱即用版
 
-1. 解压 `JM-Downloader-Windows-x64.zip`。
-2. 保持文件夹结构完整，双击 `JM-Downloader.exe`。
-3. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。
+1. 下载 `JM-Downloader-v2.2.0-Windows-x64.zip` 及同名 `.sha256` 文件。
+2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.2.0-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
+3. 解压 ZIP，保持文件夹结构完整，然后双击 `JM-Downloader.exe`。
+4. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。
 
 发行目录提供两个入口：
 
@@ -94,6 +95,9 @@ JM-Download&wrap_program/
 ├── option.yml               # 下载器底层配置
 ├── requirements.txt         # 源码运行依赖
 ├── JM-Downloader.spec       # PyInstaller 构建配置
+├── LICENSES/                # 随发行包提供的第三方许可证文本
+├── QT_SOURCE_AND_RELINKING.md
+├── QT_THIRD_PARTY_NOTICES.txt
 ├── scripts/
 │   ├── setup.ps1            # 源码环境配置
 │   └── build.ps1            # Windows 发行包构建
@@ -133,11 +137,18 @@ JM-Download&wrap_program/
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-脚本会安装构建依赖、运行完整测试、构建 PyInstaller `onedir` 目录，验证正式版和调试版，生成 `release/JM-Downloader-Windows-x64.zip`，并在终端输出 SHA256。
+脚本会安装构建依赖、运行完整测试、构建 PyInstaller `onedir` 目录，验证正式版和调试版，并生成：
+
+- `release/JM-Downloader-v2.2.0-Windows-x64.zip`
+- `release/JM-Downloader-v2.2.0-Windows-x64.zip.sha256`
+
+构建不会覆盖保留的 v2.1.0 WebView2 历史发行包。
 
 ## 合规与免责声明
 
 本项目是独立的第三方工具，与 JMComic 或软件访问的网站运营方不存在隶属、认可、赞助或官方关联。用户有责任确保使用方式符合适用法律、版权要求、网站服务条款和当地规定。本软件不授予用户对第三方内容的任何权利。
+
+Windows 发行版通过 LGPLv3 选项动态加载 Qt 6.11.1、PySide6 Essentials 6.11.1 和 Shiboken6 6.11.1。许可证全文、第三方归属、对应源码及替换库说明随包提供，详见 `LICENSES/`、[QT_SOURCE_AND_RELINKING.md](./QT_SOURCE_AND_RELINKING.md) 和 [QT_THIRD_PARTY_NOTICES.txt](./QT_THIRD_PARTY_NOTICES.txt)。
 
 ## License
 

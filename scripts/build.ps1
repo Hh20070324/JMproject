@@ -5,12 +5,35 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
+$ReleaseVersion = "2.2.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
 $ReleaseDir = Join-Path $ProjectRoot "release"
 $AppDir = Join-Path $DistDir "JM-Downloader"
-$Archive = Join-Path $ReleaseDir "JM-Downloader-Windows-x64.zip"
+$ArchiveName = "JM-Downloader-v$ReleaseVersion-Windows-x64.zip"
+$Archive = Join-Path $ReleaseDir $ArchiveName
+$ChecksumFile = "$Archive.sha256"
+$LegacyArchive = Join-Path $ReleaseDir "JM-Downloader-v2.1.0-Windows-x64.zip"
+$LicensesDir = Join-Path $ProjectRoot "LICENSES"
+$RequiredLicenseFiles = @(
+    "README.md",
+    "GPL-3.0-only.txt",
+    "LGPL-3.0-only.txt",
+    "Python-3.14.txt",
+    "JMComic-Crawler-Python-2.7.1.txt",
+    "commonX-0.6.40.txt",
+    "curl_cffi-0.15.0.txt",
+    "curl_cffi-0.15.0-native.txt",
+    "certifi-2026.6.17.txt",
+    "cffi-2.0.0.txt",
+    "Pillow-12.2.0.txt",
+    "pycparser-3.0.txt",
+    "PyCryptodome-3.23.0.txt",
+    "PyInstaller-6.21.0.txt",
+    "PyYAML-6.0.3.txt",
+    "typing_extensions-4.16.0.txt"
+)
 
 function Remove-BuildDirectory
 {
@@ -114,6 +137,67 @@ function Assert-BundledPath
     }
 }
 
+function Assert-BundledRelativeFile
+{
+    param([Parameter(Mandatory)][string]$RelativePath)
+
+    $Path = Join-Path $AppDir $RelativePath
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
+    {
+        throw "发行目录缺少文件：$RelativePath"
+    }
+}
+
+function Assert-ArchiveContents
+{
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $Zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try
+    {
+        $Entries = @($Zip.Entries | ForEach-Object {
+            $_.FullName.Replace("\", "/")
+        })
+        $Required = @(
+            "JM-Downloader/LICENSE",
+            "JM-Downloader/THIRD_PARTY_NOTICES.md",
+            "JM-Downloader/QT_SOURCE_AND_RELINKING.md",
+            "JM-Downloader/QT_THIRD_PARTY_NOTICES.txt"
+        )
+        $Required += $RequiredLicenseFiles | ForEach-Object {
+            "JM-Downloader/LICENSES/$($_.Replace('\', '/'))"
+        }
+        foreach ($Entry in $Required)
+        {
+            if ($Entries -notcontains $Entry)
+            {
+                throw "发行 ZIP 缺少文件：$Entry"
+            }
+        }
+
+        $InvalidRoot = $Entries | Where-Object {
+            $_ -and -not $_.StartsWith("JM-Downloader/")
+        }
+        if ($InvalidRoot)
+        {
+            throw "发行 ZIP 顶层结构无效：$($InvalidRoot -join ', ')"
+        }
+
+        $RuntimeArtifacts = $Entries | Where-Object {
+            $_ -match "^JM-Downloader/(?:Pictures|PDFs|logs)(?:/|$)" -or
+            $_ -match "^JM-Downloader/settings\.(?:json|ini)$" -or
+            $_ -match "^JM-Downloader/settings\.json\.corrupt-"
+        }
+        if ($RuntimeArtifacts)
+        {
+            throw "发行 ZIP 包含运行时文件：$($RuntimeArtifacts -join ', ')"
+        }
+    }
+    finally
+    {
+        $Zip.Dispose()
+    }
+}
+
 function Assert-NoLegacyRuntime
 {
     $Forbidden = Get-ChildItem -LiteralPath $AppDir -Recurse -Force |
@@ -131,6 +215,26 @@ function Assert-NoLegacyRuntime
     {
         $Names = ($Forbidden | Select-Object -ExpandProperty FullName) -join ", "
         throw "发行目录混入旧 UI、.NET 或 WebEngine 依赖：$Names"
+    }
+}
+
+function Assert-NoUnusedRuntime
+{
+    $ForbiddenNames = @(
+        "_tcl_data",
+        "_tk_data",
+        "_tkinter.pyd",
+        "opengl32sw.dll",
+        "tcl8",
+        "tcl86t.dll",
+        "tk86t.dll"
+    )
+    $Forbidden = Get-ChildItem -LiteralPath $AppDir -Recurse -Force |
+        Where-Object { $_.Name -in $ForbiddenNames }
+    if ($Forbidden)
+    {
+        $Names = ($Forbidden | Select-Object -ExpandProperty FullName) -join ", "
+        throw "发行目录混入未使用的 Tcl/Tk 或软件 OpenGL 运行时：$Names"
     }
 }
 
@@ -181,17 +285,31 @@ try
     Remove-BuildDirectory $BuildDir
     Remove-BuildDirectory $DistDir
     Remove-BuildFile $Archive
+    Remove-BuildFile $ChecksumFile
+    $LegacyHash = if (Test-Path -LiteralPath $LegacyArchive -PathType Leaf)
+    {
+        (Get-FileHash -LiteralPath $LegacyArchive -Algorithm SHA256).Hash
+    }
+    else
+    {
+        $null
+    }
 
     Write-Host "正在构建 Windows 发行目录..."
     & $Python -m PyInstaller --noconfirm --clean --workpath $BuildDir `
         --distpath $DistDir JM-Downloader.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller 构建失败。" }
 
+    Remove-BuildFile (Join-Path $AppDir "_internal\PySide6\opengl32sw.dll")
+
     Copy-Item -LiteralPath "option.yml" -Destination $AppDir
     Copy-Item -LiteralPath "README.md" -Destination $AppDir
     Copy-Item -LiteralPath "用户指南.md" -Destination $AppDir
     Copy-Item -LiteralPath "LICENSE" -Destination $AppDir
     Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $AppDir
+    Copy-Item -LiteralPath "QT_SOURCE_AND_RELINKING.md" -Destination $AppDir
+    Copy-Item -LiteralPath "QT_THIRD_PARTY_NOTICES.txt" -Destination $AppDir
+    Copy-Item -LiteralPath $LicensesDir -Destination $AppDir -Recurse
 
     Assert-BundledFile "JM-Downloader.exe"
     Assert-BundledFile "JM-Downloader-Debug.exe"
@@ -200,6 +318,12 @@ try
     Assert-BundledFile "用户指南.md"
     Assert-BundledFile "LICENSE"
     Assert-BundledFile "THIRD_PARTY_NOTICES.md"
+    Assert-BundledRelativeFile "QT_SOURCE_AND_RELINKING.md"
+    Assert-BundledRelativeFile "QT_THIRD_PARTY_NOTICES.txt"
+    foreach ($LicenseFile in $RequiredLicenseFiles)
+    {
+        Assert-BundledRelativeFile (Join-Path "LICENSES" $LicenseFile)
+    }
     Assert-BundledFile "qwindows.dll"
     Assert-BundledFile "Qt6Core.dll"
     Assert-BundledFile "Qt6Gui.dll"
@@ -212,6 +336,7 @@ try
     Assert-BundledPath "_internal\Crypto\Cipher\_raw_aes*.pyd"
     Assert-BundledPath "_internal\PIL\_imaging*.pyd"
     Assert-NoLegacyRuntime
+    Assert-NoUnusedRuntime
 
     try
     {
@@ -238,6 +363,7 @@ try
 
     Assert-NoRuntimeArtifacts
     Assert-NoLegacyRuntime
+    Assert-NoUnusedRuntime
 
     New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
     Push-Location $DistDir
@@ -252,9 +378,29 @@ try
     }
 
     $Hash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash
+    $Utf8NoBom = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText(
+        $ChecksumFile,
+        "$Hash  $ArchiveName`r`n",
+        $Utf8NoBom
+    )
+    Assert-ArchiveContents
+
+    if ($null -ne $LegacyHash)
+    {
+        $CurrentLegacyHash = (
+            Get-FileHash -LiteralPath $LegacyArchive -Algorithm SHA256
+        ).Hash
+        if ($CurrentLegacyHash -ne $LegacyHash)
+        {
+            throw "构建过程修改了 v2.1.0 历史发行包。"
+        }
+    }
+
     Write-Host
     Write-Host "构建完成：$Archive" -ForegroundColor Green
     Write-Host "SHA256：$Hash"
+    Write-Host "校验文件：$ChecksumFile"
 }
 finally
 {

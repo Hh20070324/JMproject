@@ -14,10 +14,10 @@ VSVersionInfo(
       StringTable(
         '080404b0',
         [StringStruct('CompanyName', 'JM Downloader'),
-         StringStruct('FileDescription', 'JM 漫画下载器'),
+         StringStruct('FileDescription', 'JM 漫画下载器（调试版）'),
          StringStruct('FileVersion', '2.2.0'),
-         StringStruct('InternalName', 'JM-Downloader'),
-         StringStruct('OriginalFilename', 'JM-Downloader.exe'),
+         StringStruct('InternalName', 'JM-Downloader-Debug'),
+         StringStruct('OriginalFilename', 'JM-Downloader-Debug.exe'),
          StringStruct('ProductName', 'JM 漫画下载器'),
          StringStruct('ProductVersion', '2.2.0')])
     ]),

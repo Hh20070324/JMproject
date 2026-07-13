@@ -4,12 +4,11 @@ from PyInstaller.utils.hooks import collect_all
 
 
 jm_datas, jm_binaries, jm_hiddenimports = collect_all("jmcomic")
-curl_datas, curl_binaries, curl_hiddenimports = collect_all("curl_cffi")
 
 a = Analysis(
     ["desktop.py"],
     pathex=[],
-    binaries=jm_binaries + curl_binaries,
+    binaries=jm_binaries,
     datas=[
         (
             "jm_downloader/qt/resources/styles_light.qss",
@@ -19,8 +18,8 @@ a = Analysis(
             "jm_downloader/qt/resources/styles_dark.qss",
             "jm_downloader/qt/resources",
         ),
-    ] + jm_datas + curl_datas,
-    hiddenimports=jm_hiddenimports + curl_hiddenimports,
+    ] + jm_datas,
+    hiddenimports=jm_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -31,7 +30,10 @@ a = Analysis(
         "PyQt5",
         "PyQt6",
         "PySide2",
+        "packaging",
         "pythonnet",
+        "setuptools",
+        "tkinter",
         "webview",
         "werkzeug",
     ],
@@ -75,7 +77,7 @@ debug_exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version="version_info.txt",
+    version="version_info_debug.txt",
 )
 
 coll = COLLECT(

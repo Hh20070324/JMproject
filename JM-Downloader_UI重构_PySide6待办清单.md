@@ -14,7 +14,7 @@
 - [x] 下载、库扫描、PDF 重建等耗时操作不得阻塞 Qt 主线程。
 - [x] Qt 版达到现有功能对等后，删除 Flask、pywebview、SSE 和 Web 静态资源。
 - [x] 每个完整阶段都运行自动化测试，并尽早进行 PyInstaller 打包验证。
-- [ ] 最终继续采用 Windows x64、PyInstaller onedir、文件夹便携发行。
+- [x] 最终继续采用 Windows x64、PyInstaller onedir、文件夹便携发行。
 
 ### 不进入本次迁移的内容
 
@@ -337,24 +337,25 @@ TaskSnapshot(
 - [x] 不依赖 WebView2 和 .NET pythonnet。
 - [x] 所有 UI 操作直接调用 Python 业务层。
 - [x] 完整自动化测试和构建回归通过。
-- [ ] 用户手工 UI 验收通过。
+- [x] 用户手工 UI 验收通过。
 
 ---
 
 ## 十、第七阶段：正式发行与便携审计
 
-- [ ] 使用 PyInstaller onedir。
-- [ ] 发行目录继续使用 `Pictures/`、`PDFs/`、`logs/` 和配置文件。
-- [ ] 不凭空创建未使用的 `data/`、`cache/` 或数据库目录。
-- [ ] 添加 Qt/PySide6 到第三方声明。
-- [ ] 附带适用的 Qt/PySide6 许可证文本并复核 LGPL 合规。
-- [ ] 生成 ZIP 和 SHA256。
-- [ ] 在 Windows 10、Windows 11 和非开发者账户下测试。
-- [ ] 测试 100%、125%、150% 和 200% 缩放。
-- [ ] 用 Procmon 检查程序主动创建的持久文件和注册表项。
-- [ ] 从 D 盘复制到其他目录后再次运行。
-- [ ] 关闭程序后可以直接删除整个目录。
-- [ ] 保留 v2.1.0 WebView2 Release，不覆盖旧发行包。
+- [x] 使用 PyInstaller onedir。
+- [x] 发行目录继续使用 `Pictures/`、`PDFs/`、`logs/` 和配置文件。
+- [x] 不凭空创建未使用的 `data/`、`cache/` 或数据库目录。
+- [x] 添加 Qt/PySide6 到第三方声明。
+- [x] 附带适用的 Qt/PySide6 许可证文本并复核 LGPL 合规。
+- [x] 生成 ZIP 和 SHA256。
+- [x] 在 Windows 11 家庭中文版的非提权进程中完成本机测试。
+- [ ] 在 Windows 10 和真正的标准用户、非开发环境中测试，计划使用朋友的电脑完成。
+- [x] 测试 100%、125%、150% 和 200% 缩放。
+- [x] 用 Procmon 检查程序主动创建的持久文件和注册表项。
+- [x] 从 D 盘复制到 C 盘其他目录后再次运行。
+- [x] 关闭程序后可以直接删除整个目录。
+- [x] 保留 v2.1.0 WebView2 Release，不覆盖旧发行包。
 
 最终验收：
 
@@ -473,4 +474,16 @@ TaskSnapshot(
 - [x] 正式 EXE 按 PID 检查无 TCP 监听端口，ZIP 中无旧 UI、.NET、WebEngine 或运行时数据。
 - [x] 新构建位于 `release/JM-Downloader-Windows-x64.zip`，SHA256 为 `BE4026BECAA1BB43F4550067CCF8B85659ECC84D6D056A951778A113447E0E7E`。
 
-下一步先由用户检查第六阶段正式 Qt 版本。确认并提交本阶段基线后，再进入第七阶段发行与便携审计。
+第七阶段已于 2026-07-13 完成本机范围内的实现与审计：
+
+- [x] 正式版本提升为 v2.2.0，正式版和调试版 EXE 的文件版本信息一致。
+- [x] 生成 `JM-Downloader-v2.2.0-Windows-x64.zip` 及 SHA256 校验文件；ZIP 的 SHA256 为 `2DE819B6ABD0159B1B09CF89E3493F425FF74226FE443C73DFF50D5FFA936006`。
+- [x] 保留 v2.1.0 发行包并复核其 SHA256 未变化。
+- [x] 附带 Qt、PySide6、Shiboken6、CPython 及相关第三方组件的许可证、声明、对应源码和重新链接说明。
+- [x] 正式版、调试版和两套离线后端冒烟测试通过，发行包中不含 Tcl/Tk、`opengl32sw.dll` 或运行时数据。
+- [x] 100%、125%、150% 和 200% 缩放下逐页完成截图与非空渲染检查。
+- [x] 将发行目录从 D 盘复制到 C 盘含空格和中文的路径后，设置、图片、PDF、正式版、调试版及离线后端均可用；关闭后目录可直接删除。
+- [x] Procmon 审计确认程序自身只在便携目录创建配置、日志、图片和 PDF 目录及短期写入探针；NVIDIA 和 Windows BAM 记录属于驱动或系统记账，不是应用定义的持久数据。
+- [x] Procmon 工具保留在本地 `tools/ProcessMonitor/`，并通过 `.gitignore` 排除，不进入仓库。
+
+本机可完成的第七阶段工作已经结束。剩余外部验收仅为 Windows 10 与真正标准用户、非开发环境测试，由用户计划在朋友的电脑上完成；结果确认前不宣称该外部兼容性已通过。

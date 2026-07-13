@@ -1,4 +1,12 @@
-# Direct runtime dependencies verified with Python 3.14.5.
+# Runtime dependencies verified for the portable Python 3.14.5 release.
 jmcomic==2.7.1
+commonX==0.6.40
+curl-cffi==0.15.0
+cffi==2.0.0
+certifi==2026.6.17
+pycryptodome==3.23.0
+PyYAML==6.0.3
+pycparser==3.0
+typing_extensions==4.16.0
 Pillow==12.2.0
 PySide6-Essentials==6.11.1
