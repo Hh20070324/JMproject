@@ -8,6 +8,27 @@ from jm_downloader.settings import AppPaths
 
 
 class DownloadWorkerTests(unittest.TestCase):
+    def test_make_option_overrides_image_concurrency_in_memory(self):
+        option = Mock()
+        option.download.threading.image = 30
+        with tempfile.TemporaryDirectory() as temp_dir:
+            worker = downloader.DownloadWorker(
+                "123456",
+                paths=AppPaths(Path(temp_dir)),
+                image_concurrency=7,
+            )
+
+            with patch.object(
+                downloader.jmcomic,
+                "create_option_by_file",
+                return_value=option,
+            ) as create_option:
+                result = worker._make_option()
+
+        self.assertIs(result, option)
+        self.assertEqual(option.download.threading.image, 7)
+        create_option.assert_called_once_with(str(worker.paths.option_file))
+
     def test_run_reports_info_progress_and_completion(self):
         events = []
 

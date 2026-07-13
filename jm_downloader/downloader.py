@@ -1,3 +1,4 @@
+import logging
 import threading
 from pathlib import Path
 
@@ -5,6 +6,9 @@ import jmcomic
 
 from .pdf import album_to_pdf, natural_key
 from .settings import AppPaths, DEFAULT_PATHS
+
+
+LOGGER = logging.getLogger("jm-downloader")
 
 
 class DownloadWorker:
@@ -19,6 +23,7 @@ class DownloadWorker:
         on_info=None,
         on_preview=None,
         paths: AppPaths = DEFAULT_PATHS,
+        image_concurrency: int = 16,
     ):
         self.album_id = str(album_id)
         self.on_progress = on_progress or (lambda *args: None)
@@ -27,6 +32,7 @@ class DownloadWorker:
         self.on_info = on_info or (lambda *args: None)
         self.on_preview = on_preview or (lambda *args: None)
         self.paths = paths
+        self.image_concurrency = max(1, int(image_concurrency))
         self._stop_flag = threading.Event()
         self._thread = None
         self._total_photos = 0
@@ -37,7 +43,9 @@ class DownloadWorker:
         self.paths.ensure_output_directories()
 
     def _make_option(self):
-        return jmcomic.create_option_by_file(str(self.paths.option_file))
+        option = jmcomic.create_option_by_file(str(self.paths.option_file))
+        option.download.threading.image = self.image_concurrency
+        return option
 
     def fetch_info(self):
         try:
@@ -92,6 +100,7 @@ class DownloadWorker:
             pdf_path = album_to_pdf(str(album_dir), str(self.paths.pdfs))
             self.on_complete(self.album_id, pdf_path)
         except Exception as error:
+            LOGGER.exception("Download failed for JM %s", self.album_id)
             self.on_error(self.album_id, str(error))
 
     def start(self):

@@ -2,10 +2,8 @@ from enum import Enum
 from pathlib import Path
 import sys
 
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
-
-from ..settings import DEFAULT_PATHS
 
 
 class Theme(str, Enum):
@@ -40,16 +38,9 @@ def load_stylesheet(theme: Theme = Theme.LIGHT) -> str:
 class ThemeManager(QObject):
     theme_changed = Signal(str)
 
-    def __init__(self, settings: QSettings | None = None):
+    def __init__(self, theme: Theme | str = Theme.LIGHT):
         super().__init__()
-        self._settings = settings
-        if self._settings is None:
-            self._settings = QSettings(
-                str(DEFAULT_PATHS.root / "settings.ini"),
-                QSettings.Format.IniFormat,
-            )
-        saved_theme = self._settings.value("appearance/theme", Theme.LIGHT.value)
-        self._theme = _coerce_theme(saved_theme)
+        self._theme = _coerce_theme(theme)
 
     @property
     def theme(self) -> Theme:
@@ -65,7 +56,5 @@ class ThemeManager(QObject):
         changed = selected_theme != self._theme
         self._theme = selected_theme
         self.apply()
-        self._settings.setValue("appearance/theme", selected_theme.value)
-        self._settings.sync()
         if changed:
             self.theme_changed.emit(selected_theme.value)

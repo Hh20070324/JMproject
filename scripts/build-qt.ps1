@@ -30,6 +30,65 @@ function Remove-BuildDirectory
     Remove-Item -LiteralPath $ResolvedPath -Recurse -Force
 }
 
+function Remove-BuildFile
+{
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf))
+    {
+        return
+    }
+
+    $ResolvedRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
+    $ResolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    if (-not $ResolvedPath.StartsWith($ResolvedRoot + [IO.Path]::DirectorySeparatorChar))
+    {
+        throw "拒绝删除项目目录外的文件：$ResolvedPath"
+    }
+    Remove-Item -LiteralPath $ResolvedPath -Force
+}
+
+function Remove-QtRuntimeArtifacts
+{
+    foreach ($Name in @("logs", "Pictures", "PDFs"))
+    {
+        Remove-BuildDirectory (Join-Path $AppDir $Name)
+    }
+
+    foreach ($Name in @("settings.json", "settings.ini"))
+    {
+        Remove-BuildFile (Join-Path $AppDir $Name)
+    }
+
+    $CorruptBackups = Get-ChildItem -LiteralPath $AppDir -File -Force `
+        -Filter "settings.json.corrupt-*" -ErrorAction SilentlyContinue
+    foreach ($Backup in $CorruptBackups)
+    {
+        Remove-BuildFile $Backup.FullName
+    }
+}
+
+function Assert-NoQtRuntimeArtifacts
+{
+    $Artifacts = @()
+    foreach ($Name in @("logs", "Pictures", "PDFs", "settings.json", "settings.ini"))
+    {
+        $Path = Join-Path $AppDir $Name
+        if (Test-Path -LiteralPath $Path)
+        {
+            $Artifacts += (Resolve-Path -LiteralPath $Path).Path
+        }
+    }
+
+    $Artifacts += Get-ChildItem -LiteralPath $AppDir -File -Force `
+        -Filter "settings.json.corrupt-*" -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName
+    if ($Artifacts)
+    {
+        throw "Qt 发行目录包含运行时文件，拒绝打包：$($Artifacts -join ', ')"
+    }
+}
+
 function Assert-BundledFile
 {
     param([Parameter(Mandatory)][string]$Name)
@@ -138,19 +197,26 @@ try
         throw "Qt 原型混入旧 UI 或 WebEngine 依赖：$Names"
     }
 
-    Write-Host "正在验证 Qt 正式版..."
-    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt.exe") "--smoke-test" "Qt 启动验证"
+    try
+    {
+        Write-Host "正在验证 Qt 正式版..."
+        Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt.exe") "--smoke-test" "Qt 启动验证"
 
-    Write-Host "正在验证 Qt 调试版..."
-    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe") "--smoke-test" "Qt 启动验证"
+        Write-Host "正在验证 Qt 调试版..."
+        Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe") "--smoke-test" "Qt 启动验证"
 
-    Write-Host "正在验证正式版离线下载后端..."
-    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt.exe") "--backend-smoke-test" "离线下载后端验证"
+        Write-Host "正在验证正式版离线下载后端..."
+        Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt.exe") "--backend-smoke-test" "离线下载后端验证"
 
-    Write-Host "正在验证调试版离线下载后端..."
-    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe") "--backend-smoke-test" "离线下载后端验证"
+        Write-Host "正在验证调试版离线下载后端..."
+        Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe") "--backend-smoke-test" "离线下载后端验证"
+    }
+    finally
+    {
+        Remove-QtRuntimeArtifacts
+    }
 
-    Remove-BuildDirectory (Join-Path $AppDir "logs")
+    Assert-NoQtRuntimeArtifacts
 
     New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
     Push-Location $DistDir

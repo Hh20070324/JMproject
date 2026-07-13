@@ -8,7 +8,7 @@ from unittest.mock import patch
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QEventLoop, QSettings, QTimer, Qt, Signal
+from PySide6.QtCore import QObject, QEventLoop, QTimer, Qt, Signal
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -176,12 +176,8 @@ class LibraryPageTests(unittest.TestCase):
 
     def test_main_window_blocks_close_during_library_mutation(self):
         self.controller.pending = True
-        settings = QSettings(
-            str(self.root / "window-settings.ini"),
-            QSettings.Format.IniFormat,
-        )
         window = MainWindow(
-            ThemeManager(settings),
+            ThemeManager(),
             library_controller=self.controller,
         )
         window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)

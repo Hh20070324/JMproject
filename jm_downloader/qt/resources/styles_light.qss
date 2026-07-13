@@ -542,3 +542,104 @@ QPushButton#retryLibraryButton:hover {
     background: #eef1ef;
     border-color: #aeb9b2;
 }
+
+QScrollArea#settingsScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#settingsScrollArea > QWidget > QWidget,
+QWidget#settingsCanvas,
+QFrame#settingsSection,
+QWidget#settingsInlineControl {
+    background: #f5f7f6;
+}
+
+QLabel#settingsLabel {
+    color: #46504a;
+}
+
+QLabel#settingsSizeSeparator {
+    color: #7c8881;
+}
+
+QLineEdit#settingsPathInput,
+QComboBox#settingsComboBox,
+QSpinBox#settingsSpinBox {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    min-height: 34px;
+    padding: 0 10px;
+    selection-background-color: #2e7d57;
+    selection-color: #ffffff;
+}
+
+QLineEdit#settingsPathInput:hover,
+QComboBox#settingsComboBox:hover,
+QSpinBox#settingsSpinBox:hover {
+    border-color: #9da9a2;
+}
+
+QLineEdit#settingsPathInput:focus,
+QComboBox#settingsComboBox:focus,
+QSpinBox#settingsSpinBox:focus {
+    border: 2px solid #2e7d57;
+    padding: 0 9px;
+}
+
+QToolButton#settingsBrowseButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+}
+
+QToolButton#settingsBrowseButton:hover {
+    background: #eef1ef;
+    border-color: #9da9a2;
+}
+
+QFrame#settingsActionBar {
+    border-top: 1px solid #d7ddd9;
+}
+
+QLabel#settingsSaveStatus {
+    color: #2e7d57;
+    font-size: 12px;
+}
+
+QPushButton#restoreSettingsButton,
+QPushButton#saveSettingsButton {
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+QPushButton#restoreSettingsButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    color: #1d2320;
+}
+
+QPushButton#restoreSettingsButton:hover {
+    background: #eef1ef;
+    border-color: #9da9a2;
+}
+
+QPushButton#saveSettingsButton {
+    background: #2e7d57;
+    border: 1px solid #2e7d57;
+    color: #ffffff;
+}
+
+QPushButton#saveSettingsButton:hover {
+    background: #256b49;
+    border-color: #256b49;
+}
+
+QPushButton#restoreSettingsButton:disabled,
+QPushButton#saveSettingsButton:disabled {
+    background: #e6ebe8;
+    border-color: #d7ddd9;
+    color: #8a948e;
+}

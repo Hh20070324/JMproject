@@ -9,7 +9,7 @@ from unittest.mock import patch
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from jm_downloader.models import TaskSnapshot, TaskStatus
@@ -96,11 +96,7 @@ class DownloadPageTests(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        settings = QSettings(
-            str(Path(self.temp_dir.name) / "settings.ini"),
-            QSettings.Format.IniFormat,
-        )
-        self.theme_manager = ThemeManager(settings)
+        self.theme_manager = ThemeManager()
         self.theme_manager.apply()
         self.controller = FakeDownloadController()
         self.window = MainWindow(self.theme_manager, self.controller)

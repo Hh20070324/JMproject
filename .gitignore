@@ -19,3 +19,5 @@ JM-Downloader-*.zip
 logs/
 codex_handover/
 settings.ini
+settings.json
+settings.json.corrupt-*

@@ -7,13 +7,16 @@ import unittest
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
 from jm_downloader.desktop_runtime import WINDOW_TITLE
 from jm_downloader.qt.app import load_stylesheet, resource_path
+from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.main_window import MainWindow
+from jm_downloader.qt.settings_store import SettingsStore
 from jm_downloader.qt.theme import Theme, ThemeManager
+from jm_downloader.settings import AppPaths
 
 
 class QtMainWindowTests(unittest.TestCase):
@@ -23,13 +26,18 @@ class QtMainWindowTests(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.settings_path = Path(self.temp_dir.name) / "settings.ini"
-        self.settings = QSettings(
-            str(self.settings_path), QSettings.Format.IniFormat
+        self.paths = AppPaths(Path(self.temp_dir.name))
+        self.settings_store = SettingsStore(self.paths)
+        self.settings_controller = SettingsController(self.settings_store)
+        self.theme_manager = ThemeManager(
+            self.settings_controller.settings.theme
         )
-        self.theme_manager = ThemeManager(self.settings)
         self.theme_manager.apply()
-        self.window = MainWindow(self.theme_manager)
+        self.window = MainWindow(
+            self.theme_manager,
+            settings_controller=self.settings_controller,
+            persist_window_state=False,
+        )
         self.window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         self.window.show()
         self.app.processEvents()
@@ -37,7 +45,6 @@ class QtMainWindowTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
         self.app.processEvents()
-        self.settings = None
         self.temp_dir.cleanup()
 
     def test_has_native_window_basics(self):
@@ -113,22 +120,17 @@ class QtMainWindowTests(unittest.TestCase):
         self.assertTrue(settings_page.theme_button(Theme.LIGHT).isChecked())
 
         settings_page.theme_button(Theme.DARK).click()
+        settings_page.save_button.click()
         self.app.processEvents()
         self.assertEqual(self.theme_manager.theme, Theme.DARK)
         self.assertTrue(settings_page.theme_button(Theme.DARK).isChecked())
         self.assertNotEqual(self.app.styleSheet(), light_stylesheet)
 
-        restored = ThemeManager(
-            QSettings(str(self.settings_path), QSettings.Format.IniFormat)
-        )
-        self.assertEqual(restored.theme, Theme.DARK)
+        restored = SettingsStore(self.paths).load()
+        self.assertEqual(restored.theme, Theme.DARK.value)
 
     def test_unknown_saved_theme_falls_back_to_light(self):
-        invalid_path = Path(self.temp_dir.name) / "invalid.ini"
-        settings = QSettings(str(invalid_path), QSettings.Format.IniFormat)
-        settings.setValue("appearance/theme", "missing")
-        settings.sync()
-        self.assertEqual(ThemeManager(settings).theme, Theme.LIGHT)
+        self.assertEqual(ThemeManager("missing").theme, Theme.LIGHT)
 
     def test_theme_stylesheet_resources_are_available(self):
         for theme in (Theme.LIGHT, Theme.DARK):
