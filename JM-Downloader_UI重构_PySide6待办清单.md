@@ -9,11 +9,11 @@
 
 ### Qt 迁移主线
 
-- [ ] 保留现有 `TaskManager`、`DownloadWorker`、`LibraryService` 和 PDF 逻辑。
-- [ ] 先建立 UI 无关的数据契约，再接入 Qt。
-- [ ] 下载、库扫描、PDF 重建等耗时操作不得阻塞 Qt 主线程。
-- [ ] Qt 版达到现有功能对等后，删除 Flask、pywebview、SSE 和 Web 静态资源。
-- [ ] 每个完整阶段都运行自动化测试，并尽早进行 PyInstaller 打包验证。
+- [x] 保留现有 `TaskManager`、`DownloadWorker`、`LibraryService` 和 PDF 逻辑。
+- [x] 先建立 UI 无关的数据契约，再接入 Qt。
+- [x] 下载、库扫描、PDF 重建等耗时操作不得阻塞 Qt 主线程。
+- [x] Qt 版达到现有功能对等后，删除 Flask、pywebview、SSE 和 Web 静态资源。
+- [x] 每个完整阶段都运行自动化测试，并尽早进行 PyInstaller 打包验证。
 - [ ] 最终继续采用 Windows x64、PyInstaller onedir、文件夹便携发行。
 
 ### 不进入本次迁移的内容
@@ -34,16 +34,16 @@
 - 第一版只使用当前真实存在的任务状态：`pending`、`fetching`、`downloading`、`completed`、`failed`。
 - 新任务状态必须先在业务层定义状态转换和测试，不能只在 UI 中增加。
 - UI 不接收 `/api/...` 地址；任务和本地库向 Qt 提供本地 `Path` 或不可变快照。
-- Flask 路由仅负责把业务快照转换成现有 Web API 响应。
+- Qt 控制器直接消费业务快照，不在 UI 与业务层之间增加传输协议。
 - 项目代码继续放在 `jm_downloader` 命名空间内，不新增顶层 `core`、`services`、`runtime` 等通用包。
-- 配置、日志、图片和 PDF 继续存放在可写的程序目录。
-- 便携验收定义为“程序不主动把持久业务数据写到程序目录之外”，不要求阻止 Windows 自身的临时访问和最近文件记录。
+- 配置和日志固定在可写的程序目录；图片和 PDF 默认存放在程序目录，用户可以明确选择外部目录。
+- 便携验收要求默认配置不把持久业务数据写到程序目录之外；用户主动选择的外部输出目录不计为违规，也不要求阻止 Windows 自身的临时访问和最近文件记录。
 
 ---
 
 ## 二、目标结构
 
-迁移期间采用增量结构，不搬迁旧 Web 文件：
+第六阶段完成后的正式结构：
 
 ```text
 JM-Downloader/
@@ -54,8 +54,6 @@ JM-Downloader/
 │   ├── library.py             # 本地库
 │   ├── pdf.py
 │   ├── settings.py
-│   ├── application.py         # 迁移期间保留的 Flask 入口
-│   ├── routes.py              # 迁移期间保留的 Web 适配器
 │   └── qt/
 │       ├── app.py
 │       ├── main_window.py
@@ -66,9 +64,7 @@ JM-Downloader/
 │       │   └── settings_page.py
 │       ├── widgets/
 │       └── resources/
-├── static/                    # Qt 完成功能对等后删除
-├── desktop.py                 # 迁移期间的 WebView2 入口
-├── desktop_qt.py              # Qt 入口
+├── desktop.py                 # Qt 正式入口
 ├── JM-Downloader.spec
 └── tests/
 ```
@@ -326,21 +322,22 @@ TaskSnapshot(
 
 只有第五阶段功能对等通过后才执行。
 
-- [ ] 将正式入口切换到 Qt。
-- [ ] 删除 pywebview、Flask、SSE 和本地 HTTP 服务。
-- [ ] 删除 `static/` 和 WebView2 用户目录逻辑。
-- [ ] 删除 pythonnet 专用 `.config` 文件复制逻辑。
-- [ ] 删除不再使用的 Web 测试和适配代码。
-- [ ] 从运行依赖和 PyInstaller spec 移除旧 UI 依赖。
-- [ ] README 和用户指南改为 Qt 原生版说明。
-- [ ] 不在主分支长期维护两套 UI。
+- [x] 将正式入口切换到 Qt。
+- [x] 删除 pywebview、Flask、SSE 和本地 HTTP 服务。
+- [x] 删除 `static/` 和 WebView2 用户目录逻辑。
+- [x] 删除 pythonnet 专用 `.config` 文件复制逻辑。
+- [x] 删除不再使用的 Web 测试和适配代码。
+- [x] 从运行依赖和 PyInstaller spec 移除旧 UI 依赖。
+- [x] README 和用户指南改为 Qt 原生版说明。
+- [x] 不在主分支长期维护两套 UI。
 
 阶段验收：
 
-- [ ] 启动时不创建本地端口。
-- [ ] 不依赖 WebView2 和 .NET pythonnet。
-- [ ] 所有 UI 操作直接调用 Python 业务层。
-- [ ] 完整自动化测试和手工回归通过。
+- [x] 启动时不创建本地端口。
+- [x] 不依赖 WebView2 和 .NET pythonnet。
+- [x] 所有 UI 操作直接调用 Python 业务层。
+- [x] 完整自动化测试和构建回归通过。
+- [ ] 用户手工 UI 验收通过。
 
 ---
 
@@ -464,4 +461,16 @@ TaskSnapshot(
 - [x] 冻结包通过自定义设置、整体移动、损坏配置恢复和真实双实例互斥验收。
 - [x] ZIP 不包含测试产生的设置、日志、图片或 PDF；SHA256 为 `369ADD8549F03812F7DC3DAD1D7190F6A8A8280FDEB4F24D99D3E93C384C9A40`。
 
-下一步先由用户检查第五阶段设置界面；确认后提交本阶段基线，再进入第六阶段。
+第六阶段已于 2026-07-13 完成实现与本机验收：
+
+- [x] `desktop.py` 已成为唯一 Qt 正式入口，正式和调试 EXE 恢复产品名称。
+- [x] 删除 Flask、pywebview、Werkzeug、SSE、本地 HTTP、旧静态页面和 pythonnet 配置。
+- [x] 合并为唯一 `JM-Downloader.spec` 和 `scripts/build.ps1`，旧 v2.1.0 ZIP 保持不变。
+- [x] 将旧 Web 测试中的核心任务并发、停止和路径边界迁移为纯业务测试。
+- [x] README 与用户指南已改为 Qt 原生桌面版，并明确搜索区域仍是预留界面。
+- [x] 完整测试 111 项通过；文件符号链接测试因当前权限跳过 1 项。
+- [x] 正式版、调试版和两套离线下载后端冒烟测试通过。
+- [x] 正式 EXE 按 PID 检查无 TCP 监听端口，ZIP 中无旧 UI、.NET、WebEngine 或运行时数据。
+- [x] 新构建位于 `release/JM-Downloader-Windows-x64.zip`，SHA256 为 `BE4026BECAA1BB43F4550067CCF8B85659ECC84D6D056A951778A113447E0E7E`。
+
+下一步先由用户检查第六阶段正式 Qt 版本。确认并提交本阶段基线后，再进入第七阶段发行与便携审计。

@@ -12,9 +12,6 @@ python installer/
 build/
 dist/
 release/
-build-qt/
-dist-qt/
-release-qt/
 JM-Downloader-*.zip
 logs/
 codex_handover/

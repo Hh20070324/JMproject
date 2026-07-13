@@ -1,113 +1,143 @@
-# JM 漫画下载器 v2.1
+# JM 漫画下载器
 
-一个**禁漫天堂漫画下载工具**。输入车号 → 自动下载所有章节图片 → 自动打包成 PDF。
+一个 Windows 原生漫画下载工具。输入 JM 号后，程序会下载全部章节图片、显示首张图片预览，并自动生成 PDF。
 
-当前版本提供 **Windows 桌面窗口 + 批量下载 + 实时进度 + 本地漫画库**。
+当前版本提供 PySide6 原生桌面界面、批量任务、实时进度、本地漫画库和便携设置。发行版已经包含 Python 与运行依赖，解压即可使用。
 
 ## 开箱即用版
 
-从发行包解压 `JM-Downloader-v2.1.0-Windows-x64.zip`，双击 `JM-Downloader.exe` 即可运行。发行版已经包含 Python 和全部依赖，不需要安装 Python，也不需要联网安装运行环境。
+1. 解压 `JM-Downloader-Windows-x64.zip`。
+2. 保持文件夹结构完整，双击 `JM-Downloader.exe`。
+3. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。
 
 发行目录提供两个入口：
 
-- `JM-Downloader.exe`：正式桌面版，不显示终端窗口，错误写入 `logs/app.log`。
-- `JM-Downloader-Debug.exe`：调试版，显示终端日志；遇到启动或下载问题时使用。
+- `JM-Downloader.exe`：正式桌面版，不显示终端窗口，运行日志写入 `logs/app.log`。
+- `JM-Downloader-Debug.exe`：调试版，显示终端输出；启动或下载异常时使用。
 
-`Pictures/`、`PDFs/` 和 `option.yml` 位于程序目录。更新版本时保留这三个位置，即可继续使用原有下载内容和设置。
-
----
+请整体移动或复制解压后的 `JM-Downloader` 文件夹，不要单独移动 EXE，也不要遗漏 `_internal`。默认图片、PDF 和设置会随程序目录一起迁移；设置为外部绝对路径的下载目录需要单独迁移。
 
 ## 源码版运行
 
-以下内容仅适用于源码项目。双击 `start.bat`，程序会自动检测运行环境；首次使用时会调用 `scripts/setup.ps1` 创建 `.venv` 并安装固定版本依赖。如果没有兼容的 Python 3.10–3.14，会使用项目附带的 Python 3.14.5 安装程序。
+源码项目要求 64 位 Windows 和 Python 3.10 至 3.14。推荐双击 `start.bat`，它会在首次运行时调用 `scripts/setup.ps1` 创建项目专用 `.venv` 并安装固定版本依赖，随后通过正式入口 `desktop.py` 启动桌面窗口。
 
-### 开启代理（可选但建议）
+也可以在 PowerShell 中手动运行：
 
-禁漫对部分 IP 地区有限制。开启 Clash Verge Rev 等代理工具后，程序会自动走系统代理。
-
----
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1
+.\.venv\Scripts\python.exe desktop.py
+```
 
 ## 下载漫画
 
-1. 发行版双击 `JM-Downloader.exe`；源码版双击 `start.bat`
-2. 等待独立桌面窗口打开
-3. 在输入框中输入禁漫车号（纯数字，例如 `1236513`），按回车添加
-4. 可连续添加多个车号，最多同时下载 2 个
-5. 等待任务状态变为「已完成」
-6. 图片保存在 `Pictures/` 文件夹，PDF 保存在 `PDFs/` 文件夹
+1. 打开程序并进入「下载任务」。
+2. 切换到「下载任务」标签页，在输入框中填写纯数字 JM 号，例如 `1449491`。
+3. 按回车或点击「开始下载」。
+4. 继续输入其他 JM 号即可加入队列。
+5. 等待任务状态变为「已完成」。
 
-切换到桌面窗口中的「漫画库」，可以管理程序启动前已经存在的下载内容，并分别打开、重新生成或删除图片和 PDF。
+任务开始后会显示标题、进度、状态和已下载的首张漫画图片。失败任务可以重试；完成后可以打开图片目录，或使用系统默认 PDF 阅读器查看 PDF。
 
-桌面版会通过 Windows 原生能力打开图片目录和 PDF，并使用原生确认对话框。启动及异常信息记录在程序目录的 `logs/app.log`。
+默认最多同时下载 2 个任务，每个任务默认并发下载 16 张图片。两项数值都可以在「设置」中调整，保存后重启程序生效。
 
----
+顶部的漫画名、标签、作者搜索框、精确 JM 号搜索框以及「搜索结果」卡片目前只预留界面，不执行搜索或下载。当前可用的下载入口是「下载任务」标签页中的 JM 号输入框。
 
-## 文件结构
+## 本地漫画库
 
-```
+「本地漫画库」会扫描当前设置的图片和 PDF 目录，并支持：
+
+- 按 JM 号搜索。
+- 筛选全部、有图片或有 PDF 的项目。
+- 打开图片目录，或使用系统默认程序查看 PDF。
+- 从已有图片生成或重新生成 PDF。
+- 分别删除图片、PDF，或删除全部本地文件。
+
+下载或本地文件操作进行中时，相关项目会暂时禁止冲突操作。需要重新扫描磁盘内容时，点击工具栏中的刷新按钮。
+
+## 设置与文件
+
+常用选项都在桌面窗口的「设置」页管理：
+
+- 图片目录和 PDF 目录。
+- 同时下载任务数，范围为 1 至 8。
+- 单任务图片并发数，范围为 1 至 64。
+- 日志级别。
+- 启动页面和窗口尺寸。
+- 明亮或黑暗主题。
+
+主题和窗口尺寸会立即更新；下载并发、输出目录、日志级别和启动页面等设置在下次启动后完整生效。设置保存在程序目录的 `settings.json`。程序目录内的路径会保存为相对路径，外部目录会保存为绝对路径。
+
+`option.yml` 保留 JMComic 下载器的底层选项，例如图片后缀和失败重试次数。图片并发请在设置页修改，不要通过 `option.yml` 调整。
+
+默认运行时文件如下：
+
+| 路径 | 内容 |
+|------|------|
+| `Pictures/` | 漫画章节图片 |
+| `PDFs/` | 生成的 PDF |
+| `logs/app.log` | 程序运行日志 |
+| `settings.json` | 桌面应用设置 |
+| `option.yml` | 下载器底层配置 |
+
+## 项目结构
+
+```text
 JM-Download&wrap_program/
-├── desktop.py            ← 桌面窗口入口
-├── app.py                ← 浏览器调试入口
-├── jm_downloader/        ← API、任务调度、下载、PDF 及漫画库模块
-├── server.py             ← 旧启动方式兼容入口
-├── download_worker.py    ← 旧导入方式兼容模块
-├── jpg2pdf.py            ← PDF 命令行兼容入口
-├── option.yml            ← 下载配置
-├── requirements.txt      ← 固定版本依赖清单
-├── static/
-│   ├── index.html        ← Web 前端结构
-│   ├── app.css           ← 界面样式
-│   └── app.js            ← 前端交互
+├── desktop.py               # Qt 正式入口
+├── jm_downloader/
+│   ├── qt/                  # 原生窗口、页面、控制器和主题资源
+│   ├── tasks.py             # 下载队列与并发控制
+│   ├── downloader.py        # JMComic 下载适配
+│   ├── library.py           # 本地漫画库
+│   ├── pdf.py               # PDF 生成
+│   └── settings.py          # 设置模型与便携路径
+├── option.yml               # 下载器底层配置
+├── requirements.txt         # 源码运行依赖
+├── JM-Downloader.spec       # PyInstaller 构建配置
 ├── scripts/
-│   ├── setup.ps1         ← 环境配置实现
-│   └── build.ps1         ← 发行包构建脚本
-├── Pictures/             ← 图片输出（自动创建）
-├── PDFs/                 ← PDF 输出（自动创建）
-├── python installer/     ← 内置 Python 安装程序
-├── .venv/                ← 本机虚拟环境（安装时生成，不参与分发）
-├── start.bat             ← 唯一双击入口
-└── README.md             ← 本说明文件
+│   ├── setup.ps1            # 源码环境配置
+│   └── build.ps1            # Windows 发行包构建
+├── start.bat                # 源码快捷启动入口
+├── Pictures/                # 默认图片输出，运行时创建
+├── PDFs/                    # 默认 PDF 输出，运行时创建
+└── settings.json            # 应用设置，运行时创建
 ```
-
----
 
 ## 常见问题
 
-**Q: 正式版双击后没有窗口？**
-A: 运行 `JM-Downloader-Debug.exe` 查看终端错误，同时检查 `logs/app.log`。
+**正式版双击后没有窗口？**
 
-**Q: 源码版 start.bat 闪退？**
-A: 在项目目录打开 PowerShell，运行 `.\.venv\Scripts\python.exe desktop.py` 查看错误。浏览器调试模式可以运行 `.\.venv\Scripts\python.exe app.py`。
+运行 `JM-Downloader-Debug.exe` 查看终端错误，并检查 `logs/app.log`。程序目录及设置的输出目录必须可写。
 
-**Q: 下载报错 "Restricted Access"？**
-A: 你的 IP 被禁漫限制了。开启代理后重试。
+**源码版启动失败？**
 
-**Q: 下载报错类似 ModuleNotFoundError: No module named 'xxxx'？**
-A: 项目虚拟环境中的依赖不完整。删除 `.venv` 后重新双击 `start.bat` 修复。
+在项目目录运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1`，确认成功后再运行 `.\.venv\Scripts\python.exe desktop.py`。
 
-**Q: 可以复制到另一台电脑直接使用吗？**
-A: 发行版可以，解压 ZIP 后整体复制 `JM-Downloader` 文件夹，不要遗漏 `_internal`。源码版不要复制 `.venv`，应在目标电脑重新运行 `start.bat`。
+**下载报错 `Restricted Access`？**
 
-**Q: 想改下载速度/图片格式？**
-A: 用记事本打开 `option.yml`，修改配置。
+当前网络出口可能受到目标站点限制。确认网络和代理设置后重试。
 
----
+**设置文件损坏或路径不可用？**
 
-## 项目信息
+先退出程序，检查 `settings.json` 中的下载目录。无法修复时可以删除 `settings.json`，程序会在下次启动时恢复默认设置；损坏的配置通常会自动备份为 `settings.json.corrupt-*`。
 
-- 基于 [JMComic-Crawler-Python](https://github.com/hect0x7/JMComic-Crawler-Python)
-- v2.1 使用 pywebview + WebView2 提供独立桌面窗口
-- 请勿一次性下载过多本子，爱护禁漫服务器喵~
+**关闭窗口后下载是否继续？**
+
+有任务正在进行时，程序会先请求确认。确认关闭会请求停止任务并退出；网络操作可能无法瞬间中断，因此请留意退出提示和未完成文件。
 
 ## 构建发行包
 
-开发环境安装完成后运行：
+准备好项目虚拟环境后运行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-脚本会运行测试、构建 PyInstaller `onedir` 目录，并生成 `release/JM-Downloader-v2.1.0-Windows-x64.zip`。ZIP 由 Windows PowerShell 内置功能创建，不依赖 7-Zip；发行包会包含许可证和第三方声明。
+脚本会安装构建依赖、运行完整测试、构建 PyInstaller `onedir` 目录，验证正式版和调试版，生成 `release/JM-Downloader-Windows-x64.zip`，并在终端输出 SHA256。
+
+## 合规与免责声明
+
+本项目是独立的第三方工具，与 JMComic 或软件访问的网站运营方不存在隶属、认可、赞助或官方关联。用户有责任确保使用方式符合适用法律、版权要求、网站服务条款和当地规定。本软件不授予用户对第三方内容的任何权利。
 
 ## License
 

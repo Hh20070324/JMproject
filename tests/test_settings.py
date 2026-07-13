@@ -13,11 +13,10 @@ from jm_downloader.settings import (
 
 
 class AppPathsTests(unittest.TestCase):
-    def test_keeps_user_data_beside_executable_and_web_assets_in_bundle(self):
+    def test_keeps_user_data_beside_executable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "app"
-            resources = Path(temp_dir) / "bundle"
-            paths = AppPaths(root=root, resources=resources)
+            paths = AppPaths(root=root)
 
             self.assertEqual(paths.pictures, root / "Pictures")
             self.assertEqual(paths.pdfs, root / "PDFs")
@@ -25,7 +24,6 @@ class AppPathsTests(unittest.TestCase):
             self.assertEqual(paths.settings_file, root / "settings.json")
             self.assertEqual(paths.legacy_settings_file, root / "settings.ini")
             self.assertEqual(paths.logs, root / "logs")
-            self.assertEqual(paths.web, resources / "static")
 
     def test_resolves_relative_directories_against_current_program_root(self):
         with tempfile.TemporaryDirectory() as temp_dir:

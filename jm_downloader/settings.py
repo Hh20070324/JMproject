@@ -26,11 +26,6 @@ def _default_root() -> Path:
     return SOURCE_ROOT
 
 
-def _default_resources() -> Path:
-    bundle_root = getattr(sys, "_MEIPASS", None)
-    return Path(bundle_root) if bundle_root else SOURCE_ROOT
-
-
 def resolve_portable_path(root: Path, configured_path: str) -> Path:
     path = Path(configured_path)
     if not path.is_absolute():
@@ -223,7 +218,6 @@ class AppSettings:
 @dataclass(frozen=True)
 class AppPaths:
     root: Path = SOURCE_ROOT
-    resources: Path | None = None
     pictures_override: Path | None = None
     pdfs_override: Path | None = None
 
@@ -251,15 +245,10 @@ class AppPaths:
     def logs(self) -> Path:
         return self.root / "logs"
 
-    @property
-    def web(self) -> Path:
-        return (self.resources or self.root) / "static"
-
     def with_settings(self, settings: AppSettings) -> "AppPaths":
         settings.validate()
         return AppPaths(
             root=self.root,
-            resources=self.resources,
             pictures_override=resolve_portable_path(
                 self.root, settings.pictures_directory
             ),
@@ -273,4 +262,4 @@ class AppPaths:
         self.pdfs.mkdir(parents=True, exist_ok=True)
 
 
-DEFAULT_PATHS = AppPaths(root=_default_root(), resources=_default_resources())
+DEFAULT_PATHS = AppPaths(root=_default_root())

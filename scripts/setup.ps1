@@ -109,7 +109,7 @@ if ($LASTEXITCODE -ne 0)
     throw "依赖安装失败，请检查网络连接。"
 }
 
-& $VenvPython -c "import jmcomic, flask, PIL, PySide6.QtCore; print('依赖检查通过')"
+& $VenvPython -c "import jmcomic, PIL, PySide6.QtCore; print('依赖检查通过')"
 if ($LASTEXITCODE -ne 0)
 {
     throw "依赖导入检查失败。"

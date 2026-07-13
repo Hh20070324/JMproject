@@ -197,7 +197,7 @@ def run_qt_app(
             persist_window_state=not smoke_test,
         )
         window.show()
-        logger.info("Qt prototype started")
+        logger.info("Desktop application started")
 
         if smoke_test:
             QTimer.singleShot(50, lambda: window.select_page("library"))
@@ -206,11 +206,13 @@ def run_qt_app(
             QTimer.singleShot(250, window.close)
 
         result = app.exec()
-        logger.info("Qt prototype stopped with exit code %s", result)
+        logger.info("Desktop application stopped with exit code %s", result)
         return result
     except Exception:
         if logger is not None:
-            logger.error("Qt prototype crashed\n%s", traceback.format_exc())
+            logger.error(
+                "Desktop application crashed\n%s", traceback.format_exc()
+            )
         raise
     finally:
         if library_controller is not None:
@@ -232,7 +234,9 @@ def run_qt_app(
 
 
 def main(arguments: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="JM-Downloader Qt prototype")
+    parser = argparse.ArgumentParser(
+        description="JM-Downloader desktop application"
+    )
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--backend-smoke-test", action="store_true")
     parsed, qt_arguments = parser.parse_known_args(arguments)

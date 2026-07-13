@@ -5,18 +5,36 @@ from PyInstaller.utils.hooks import collect_all
 
 jm_datas, jm_binaries, jm_hiddenimports = collect_all("jmcomic")
 curl_datas, curl_binaries, curl_hiddenimports = collect_all("curl_cffi")
-webview_datas, webview_binaries, webview_hiddenimports = collect_all("webview")
 
 a = Analysis(
     ["desktop.py"],
     pathex=[],
-    binaries=jm_binaries + curl_binaries + webview_binaries,
-    datas=[("static", "static")] + jm_datas + curl_datas + webview_datas,
-    hiddenimports=jm_hiddenimports + curl_hiddenimports + webview_hiddenimports,
+    binaries=jm_binaries + curl_binaries,
+    datas=[
+        (
+            "jm_downloader/qt/resources/styles_light.qss",
+            "jm_downloader/qt/resources",
+        ),
+        (
+            "jm_downloader/qt/resources/styles_dark.qss",
+            "jm_downloader/qt/resources",
+        ),
+    ] + jm_datas + curl_datas,
+    hiddenimports=jm_hiddenimports + curl_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "clr",
+        "clr_loader",
+        "flask",
+        "PyQt5",
+        "PyQt6",
+        "PySide2",
+        "pythonnet",
+        "webview",
+        "werkzeug",
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -31,7 +49,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -50,7 +68,7 @@ debug_exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -66,7 +84,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="JM-Downloader",
 )

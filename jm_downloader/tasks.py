@@ -303,18 +303,6 @@ class TaskManager:
             self._listeners.append(listener)
         return listener
 
-    def get_preview_path(self, task_id: str) -> Path:
-        with self._lock:
-            preview = self._find_locked(task_id).get("_preview_path")
-        if not preview:
-            raise TaskNotFound("预览图尚未生成")
-
-        preview_path = Path(preview).resolve()
-        pictures_path = self.paths.pictures.resolve()
-        if not preview_path.is_relative_to(pictures_path) or not preview_path.is_file():
-            raise TaskNotFound("预览图不存在")
-        return preview_path
-
     def remove_listener(self, listener: queue.Queue) -> None:
         with self._listeners_lock:
             if listener in self._listeners:
