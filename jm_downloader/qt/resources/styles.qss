@@ -1,0 +1,67 @@
+QWidget {
+    color: #1f2823;
+    font-family: "Microsoft YaHei UI";
+    font-size: 14px;
+}
+
+QMainWindow,
+QWidget#windowRoot,
+QStackedWidget#pageStack {
+    background: #f4f6f5;
+}
+
+QWidget#sidebar {
+    background: #202823;
+    border-right: 1px solid #111713;
+}
+
+QWidget#brand {
+    background: transparent;
+}
+
+QLabel#brandMark {
+    background: #3b8b63;
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#brandName {
+    background: transparent;
+    color: #f5f8f6;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QToolButton#navButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #dce5df;
+    padding: 0 12px;
+    text-align: left;
+}
+
+QToolButton#navButton:hover {
+    background: #2d3831;
+    border-color: #3a473f;
+}
+
+QToolButton#navButton:checked {
+    background: #355f49;
+    border-color: #4e7862;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+QLabel#pageTitle {
+    color: #18231d;
+    font-size: 24px;
+    font-weight: 650;
+}
+
+QFrame#pageRule {
+    background: #cbd4cf;
+    border: none;
+}

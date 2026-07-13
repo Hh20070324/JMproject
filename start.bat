@@ -6,7 +6,7 @@ cd /d "%~dp0"
 set "VENV_PYTHON=.venv\Scripts\python.exe"
 
 if not exist "%VENV_PYTHON%" goto setup
-"%VENV_PYTHON%" -c "from importlib.metadata import version; import jmcomic, flask, PIL, webview; raise SystemExit(0 if version('jmcomic') == '2.7.1' and version('pywebview') == '6.2.1' else 1)" >nul 2>&1
+"%VENV_PYTHON%" -c "from importlib.metadata import version; import jmcomic, flask, PIL, webview, PySide6.QtCore; raise SystemExit(0 if version('jmcomic') == '2.7.1' and version('pywebview') == '6.2.1' and version('PySide6-Essentials') == '6.11.1' else 1)" >nul 2>&1
 if errorlevel 1 goto setup
 goto run
 

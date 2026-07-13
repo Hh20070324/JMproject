@@ -1,5 +1,3 @@
-import ctypes
-import logging
 import threading
 import traceback
 
@@ -7,52 +5,12 @@ import webview
 from werkzeug.serving import make_server
 
 from jm_downloader.application import create_app
+from jm_downloader.desktop_runtime import (
+    WINDOW_TITLE,
+    SingleInstance,
+    configure_logging,
+)
 from jm_downloader.library import LibraryError
-from jm_downloader.settings import DEFAULT_PATHS
-
-
-WINDOW_TITLE = "JM 漫画下载器"
-MUTEX_NAME = "Local\\JM-Downloader-Desktop"
-
-
-def configure_logging() -> logging.Logger:
-    log_dir = DEFAULT_PATHS.root / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=log_dir / "app.log",
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(threadName)s: %(message)s",
-        encoding="utf-8",
-    )
-    return logging.getLogger("jm-downloader")
-
-
-class SingleInstance:
-    ERROR_ALREADY_EXISTS = 183
-
-    def __init__(self):
-        self._handle = None
-
-    def acquire(self) -> bool:
-        if not hasattr(ctypes, "windll"):
-            return True
-        kernel32 = ctypes.windll.kernel32
-        self._handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-        return bool(self._handle) and kernel32.GetLastError() != self.ERROR_ALREADY_EXISTS
-
-    def activate_existing_window(self) -> None:
-        if not hasattr(ctypes, "windll"):
-            return
-        user32 = ctypes.windll.user32
-        window = user32.FindWindowW(None, WINDOW_TITLE)
-        if window:
-            user32.ShowWindow(window, 9)
-            user32.SetForegroundWindow(window)
-
-    def close(self) -> None:
-        if self._handle and hasattr(ctypes, "windll"):
-            ctypes.windll.kernel32.CloseHandle(self._handle)
-            self._handle = None
 
 
 class DesktopServer:
