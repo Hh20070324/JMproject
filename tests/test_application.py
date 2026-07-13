@@ -6,7 +6,7 @@ from pathlib import Path
 from jm_downloader.application import create_app
 from jm_downloader.models import TaskSnapshot, TaskStatus
 from jm_downloader.settings import AppPaths
-from jm_downloader.tasks import InvalidTaskState, TaskManager
+from jm_downloader.tasks import InvalidTaskState, TaskConflict, TaskManager
 
 
 class WaitingWorker:
@@ -77,6 +77,23 @@ class ApplicationTests(unittest.TestCase):
         response = self.client.post("/api/add", json={"album_id": "123456"})
 
         self.assertEqual(response.status_code, 409)
+
+    def test_active_download_blocks_library_operation(self):
+        self.manager.add("123456")
+
+        with self.assertRaisesRegex(TaskConflict, "暂不可修改"):
+            self.manager.begin_library_operation("123456")
+
+    def test_library_operation_blocks_new_download_until_released(self):
+        album_id = self.manager.begin_library_operation("JM123456")
+
+        blocked = self.client.post("/api/add", json={"album_id": album_id})
+
+        self.assertEqual(blocked.status_code, 409)
+        self.assertTrue(self.manager.is_library_operation_active(album_id))
+        self.manager.end_library_operation(album_id)
+        accepted = self.client.post("/api/add", json={"album_id": album_id})
+        self.assertEqual(accepted.status_code, 200)
 
     def test_sse_initial_state_keeps_legacy_web_payload(self):
         self.client.post("/api/add", json={"album_id": "123456"})
@@ -184,6 +201,26 @@ class ApplicationTests(unittest.TestCase):
         self.assertTrue(self.manager.shutdown(timeout=1))
         self.assertTrue(replacement.stopped)
         self.assertIsNotNone(replacement.wait_timeout)
+
+    def test_retry_returns_conflict_while_library_operation_is_reserved(self):
+        task_id = self.client.post(
+            "/api/add", json={"album_id": "1"}
+        ).get_json()["id"]
+        WaitingWorker.instances[0].callbacks["on_error"]("1", "first failure")
+        reserved_id = self.manager.begin_library_operation("JM1")
+
+        try:
+            response = self.client.post(f"/api/retry/{task_id}")
+        finally:
+            self.manager.end_library_operation("JM1")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("本地库操作", response.get_json()["error"])
+        self.assertEqual(
+            self.manager.get_task(task_id).status,
+            TaskStatus.FAILED,
+        )
+        self.assertFalse(self.manager.is_library_operation_active(reserved_id))
 
     def test_stop_all_notifies_active_workers(self):
         self.client.post("/api/add", json={"album_id": "1"})

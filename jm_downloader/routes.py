@@ -106,6 +106,8 @@ def create_api_blueprint(
     def retry_task(task_id):
         try:
             manager.retry(task_id)
+        except TaskConflict as error:
+            return jsonify({"error": str(error)}), 409
         except (TaskNotFound, InvalidTaskState) as error:
             return jsonify({"error": str(error)}), 400
         return jsonify({"ok": True})
@@ -170,30 +172,49 @@ def create_api_blueprint(
 
     @api.post("/library/<album_id>/pdf")
     def rebuild_library_pdf(album_id):
-        if manager.is_active(album_id):
-            return jsonify({"error": "下载进行中，暂时不能生成 PDF"}), 409
         try:
-            library.rebuild_pdf(album_id)
-            return jsonify(library_payload(library.get_item(album_id)))
-        except LibraryNotFound as error:
-            return jsonify({"error": str(error)}), 404
-        except LibraryError as error:
+            reserved_id = manager.begin_library_operation(album_id)
+        except InvalidAlbumId as error:
             return jsonify({"error": str(error)}), 400
+        except (TaskConflict, InvalidTaskState) as error:
+            return jsonify({"error": str(error)}), 409
+        try:
+            try:
+                library.rebuild_pdf(reserved_id)
+                return jsonify(library_payload(library.get_item(reserved_id)))
+            except LibraryNotFound as error:
+                return jsonify({"error": str(error)}), 404
+            except LibraryError as error:
+                return jsonify({"error": str(error)}), 400
+        finally:
+            manager.end_library_operation(reserved_id)
 
     @api.delete("/library/<album_id>/<kind>")
     def delete_library_files(album_id, kind):
-        if manager.is_active(album_id):
-            return jsonify({"error": "下载进行中，暂时不能删除文件"}), 409
+        methods = {
+            "images": library.delete_images,
+            "pdf": library.delete_pdf,
+            "all": library.delete_all,
+        }
+        method = methods.get(kind)
+        if method is None:
+            return jsonify({"error": "不支持的删除类型"}), 400
         try:
-            if kind == "images":
-                library.delete_images(album_id)
-            elif kind == "pdf":
-                library.delete_pdf(album_id)
-            else:
-                return jsonify({"error": "不支持的删除类型"}), 400
-        except LibraryNotFound as error:
-            return jsonify({"error": str(error)}), 404
-        return jsonify({"ok": True})
+            reserved_id = manager.begin_library_operation(album_id)
+        except InvalidAlbumId as error:
+            return jsonify({"error": str(error)}), 400
+        except (TaskConflict, InvalidTaskState) as error:
+            return jsonify({"error": str(error)}), 409
+        try:
+            try:
+                method(reserved_id)
+            except LibraryNotFound as error:
+                return jsonify({"error": str(error)}), 404
+            except LibraryError as error:
+                return jsonify({"error": str(error)}), 400
+            return jsonify({"ok": True})
+        finally:
+            manager.end_library_operation(reserved_id)
 
     @api.post("/library/<album_id>/open/<kind>")
     def open_library_file(album_id, kind):

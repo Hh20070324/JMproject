@@ -11,7 +11,7 @@ from ..desktop_runtime import SingleInstance, configure_logging
 from ..library import LibraryService
 from ..tasks import TaskManager
 from .backend_smoke import run_backend_smoke
-from .controllers import DownloadController
+from .controllers import DownloadController, LibraryController
 from .main_window import MainWindow
 from .theme import ThemeManager, load_stylesheet, resource_path
 
@@ -48,6 +48,7 @@ def run_qt_app(qt_arguments: list[str], smoke_test: bool = False) -> int:
 
     previous_hook = sys.excepthook
     download_controller = None
+    library_controller = None
     try:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -68,8 +69,13 @@ def run_qt_app(qt_arguments: list[str], smoke_test: bool = False) -> int:
         manager = TaskManager()
         library = LibraryService()
         download_controller = DownloadController(manager, library)
+        library_controller = LibraryController(manager, library)
         previous_hook = install_exception_hook(logger)
-        window = MainWindow(theme_manager, download_controller)
+        window = MainWindow(
+            theme_manager,
+            download_controller,
+            library_controller,
+        )
         window.show()
         logger.info("Qt prototype started")
 
@@ -86,6 +92,11 @@ def run_qt_app(qt_arguments: list[str], smoke_test: bool = False) -> int:
         logger.error("Qt prototype crashed\n%s", traceback.format_exc())
         raise
     finally:
+        if library_controller is not None:
+            if not library_controller.shutdown(timeout=5.0):
+                logger.warning(
+                    "Some library workers did not stop before shutdown timeout"
+                )
         if download_controller is not None:
             if not download_controller.shutdown(timeout=5.0):
                 logger.warning(

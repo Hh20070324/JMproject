@@ -1,4 +1,5 @@
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -65,11 +66,17 @@ class ThumbnailLoader(QObject):
     thumbnail_ready = Signal(str, int, QImage)
     _ready = Signal(object, QImage)
 
-    def __init__(self, parent=None, thread_pool: QThreadPool | None = None):
+    def __init__(
+        self,
+        parent=None,
+        thread_pool: QThreadPool | None = None,
+        cache_capacity: int = 256,
+    ):
         super().__init__(parent)
         self._thread_pool = thread_pool or QThreadPool(self)
+        self._cache_capacity = max(1, int(cache_capacity))
         self._lock = threading.RLock()
-        self._cache: dict[_ThumbnailKey, QImage] = {}
+        self._cache: OrderedDict[_ThumbnailKey, QImage] = OrderedDict()
         self._inflight: set[_RequestToken] = set()
         self._workers: dict[_RequestToken, _ThumbnailRunnable] = {}
         self._task_generations: dict[str, int] = {}
@@ -92,6 +99,7 @@ class ThumbnailLoader(QObject):
             token = _RequestToken(key, generation)
             cached = self._cache.get(key)
             if cached is not None:
+                self._cache.move_to_end(key)
                 self._ready.emit(token, cached.copy())
                 return
             if token in self._inflight:
@@ -113,11 +121,11 @@ class ThumbnailLoader(QObject):
             self._task_generations[task_id] = (
                 self._task_generations.get(task_id, 0) + 1
             )
-            self._cache = {
-                key: image
+            self._cache = OrderedDict(
+                (key, image)
                 for key, image in self._cache.items()
                 if key.task_id != task_id
-            }
+            )
             self._inflight = {
                 token
                 for token in self._inflight
@@ -159,6 +167,9 @@ class ThumbnailLoader(QObject):
             if token.task_generation != current_generation:
                 return
             self._cache[token.key] = image.copy()
+            self._cache.move_to_end(token.key)
+            while len(self._cache) > self._cache_capacity:
+                self._cache.popitem(last=False)
         self._ready.emit(token, image)
 
     @Slot(object, QImage)

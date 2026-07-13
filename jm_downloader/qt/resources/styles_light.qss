@@ -363,3 +363,182 @@ QLabel#emptyTasksLabel {
     border: 1px dashed #c4ccc7;
     color: #65706a;
 }
+
+QLineEdit#librarySearchInput {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 0 12px;
+    selection-background-color: #2e7d57;
+    selection-color: #ffffff;
+}
+
+QLineEdit#librarySearchInput:focus {
+    border: 2px solid #2e7d57;
+    padding: 0 11px;
+}
+
+QFrame#libraryFilterSegment {
+    background: #eef1ef;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+}
+
+QToolButton#libraryFilterButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: #65706a;
+}
+
+QToolButton#libraryFilterButton:hover {
+    background: #e4e9e6;
+    color: #1d2320;
+}
+
+QToolButton#libraryFilterButton:checked {
+    background: #ffffff;
+    border-color: #cdd5d0;
+    color: #1d2320;
+    font-weight: 600;
+}
+
+QToolButton#refreshLibraryButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+}
+
+QToolButton#refreshLibraryButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}
+
+QToolButton#refreshLibraryButton:disabled {
+    background: #eef1ef;
+    border-color: #d7ddd9;
+}
+
+QLabel#libraryCountLabel,
+QLabel#libraryMeta {
+    color: #65706a;
+    font-size: 12px;
+}
+
+QProgressBar#libraryLoadingBar {
+    background: #e6ebe8;
+    border: none;
+}
+
+QProgressBar#libraryLoadingBar::chunk {
+    background: #2e7d57;
+}
+
+QFrame#libraryErrorBanner {
+    background: #fae8e8;
+    border: 1px solid #efc7c7;
+    border-radius: 5px;
+}
+
+QLabel#libraryErrorLabel {
+    color: #a43c3c;
+    font-size: 12px;
+}
+
+QFrame#libraryItemCard {
+    background: #ffffff;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+}
+
+QFrame#libraryItemCard:hover {
+    border-color: #aeb9b2;
+}
+
+QLabel#libraryPreview {
+    background: #e6ebe8;
+    border: 1px solid #d7ddd9;
+    border-radius: 4px;
+    color: #7c8881;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+QLabel#libraryAlbumId {
+    color: #1d2320;
+    font-size: 15px;
+    font-weight: 650;
+}
+
+QLabel#libraryState {
+    background: #eef1ef;
+    border-radius: 3px;
+    color: #65706a;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 7px;
+}
+
+QLabel#libraryState[state="active"] {
+    background: #fff1dc;
+    color: #945f17;
+}
+
+QLabel#libraryState[state="busy"] {
+    background: #e4f2ea;
+    color: #236745;
+}
+
+QWidget#libraryActions QToolButton {
+    background: transparent;
+    border: 1px solid #d7ddd9;
+    border-radius: 5px;
+}
+
+QWidget#libraryActions QToolButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}
+
+QWidget#libraryActions QToolButton:disabled {
+    background: #eef1ef;
+    border-color: #e0e5e2;
+    color: #9aa39e;
+}
+
+QMenu#libraryDeleteMenu {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    padding: 4px;
+}
+
+QMenu#libraryDeleteMenu::item {
+    border-radius: 4px;
+    padding: 7px 24px 7px 10px;
+}
+
+QMenu#libraryDeleteMenu::item:selected {
+    background: #eef1ef;
+}
+
+QMenu#libraryDeleteMenu::item:disabled {
+    color: #9aa39e;
+}
+
+QLabel#libraryEmptyLabel {
+    color: #65706a;
+    font-size: 14px;
+}
+
+QPushButton#retryLibraryButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+}
+
+QPushButton#retryLibraryButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}

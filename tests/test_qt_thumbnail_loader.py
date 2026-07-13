@@ -115,6 +115,36 @@ class ThumbnailLoaderTests(unittest.TestCase):
         self.assertEqual(self.receiver.events[0][:2], ("reused-task", 2))
         loader.deleteLater()
 
+    def test_lru_cache_evicts_oldest_thumbnail(self):
+        first_path = Path(self.temp_dir.name) / "first.png"
+        second_path = Path(self.temp_dir.name) / "second.png"
+        for path, color in (
+            (first_path, 0xFF206080),
+            (second_path, 0xFF802060),
+        ):
+            source = QImage(40, 40, QImage.Format.Format_RGB32)
+            source.fill(color)
+            self.assertTrue(source.save(str(path)))
+        deferred_pool = _DeferredThreadPool()
+        loader = ThumbnailLoader(
+            thread_pool=deferred_pool,
+            cache_capacity=1,
+        )
+        loader.thumbnail_ready.connect(self.receiver.receive)
+
+        loader.request("first", 1, first_path, QSize(40, 40))
+        deferred_pool.runnables[0].run()
+        self.assertTrue(self._wait_for_events(1))
+        loader.request("second", 1, second_path, QSize(40, 40))
+        deferred_pool.runnables[1].run()
+        self.assertTrue(self._wait_for_events(2))
+        loader.request("first", 1, first_path, QSize(40, 40))
+
+        self.assertEqual(len(deferred_pool.runnables), 3)
+        deferred_pool.runnables[2].run()
+        self.assertTrue(self._wait_for_events(3))
+        loader.deleteLater()
+
     def _wait_for_events(self, count: int, timeout_ms: int = 3000) -> bool:
         if len(self.receiver.events) >= count:
             return True

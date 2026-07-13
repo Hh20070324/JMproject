@@ -68,6 +68,7 @@ class TaskManager:
         self._listeners_lock = threading.Lock()
         self._listeners = []
         self._stopping = False
+        self._library_operations = set()
 
     def list_tasks(self) -> list[TaskSnapshot]:
         with self._lock:
@@ -82,6 +83,8 @@ class TaskManager:
         with self._lock:
             if self._stopping:
                 raise InvalidTaskState("任务管理器正在关闭")
+            if album_id in self._library_operations:
+                raise TaskConflict("该漫画正在进行本地库操作")
             if any(
                 task["album_id"] == album_id
                 and task["status"] not in self.TERMINAL_STATUSES
@@ -119,6 +122,36 @@ class TaskManager:
                 in (TaskStatus.PENDING.value, *self.ACTIVE_STATUSES)
                 for task in self._tasks
             )
+
+    def begin_library_operation(self, album_id: str) -> str:
+        album_id = normalize_album_id(album_id)
+        with self._lock:
+            if self._stopping:
+                raise InvalidTaskState("任务管理器正在关闭")
+            if album_id in self._library_operations:
+                raise TaskConflict("该漫画正在进行本地库操作")
+            if any(
+                task["album_id"] == album_id
+                and task["status"]
+                in (TaskStatus.PENDING.value, *self.ACTIVE_STATUSES)
+                for task in self._tasks
+            ):
+                raise TaskConflict("下载中的漫画暂不可修改")
+            self._library_operations.add(album_id)
+        return album_id
+
+    def end_library_operation(self, album_id: str) -> None:
+        album_id = normalize_album_id(album_id)
+        with self._lock:
+            self._library_operations.discard(album_id)
+
+    def is_library_operation_active(self, album_id: str) -> bool:
+        try:
+            album_id = normalize_album_id(album_id)
+        except InvalidAlbumId:
+            return False
+        with self._lock:
+            return album_id in self._library_operations
 
     def has_active_tasks(self) -> bool:
         with self._lock:
@@ -186,6 +219,8 @@ class TaskManager:
             task = self._find_locked(task_id)
             if task["status"] != TaskStatus.FAILED.value:
                 raise InvalidTaskState("任务不存在或不可重试")
+            if task["album_id"] in self._library_operations:
+                raise TaskConflict("该漫画正在进行本地库操作")
             task.update(
                 status=TaskStatus.PENDING.value,
                 error=None,

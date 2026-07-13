@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from ..desktop_runtime import WINDOW_TITLE
 from .controllers.download_controller import DownloadController
+from .controllers.library_controller import LibraryController
 from .pages import DownloadPage, LibraryPage, SettingsPage
 from .theme import ThemeManager
 
@@ -28,11 +29,13 @@ class MainWindow(QMainWindow):
         self,
         theme_manager: ThemeManager,
         download_controller: DownloadController | None = None,
+        library_controller: LibraryController | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self.theme_manager = theme_manager
         self.download_controller = download_controller
+        self.library_controller = library_controller
         self._shutdown_pending = False
         self._shutdown_complete = False
         self.setObjectName("mainWindow")
@@ -59,7 +62,7 @@ class MainWindow(QMainWindow):
         self._nav_buttons = {}
         self._pages = {
             "downloads": DownloadPage(download_controller, self),
-            "library": LibraryPage(self),
+            "library": LibraryPage(library_controller, self),
             "settings": SettingsPage(theme_manager, self),
         }
 
@@ -91,6 +94,9 @@ class MainWindow(QMainWindow):
             raise ValueError(f"Unknown page: {page}")
         self.stack.setCurrentWidget(self._pages[page])
         self._nav_buttons[page].setChecked(True)
+        activate = getattr(self._pages[page], "activate", None)
+        if activate is not None:
+            activate()
 
     def navigation_button(self, page: str) -> QToolButton:
         return self._nav_buttons[page]
@@ -172,6 +178,18 @@ class MainWindow(QMainWindow):
         self.move(frame.topLeft())
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if (
+            self.library_controller is not None
+            and self.library_controller.has_pending_mutations()
+        ):
+            QMessageBox.information(
+                self,
+                "本地库操作进行中",
+                "请等待 PDF 生成或删除操作完成后再退出。",
+            )
+            event.ignore()
+            return
+
         controller = self.download_controller
         if controller is None or self._shutdown_complete:
             super().closeEvent(event)
