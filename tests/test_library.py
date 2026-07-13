@@ -26,11 +26,16 @@ class LibraryServiceTests(unittest.TestCase):
 
         items = self.library.list_items()
 
-        self.assertEqual([item["album_id"] for item in items], ["2", "10", "30"])
+        self.assertEqual([item.album_id for item in items], ["2", "10", "30"])
         item = items[1]
-        self.assertEqual(item["chapter_count"], 1)
-        self.assertEqual(item["image_count"], 2)
-        self.assertTrue(item["has_pdf"])
+        self.assertEqual(item.chapter_count, 1)
+        self.assertEqual(item.image_count, 2)
+        self.assertTrue(item.has_pdf)
+        self.assertEqual(
+            item.preview_path.relative_to(self.paths.pictures).as_posix(),
+            "10/2/2.jpg",
+        )
+        self.assertEqual(item.pdf_path, self.paths.pdfs / "10.pdf")
         self.assertEqual(
             self.library.get_preview("10").relative_to(self.paths.pictures).as_posix(),
             "10/2/2.jpg",
@@ -42,8 +47,8 @@ class LibraryServiceTests(unittest.TestCase):
 
         self.library.delete_images("123")
         item = self.library.get_item("123")
-        self.assertFalse(item["has_images"])
-        self.assertTrue(item["has_pdf"])
+        self.assertFalse(item.has_images)
+        self.assertTrue(item.has_pdf)
 
         self.library.delete_pdf("123")
         with self.assertRaises(LibraryNotFound):

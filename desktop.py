@@ -141,7 +141,10 @@ def main() -> None:
         try:
             webview.start(debug=False)
         finally:
-            manager.stop_all()
+            if not manager.shutdown(timeout=5):
+                logger.warning(
+                    "Some download workers did not stop before shutdown timeout"
+                )
             server.stop()
             logger.info("Desktop application stopped")
     except Exception:

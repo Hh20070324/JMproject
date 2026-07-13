@@ -52,6 +52,8 @@ class DownloadWorker:
 
     def run(self):
         try:
+            if self._stop_flag.is_set():
+                return
             option = self._make_option()
             album_dir = self.paths.pictures / self.album_id
             album_dir.mkdir(parents=True, exist_ok=True)
@@ -99,6 +101,15 @@ class DownloadWorker:
 
     def stop(self):
         self._stop_flag.set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        thread = self._thread
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            return False
+        thread.join(timeout)
+        return not thread.is_alive()
 
     def _on_image_ready(self, image, image_path: str) -> None:
         path = Path(image_path).resolve()
