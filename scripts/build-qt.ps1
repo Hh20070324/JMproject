@@ -95,6 +95,8 @@ try
     Assert-BundledFile "Qt6Core.dll"
     Assert-BundledFile "Qt6Gui.dll"
     Assert-BundledFile "Qt6Widgets.dll"
+    Assert-BundledFile "styles_light.qss"
+    Assert-BundledFile "styles_dark.qss"
 
     $Forbidden = Get-ChildItem -LiteralPath $AppDir -Recurse -Force |
         Where-Object {

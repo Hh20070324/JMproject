@@ -7,7 +7,11 @@ a = Analysis(
     binaries=[],
     datas=[
         (
-            "jm_downloader/qt/resources/styles.qss",
+            "jm_downloader/qt/resources/styles_light.qss",
+            "jm_downloader/qt/resources",
+        ),
+        (
+            "jm_downloader/qt/resources/styles_dark.qss",
             "jm_downloader/qt/resources",
         )
     ],

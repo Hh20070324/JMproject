@@ -15,13 +15,15 @@ from PySide6.QtWidgets import (
 
 from ..desktop_runtime import WINDOW_TITLE
 from .pages import DownloadPage, LibraryPage, SettingsPage
+from .theme import ThemeManager
 
 
 class MainWindow(QMainWindow):
     PAGE_ORDER = ("downloads", "library", "settings")
 
-    def __init__(self, parent=None):
+    def __init__(self, theme_manager: ThemeManager, parent=None):
         super().__init__(parent)
+        self.theme_manager = theme_manager
         self.setObjectName("mainWindow")
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(1100, 720)
@@ -47,7 +49,7 @@ class MainWindow(QMainWindow):
         self._pages = {
             "downloads": DownloadPage(self),
             "library": LibraryPage(self),
-            "settings": SettingsPage(self),
+            "settings": SettingsPage(theme_manager, self),
         }
 
         root_layout.addWidget(self._create_sidebar(root))
@@ -76,6 +78,9 @@ class MainWindow(QMainWindow):
 
     def navigation_button(self, page: str) -> QToolButton:
         return self._nav_buttons[page]
+
+    def page(self, page: str) -> QWidget:
+        return self._pages[page]
 
     def _create_sidebar(self, parent: QWidget) -> QWidget:
         sidebar = QWidget(parent)

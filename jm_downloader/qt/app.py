@@ -2,7 +2,6 @@ import argparse
 import logging
 import sys
 import traceback
-from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QGuiApplication
@@ -10,25 +9,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 from ..desktop_runtime import SingleInstance, configure_logging
 from .main_window import MainWindow
+from .theme import ThemeManager, load_stylesheet, resource_path
 
 
 APPLICATION_NAME = "JM-Downloader"
 ORGANIZATION_NAME = "JMProject"
-
-
-def resource_path(filename: str) -> Path:
-    bundle_root = getattr(sys, "_MEIPASS", None)
-    if bundle_root is not None:
-        return Path(bundle_root) / "jm_downloader" / "qt" / "resources" / filename
-    return Path(__file__).resolve().parent / "resources" / filename
-
-
-def load_stylesheet() -> str:
-    try:
-        return resource_path("styles.qss").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
 
 def install_exception_hook(logger: logging.Logger):
     previous_hook = sys.excepthook
@@ -70,14 +55,13 @@ def run_qt_app(qt_arguments: list[str], smoke_test: bool = False) -> int:
             app.style().standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
         )
 
-        stylesheet = load_stylesheet()
-        if stylesheet:
-            app.setStyleSheet(stylesheet)
-        else:
+        theme_manager = ThemeManager()
+        theme_manager.apply()
+        if not app.styleSheet():
             logger.warning("Qt stylesheet could not be loaded")
 
         previous_hook = install_exception_hook(logger)
-        window = MainWindow()
+        window = MainWindow(theme_manager)
         window.show()
         logger.info("Qt prototype started")
 

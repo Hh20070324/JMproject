@@ -1,0 +1,210 @@
+QWidget {
+    color: #1d2320;
+    font-family: "Microsoft YaHei UI";
+    font-size: 14px;
+}
+
+QMainWindow,
+QWidget#windowRoot,
+QStackedWidget#pageStack,
+QWidget#downloadPage,
+QWidget#libraryPage,
+QWidget#settingsPage {
+    background: #f5f7f6;
+}
+
+QWidget#sidebar {
+    background: #222624;
+    border-right: 1px solid #161917;
+}
+
+QWidget#brand {
+    background: transparent;
+}
+
+QLabel#brandMark {
+    background: #2e7d57;
+    border-radius: 6px;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#brandName {
+    background: transparent;
+    color: #f5f7f6;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+QToolButton#navButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #dce2de;
+    padding: 0 12px;
+    text-align: left;
+}
+
+QToolButton#navButton:hover {
+    background: #303532;
+    border-color: #404642;
+}
+
+QToolButton#navButton:checked {
+    background: #315f49;
+    border-color: #46745d;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+QLabel#pageTitle {
+    color: #1d2320;
+    font-size: 24px;
+    font-weight: 650;
+}
+
+QLabel#sectionTitle {
+    color: #1d2320;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QLabel#comicAuthor,
+QLabel#comicMetadata,
+QLabel#coverCaption {
+    color: #65706a;
+}
+
+QFrame#pageRule {
+    background: #d7ddd9;
+    border: none;
+}
+
+QLineEdit#generalSearchInput,
+QLineEdit#jmIdSearchInput {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    min-height: 40px;
+    padding: 0 12px;
+    selection-background-color: #2e7d57;
+    selection-color: #ffffff;
+}
+
+QLineEdit#generalSearchInput:hover,
+QLineEdit#jmIdSearchInput:hover {
+    border-color: #9da9a2;
+}
+
+QLineEdit#generalSearchInput:focus,
+QLineEdit#jmIdSearchInput:focus {
+    border: 2px solid #2e7d57;
+    padding: 0 11px;
+}
+
+QLineEdit#generalSearchInput:disabled,
+QLineEdit#jmIdSearchInput:disabled {
+    background: #eef1ef;
+    color: #8a948e;
+}
+
+QScrollArea#resultsScroll,
+QScrollArea#libraryScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#resultsScroll > QWidget > QWidget,
+QScrollArea#libraryScrollArea > QWidget > QWidget {
+    background: #f5f7f6;
+}
+
+QFrame#comicCard {
+    background: #ffffff;
+    border: 1px solid #d7ddd9;
+    border-radius: 8px;
+}
+
+QFrame#comicCard:hover {
+    border-color: #aeb9b2;
+}
+
+QWidget#coverPlaceholder,
+QLabel#coverPlaceholder {
+    background: #e6ebe8;
+    border: none;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    color: #7c8881;
+}
+
+QLabel#comicTitle {
+    color: #1d2320;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#coverMark {
+    color: #65706a;
+    font-size: 24px;
+    font-weight: 700;
+}
+
+QFrame#settingsRow {
+    border-bottom: 1px solid #d7ddd9;
+}
+
+QFrame#themeSegment {
+    background: #eef1ef;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+}
+
+QToolButton#themeButton {
+    background: #eef1ef;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #46504a;
+    min-height: 34px;
+    min-width: 68px;
+    padding: 0 10px;
+}
+
+QToolButton#themeButton:hover {
+    background: #e4e9e6;
+    border-color: #aeb9b2;
+}
+
+QToolButton#themeButton:checked {
+    background: #2e7d57;
+    border-color: #2e7d57;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    margin: 2px;
+    width: 10px;
+}
+
+QScrollBar::handle:vertical {
+    background: #bdc6c0;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #9da9a2;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+    border: none;
+    height: 0;
+}

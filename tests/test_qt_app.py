@@ -1,15 +1,19 @@
 import os
+from pathlib import Path
+import tempfile
 import unittest
 
 
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtWidgets import QApplication, QWidget
 
 from jm_downloader.desktop_runtime import WINDOW_TITLE
 from jm_downloader.qt.app import load_stylesheet, resource_path
 from jm_downloader.qt.main_window import MainWindow
+from jm_downloader.qt.theme import Theme, ThemeManager
 
 
 class QtMainWindowTests(unittest.TestCase):
@@ -18,11 +22,23 @@ class QtMainWindowTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication(["qt-tests"])
 
     def setUp(self):
-        self.window = MainWindow()
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.settings_path = Path(self.temp_dir.name) / "settings.ini"
+        self.settings = QSettings(
+            str(self.settings_path), QSettings.Format.IniFormat
+        )
+        self.theme_manager = ThemeManager(self.settings)
+        self.theme_manager.apply()
+        self.window = MainWindow(self.theme_manager)
+        self.window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        self.window.show()
+        self.app.processEvents()
 
     def tearDown(self):
         self.window.close()
         self.app.processEvents()
+        self.settings = None
+        self.temp_dir.cleanup()
 
     def test_has_native_window_basics(self):
         self.assertEqual(self.window.windowTitle(), WINDOW_TITLE)
@@ -49,15 +65,79 @@ class QtMainWindowTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(self.window.current_page, "downloads")
 
+        download_page = self.window.page("downloads")
+        download_page.general_search_input.setText("保留输入")
+        self.window.select_page("settings")
+        self.window.select_page("downloads")
+        self.assertEqual(download_page.general_search_input.text(), "保留输入")
+
     def test_rejects_unknown_page(self):
         with self.assertRaises(ValueError):
             self.window.select_page("missing")
 
-    def test_stylesheet_resource_is_available(self):
-        self.assertTrue(resource_path("styles.qss").is_file())
-        stylesheet = load_stylesheet()
-        self.assertIn("QToolButton#navButton", stylesheet)
-        self.assertIn("QLabel#pageTitle", stylesheet)
+    def test_search_layout_and_placeholder_cards(self):
+        self.window.resize(760, 520)
+        self.app.processEvents()
+        self.app.processEvents()
+
+        page = self.window.page("downloads")
+        self.assertEqual(
+            page.general_search_input.placeholderText(),
+            "搜索漫画名、标签或作者",
+        )
+        self.assertIn("JM", page.jm_id_search_input.placeholderText())
+        self.assertGreater(
+            page.general_search_input.width(), page.jm_id_search_input.width()
+        )
+        self.assertFalse(
+            page.general_search_input.geometry().intersects(
+                page.jm_id_search_input.geometry()
+            )
+        )
+
+        self.assertEqual(len(page.comic_cards), 8)
+        card = page.comic_cards[0]
+        info = card.findChild(QWidget, "comicInfo")
+        self.assertGreater(card.height(), card.width())
+        self.assertLess(card.cover.geometry().top(), info.geometry().top())
+        self.assertEqual(page.column_count, 2)
+
+        self.window.resize(1100, 720)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(page.column_count, 4)
+
+    def test_switches_theme_from_settings_and_persists_it(self):
+        settings_page = self.window.page("settings")
+        light_stylesheet = self.app.styleSheet()
+        self.assertTrue(settings_page.theme_button(Theme.LIGHT).isChecked())
+
+        settings_page.theme_button(Theme.DARK).click()
+        self.app.processEvents()
+        self.assertEqual(self.theme_manager.theme, Theme.DARK)
+        self.assertTrue(settings_page.theme_button(Theme.DARK).isChecked())
+        self.assertNotEqual(self.app.styleSheet(), light_stylesheet)
+
+        restored = ThemeManager(
+            QSettings(str(self.settings_path), QSettings.Format.IniFormat)
+        )
+        self.assertEqual(restored.theme, Theme.DARK)
+
+    def test_unknown_saved_theme_falls_back_to_light(self):
+        invalid_path = Path(self.temp_dir.name) / "invalid.ini"
+        settings = QSettings(str(invalid_path), QSettings.Format.IniFormat)
+        settings.setValue("appearance/theme", "missing")
+        settings.sync()
+        self.assertEqual(ThemeManager(settings).theme, Theme.LIGHT)
+
+    def test_theme_stylesheet_resources_are_available(self):
+        for theme in (Theme.LIGHT, Theme.DARK):
+            path = resource_path(f"styles_{theme.value}.qss")
+            self.assertTrue(path.is_file())
+            stylesheet = load_stylesheet(theme)
+            self.assertIn("QToolButton#navButton", stylesheet)
+            self.assertIn("QFrame#comicCard", stylesheet)
+            self.assertIn("QToolButton#themeButton", stylesheet)
 
 
 if __name__ == "__main__":
