@@ -42,20 +42,37 @@ function Assert-BundledFile
     }
 }
 
-function Invoke-SmokeTest
+function Assert-BundledPath
 {
-    param([Parameter(Mandatory)][string]$Executable)
+    param([Parameter(Mandatory)][string]$RelativePattern)
 
-    $Process = Start-Process -FilePath $Executable -ArgumentList "--smoke-test" -PassThru -WindowStyle Hidden
+    $Pattern = Join-Path $AppDir $RelativePattern
+    $Match = Get-ChildItem -Path $Pattern -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $Match)
+    {
+        throw "Qt 发行目录缺少文件：$RelativePattern"
+    }
+}
+
+function Invoke-ExecutableTest
+{
+    param(
+        [Parameter(Mandatory)][string]$Executable,
+        [Parameter(Mandatory)][string]$Argument,
+        [Parameter(Mandatory)][string]$Description
+    )
+
+    $Process = Start-Process -FilePath $Executable -ArgumentList $Argument -PassThru -WindowStyle Hidden
     if (-not $Process.WaitForExit(30000))
     {
         Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
         $Process.WaitForExit()
-        throw "Qt 启动验证超时：$Executable"
+        throw "$Description 超时：$Executable"
     }
     if ($Process.ExitCode -ne 0)
     {
-        throw "Qt 启动验证失败：$Executable，退出代码：$($Process.ExitCode)"
+        throw "$Description 失败：$Executable，退出代码：$($Process.ExitCode)"
     }
 }
 
@@ -76,8 +93,8 @@ try
 
     if (-not $SkipTests)
     {
-        Write-Host "正在运行 Qt 测试..."
-        & $Python -m unittest discover -s tests -p test_qt_app.py -v
+        Write-Host "正在运行完整测试..."
+        & $Python -m unittest discover -s tests -v
         if ($LASTEXITCODE -ne 0) { throw "测试失败，已停止 Qt 构建。" }
     }
 
@@ -89,14 +106,26 @@ try
     & $Python -m PyInstaller --noconfirm --clean --workpath $BuildDir --distpath $DistDir JM-Downloader-Qt.spec
     if ($LASTEXITCODE -ne 0) { throw "Qt PyInstaller 构建失败。" }
 
+    Copy-Item -LiteralPath "option.yml" -Destination $AppDir
+    Copy-Item -LiteralPath "LICENSE" -Destination $AppDir
+    Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $AppDir
+
     Assert-BundledFile "JM-Downloader-Qt.exe"
     Assert-BundledFile "JM-Downloader-Qt-Debug.exe"
+    Assert-BundledFile "option.yml"
+    Assert-BundledFile "LICENSE"
+    Assert-BundledFile "THIRD_PARTY_NOTICES.md"
     Assert-BundledFile "qwindows.dll"
     Assert-BundledFile "Qt6Core.dll"
     Assert-BundledFile "Qt6Gui.dll"
     Assert-BundledFile "Qt6Widgets.dll"
     Assert-BundledFile "styles_light.qss"
     Assert-BundledFile "styles_dark.qss"
+    Assert-BundledPath "_internal\curl_cffi\_wrapper.pyd"
+    Assert-BundledPath "_internal\certifi\cacert.pem"
+    Assert-BundledPath "_internal\yaml\_yaml*.pyd"
+    Assert-BundledPath "_internal\Crypto\Cipher\_raw_aes*.pyd"
+    Assert-BundledPath "_internal\PIL\_imaging*.pyd"
 
     $Forbidden = Get-ChildItem -LiteralPath $AppDir -Recurse -Force |
         Where-Object {
@@ -110,10 +139,16 @@ try
     }
 
     Write-Host "正在验证 Qt 正式版..."
-    Invoke-SmokeTest (Join-Path $AppDir "JM-Downloader-Qt.exe")
+    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt.exe") "--smoke-test" "Qt 启动验证"
 
     Write-Host "正在验证 Qt 调试版..."
-    Invoke-SmokeTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe")
+    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe") "--smoke-test" "Qt 启动验证"
+
+    Write-Host "正在验证正式版离线下载后端..."
+    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt.exe") "--backend-smoke-test" "离线下载后端验证"
+
+    Write-Host "正在验证调试版离线下载后端..."
+    Invoke-ExecutableTest (Join-Path $AppDir "JM-Downloader-Qt-Debug.exe") "--backend-smoke-test" "离线下载后端验证"
 
     Remove-BuildDirectory (Join-Path $AppDir "logs")
 

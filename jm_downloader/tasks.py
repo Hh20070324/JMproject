@@ -419,6 +419,9 @@ class TaskManager:
                 task_id, generation, "PDF 输出路径不在受管目录中"
             )
             return
+        if not path.is_file():
+            self._on_error(task_id, generation, "PDF 文件不存在")
+            return
         with self._lock:
             task = self._find_active_generation_locked(task_id, generation)
             if task is None:

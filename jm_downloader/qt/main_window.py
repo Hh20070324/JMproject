@@ -1,10 +1,12 @@
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QSizePolicy,
     QStackedWidget,
     QStyle,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..desktop_runtime import WINDOW_TITLE
+from .controllers.download_controller import DownloadController
 from .pages import DownloadPage, LibraryPage, SettingsPage
 from .theme import ThemeManager
 
@@ -21,9 +24,17 @@ from .theme import ThemeManager
 class MainWindow(QMainWindow):
     PAGE_ORDER = ("downloads", "library", "settings")
 
-    def __init__(self, theme_manager: ThemeManager, parent=None):
+    def __init__(
+        self,
+        theme_manager: ThemeManager,
+        download_controller: DownloadController | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.theme_manager = theme_manager
+        self.download_controller = download_controller
+        self._shutdown_pending = False
+        self._shutdown_complete = False
         self.setObjectName("mainWindow")
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(1100, 720)
@@ -47,7 +58,7 @@ class MainWindow(QMainWindow):
         self._navigation.setExclusive(True)
         self._nav_buttons = {}
         self._pages = {
-            "downloads": DownloadPage(self),
+            "downloads": DownloadPage(download_controller, self),
             "library": LibraryPage(self),
             "settings": SettingsPage(theme_manager, self),
         }
@@ -65,6 +76,11 @@ class MainWindow(QMainWindow):
 
         self.select_page("downloads")
         self._center_on_screen()
+
+        if self.download_controller is not None:
+            self.download_controller.shutdown_finished.connect(
+                self._finish_download_shutdown
+            )
 
     @property
     def current_page(self) -> str:
@@ -154,3 +170,43 @@ class MainWindow(QMainWindow):
         frame = self.frameGeometry()
         frame.moveCenter(screen.availableGeometry().center())
         self.move(frame.topLeft())
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        controller = self.download_controller
+        if controller is None or self._shutdown_complete:
+            super().closeEvent(event)
+            return
+        if self._shutdown_pending:
+            event.ignore()
+            return
+        if not controller.has_active_tasks():
+            super().closeEvent(event)
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "下载仍在进行",
+            "关闭窗口将停止正在进行的下载，确定要退出吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            event.ignore()
+            return
+
+        event.ignore()
+        self._shutdown_pending = True
+        self.setEnabled(False)
+        controller.begin_shutdown(timeout=5.0)
+
+    def _finish_download_shutdown(self, completed: bool) -> None:
+        self._shutdown_pending = False
+        self._shutdown_complete = True
+        self.setEnabled(True)
+        if not completed:
+            QMessageBox.warning(
+                self,
+                "下载尚未完全停止",
+                "部分后台任务未能及时停止，可能留下未完成的文件。",
+            )
+        self.close()

@@ -111,12 +111,14 @@ QLineEdit#jmIdSearchInput:disabled {
 }
 
 QScrollArea#resultsScroll,
+QScrollArea#tasksScroll,
 QScrollArea#libraryScrollArea {
     background: transparent;
     border: none;
 }
 
 QScrollArea#resultsScroll > QWidget > QWidget,
+QScrollArea#tasksScroll > QWidget > QWidget,
 QScrollArea#libraryScrollArea > QWidget > QWidget {
     background: #171a18;
 }
@@ -207,4 +209,153 @@ QScrollBar::sub-page:vertical {
     background: transparent;
     border: none;
     height: 0;
+}
+
+QTabBar#downloadViewTabs::tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: #a8b0ab;
+    min-width: 88px;
+    padding: 8px 14px;
+}
+
+QTabBar#downloadViewTabs::tab:hover {
+    color: #edf2ef;
+}
+
+QTabBar#downloadViewTabs::tab:selected {
+    border-bottom-color: #58b989;
+    color: #edf2ef;
+    font-weight: 600;
+}
+
+QLineEdit#downloadAlbumInput {
+    background: #232725;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+    color: #edf2ef;
+    padding: 0 12px;
+    selection-background-color: #58b989;
+    selection-color: #101512;
+}
+
+QLineEdit#downloadAlbumInput:focus {
+    border: 2px solid #58b989;
+    padding: 0 11px;
+}
+
+QPushButton#startDownloadButton {
+    background: #58b989;
+    border: 1px solid #58b989;
+    border-radius: 6px;
+    color: #101512;
+    font-weight: 600;
+}
+
+QPushButton#startDownloadButton:hover {
+    background: #6bc697;
+    border-color: #6bc697;
+}
+
+QPushButton#startDownloadButton:disabled {
+    background: #343a36;
+    border-color: #454c48;
+    color: #777f7a;
+}
+
+QFrame#downloadTaskRow {
+    background: #232725;
+    border: 1px solid #3b423e;
+    border-left: 3px solid #59635d;
+    border-radius: 6px;
+}
+
+QFrame#downloadTaskRow[status="fetching"] {
+    border-left-color: #d49a4a;
+}
+
+QFrame#downloadTaskRow[status="downloading"] {
+    border-left-color: #58b989;
+}
+
+QFrame#downloadTaskRow[status="completed"] {
+    border-left-color: #58b989;
+}
+
+QFrame#downloadTaskRow[status="failed"] {
+    border-left-color: #d96c6c;
+}
+
+QLabel#taskPreview {
+    background: #2e3431;
+    border: 1px solid #3b423e;
+    border-radius: 4px;
+    color: #a8b0ab;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+QLabel#taskKicker,
+QLabel#taskDetail {
+    color: #a8b0ab;
+    font-size: 12px;
+}
+
+QLabel#taskTitle {
+    color: #edf2ef;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QProgressBar#taskProgress {
+    background: #343a36;
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#taskProgress::chunk {
+    background: #58b989;
+    border-radius: 3px;
+}
+
+QLabel#taskStatus {
+    background: #2a2f2c;
+    border-radius: 3px;
+    color: #a8b0ab;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 7px;
+}
+
+QLabel#taskStatus[status="fetching"] {
+    background: #3d3221;
+    color: #e4b46f;
+}
+
+QLabel#taskStatus[status="downloading"],
+QLabel#taskStatus[status="completed"] {
+    background: #20382d;
+    color: #79cfa3;
+}
+
+QLabel#taskStatus[status="failed"] {
+    background: #402727;
+    color: #e68b8b;
+}
+
+QWidget#taskActions QToolButton {
+    background: transparent;
+    border: 1px solid #3b423e;
+    border-radius: 5px;
+}
+
+QWidget#taskActions QToolButton:hover {
+    background: #343a36;
+    border-color: #59635d;
+}
+
+QLabel#emptyTasksLabel {
+    border: 1px dashed #454c48;
+    color: #a8b0ab;
 }

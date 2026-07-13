@@ -152,6 +152,21 @@ class ApplicationTests(unittest.TestCase):
             [TaskStatus.COMPLETED, TaskStatus.FETCHING, TaskStatus.FETCHING],
         )
 
+    def test_worker_cannot_complete_with_missing_pdf(self):
+        task_id = self.client.post(
+            "/api/add", json={"album_id": "1"}
+        ).get_json()["id"]
+        missing_pdf = self.paths.pdfs / "missing.pdf"
+
+        WaitingWorker.instances[0].callbacks["on_complete"](
+            "1", str(missing_pdf)
+        )
+
+        snapshot = self.manager.get_task(task_id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertEqual(snapshot.error, "PDF 文件不存在")
+        self.assertIsNone(snapshot.pdf_path)
+
     def test_stale_worker_callback_does_not_replace_retry_generation(self):
         task_id = self.client.post(
             "/api/add", json={"album_id": "1"}

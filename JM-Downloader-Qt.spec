@@ -1,10 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all
+
+
+jm_datas, jm_binaries, jm_hiddenimports = collect_all("jmcomic")
+curl_datas, curl_binaries, curl_hiddenimports = collect_all("curl_cffi")
+
 
 a = Analysis(
     ["desktop_qt.py"],
     pathex=[],
-    binaries=[],
+    binaries=jm_binaries + curl_binaries,
     datas=[
         (
             "jm_downloader/qt/resources/styles_light.qss",
@@ -14,17 +20,15 @@ a = Analysis(
             "jm_downloader/qt/resources/styles_dark.qss",
             "jm_downloader/qt/resources",
         )
-    ],
-    hiddenimports=[],
+    ] + jm_datas + curl_datas,
+    hiddenimports=jm_hiddenimports + curl_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         "clr",
         "clr_loader",
-        "curl_cffi",
         "flask",
-        "jmcomic",
         "PyQt5",
         "PyQt6",
         "PySide2",

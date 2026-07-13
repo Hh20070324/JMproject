@@ -1,17 +1,28 @@
-from PySide6.QtCore import QEvent, Qt, QTimer
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
+    QTabBar,
     QVBoxLayout,
     QWidget,
 )
 
+from ..widgets.task_row import DownloadTaskRow
+from ..widgets.thumbnail_loader import ThumbnailLoader
 from .base import SectionPage
+
+if TYPE_CHECKING:
+    from ..controllers.download_controller import DownloadController
 
 
 class ComicPlaceholderCard(QFrame):
@@ -69,8 +80,13 @@ class ComicPlaceholderCard(QFrame):
 
 
 class DownloadPage(SectionPage):
-    def __init__(self, parent=None):
+    def __init__(self, controller: "DownloadController | None" = None, parent=None):
         super().__init__("下载任务", "downloadPage", parent)
+        self._controller = controller
+        self._task_rows = {}
+        self._preview_requests = {}
+        self._thumbnail_loader = ThumbnailLoader(self)
+        self._thumbnail_loader.thumbnail_ready.connect(self._on_thumbnail_ready)
 
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
@@ -91,11 +107,39 @@ class DownloadPage(SectionPage):
         search_layout.addWidget(self.jm_id_search_input)
         self.content_layout.addLayout(search_layout)
 
-        results_heading = QLabel("搜索结果", self.content)
-        results_heading.setObjectName("sectionTitle")
-        self.content_layout.addWidget(results_heading)
+        self.view_tabs = QTabBar(self.content)
+        self.view_tabs.setObjectName("downloadViewTabs")
+        self.view_tabs.setDrawBase(False)
+        self.view_tabs.setExpanding(False)
+        self.view_tabs.addTab("搜索结果")
+        self.view_tabs.addTab("下载任务 0")
+        self.content_layout.addWidget(self.view_tabs)
 
-        self.results_scroll = QScrollArea(self.content)
+        self.view_stack = QStackedWidget(self.content)
+        self.view_stack.setObjectName("downloadViewStack")
+        self.content_layout.addWidget(self.view_stack, 1)
+        self.view_tabs.currentChanged.connect(self.view_stack.setCurrentIndex)
+
+        self._create_results_view()
+        self._create_tasks_view()
+        self.view_tabs.setCurrentIndex(0)
+
+        if self._controller is not None:
+            self._controller.tasks_reset.connect(self._set_tasks)
+            self._controller.command_failed.connect(self._show_command_error)
+            self._set_tasks(self._controller.list_tasks())
+
+        self._column_count = 0
+        QTimer.singleShot(0, self._reflow_cards)
+
+    def _create_results_view(self) -> None:
+        results_view = QWidget(self.view_stack)
+        results_view.setObjectName("searchResultsView")
+        results_layout = QVBoxLayout(results_view)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(0)
+
+        self.results_scroll = QScrollArea(results_view)
         self.results_scroll.setObjectName("resultsScroll")
         self.results_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.results_scroll.setWidgetResizable(True)
@@ -122,10 +166,62 @@ class DownloadPage(SectionPage):
         )
         self.results_scroll.setWidget(self.results_canvas)
         self.results_scroll.viewport().installEventFilter(self)
-        self.content_layout.addWidget(self.results_scroll, 1)
+        results_layout.addWidget(self.results_scroll)
+        self.view_stack.addWidget(results_view)
 
-        self._column_count = 0
-        QTimer.singleShot(0, self._reflow_cards)
+    def _create_tasks_view(self) -> None:
+        tasks_view = QWidget(self.view_stack)
+        tasks_view.setObjectName("downloadTasksView")
+        tasks_layout = QVBoxLayout(tasks_view)
+        tasks_layout.setContentsMargins(0, 0, 0, 0)
+        tasks_layout.setSpacing(12)
+
+        command_layout = QHBoxLayout()
+        command_layout.setContentsMargins(0, 0, 0, 0)
+        command_layout.setSpacing(10)
+
+        self.download_input = QLineEdit(tasks_view)
+        self.download_input.setObjectName("downloadAlbumInput")
+        self.download_input.setPlaceholderText("输入 JM 号")
+        self.download_input.setClearButtonEnabled(True)
+        self.download_input.setFixedHeight(42)
+        self.download_input.returnPressed.connect(self._add_download_task)
+        command_layout.addWidget(self.download_input, 1)
+
+        self.download_button = QPushButton("开始下载", tasks_view)
+        self.download_button.setObjectName("startDownloadButton")
+        self.download_button.setFixedSize(112, 42)
+        self.download_button.clicked.connect(self._add_download_task)
+        command_layout.addWidget(self.download_button)
+        tasks_layout.addLayout(command_layout)
+
+        enabled = self._controller is not None
+        self.download_input.setEnabled(enabled)
+        self.download_button.setEnabled(enabled)
+
+        self.tasks_scroll = QScrollArea(tasks_view)
+        self.tasks_scroll.setObjectName("tasksScroll")
+        self.tasks_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.tasks_scroll.setWidgetResizable(True)
+        self.tasks_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+        self.tasks_canvas = QWidget(self.tasks_scroll)
+        self.tasks_canvas.setObjectName("tasksCanvas")
+        self.tasks_layout = QVBoxLayout(self.tasks_canvas)
+        self.tasks_layout.setContentsMargins(0, 0, 8, 0)
+        self.tasks_layout.setSpacing(8)
+        self.tasks_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.empty_tasks_label = QLabel("还没有下载任务", self.tasks_canvas)
+        self.empty_tasks_label.setObjectName("emptyTasksLabel")
+        self.empty_tasks_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_tasks_label.setMinimumHeight(160)
+        self.tasks_layout.addWidget(self.empty_tasks_label)
+        self.tasks_scroll.setWidget(self.tasks_canvas)
+        tasks_layout.addWidget(self.tasks_scroll, 1)
+        self.view_stack.addWidget(tasks_view)
 
     @property
     def column_count(self) -> int:
@@ -151,3 +247,71 @@ class DownloadPage(SectionPage):
         for index, card in enumerate(self.comic_cards):
             self.results_grid.addWidget(card, index // columns, index % columns)
         self._column_count = columns
+
+    def _add_download_task(self) -> None:
+        if self._controller is None:
+            return
+        snapshot = self._controller.add_task(self.download_input.text())
+        if snapshot is None:
+            self.download_input.setFocus()
+            return
+        self.download_input.clear()
+        self.view_tabs.setCurrentIndex(1)
+
+    def _set_tasks(self, snapshots) -> None:
+        snapshots = list(snapshots)
+        task_ids = {snapshot.id for snapshot in snapshots}
+        for task_id in tuple(self._task_rows):
+            if task_id in task_ids:
+                continue
+            row = self._task_rows.pop(task_id)
+            self._preview_requests.pop(task_id, None)
+            self._thumbnail_loader.clear_task(task_id)
+            row.hide()
+            row.deleteLater()
+
+        for snapshot in snapshots:
+            row = self._task_rows.get(snapshot.id)
+            if row is None:
+                row = DownloadTaskRow(snapshot, self.tasks_canvas)
+                row.retry_requested.connect(self._controller.retry_task)
+                row.remove_requested.connect(self._controller.remove_task)
+                row.open_requested.connect(self._controller.open_item)
+                self._task_rows[snapshot.id] = row
+            else:
+                row.update_snapshot(snapshot)
+
+            if snapshot.preview_path is not None:
+                preview_key = (
+                    snapshot.preview_revision,
+                    str(snapshot.preview_path),
+                )
+                if self._preview_requests.get(snapshot.id) != preview_key:
+                    self._preview_requests[snapshot.id] = preview_key
+                    self._thumbnail_loader.request(
+                        snapshot.id,
+                        snapshot.preview_revision,
+                        snapshot.preview_path,
+                        QSize(144, 200),
+                    )
+
+        while self.tasks_layout.count():
+            self.tasks_layout.takeAt(0)
+        if snapshots:
+            self.empty_tasks_label.hide()
+            for snapshot in snapshots:
+                self.tasks_layout.addWidget(self._task_rows[snapshot.id])
+        else:
+            self.empty_tasks_label.show()
+            self.tasks_layout.addWidget(self.empty_tasks_label)
+        self.tasks_layout.addStretch(1)
+        self.view_tabs.setTabText(1, f"下载任务 {len(snapshots)}")
+
+    def _on_thumbnail_ready(self, task_id: str, revision: int, image) -> None:
+        row = self._task_rows.get(task_id)
+        if row is None or row.snapshot.preview_revision != revision:
+            return
+        row.set_preview(image, revision)
+
+    def _show_command_error(self, _command: str, message: str) -> None:
+        QMessageBox.warning(self, "操作失败", message)
