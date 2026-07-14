@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 2, 0, 0),
-    prodvers=(2, 2, 0, 0),
+    filevers=(2, 3, 0, 0),
+    prodvers=(2, 3, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -15,11 +15,11 @@ VSVersionInfo(
         '080404b0',
         [StringStruct('CompanyName', 'JM Downloader'),
          StringStruct('FileDescription', 'JM 漫画下载器（调试版）'),
-         StringStruct('FileVersion', '2.2.0'),
+         StringStruct('FileVersion', '2.3.0'),
          StringStruct('InternalName', 'JM-Downloader-Debug'),
          StringStruct('OriginalFilename', 'JM-Downloader-Debug.exe'),
          StringStruct('ProductName', 'JM 漫画下载器'),
-         StringStruct('ProductVersion', '2.2.0')])
+         StringStruct('ProductVersion', '2.3.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])
   ]

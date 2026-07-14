@@ -2,7 +2,7 @@ curl_cffi 0.15.0 embedded native and adapted-code notices
 ==========================================================
 
 The Windows x64 curl_cffi 0.15.0 wheel ships a fully static _wrapper.pyd.
-The exact runtime build used for JM-Downloader v2.2.0 reports:
+The exact runtime build used for JM-Downloader v2.3.0 reports:
 
 libcurl/8.15.0-IMPERSONATE BoringSSL zlib/1.3 brotli/1.1.0
 zstd/1.5.6 WinIDN nghttp2/1.63.0 ngtcp2/1.20.0 nghttp3/1.15.0

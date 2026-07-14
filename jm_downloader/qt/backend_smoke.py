@@ -1,5 +1,8 @@
+from contextlib import contextmanager
 from pathlib import Path
-from tempfile import TemporaryDirectory
+import shutil
+import tempfile
+from uuid import uuid4
 
 import certifi
 import jmcomic
@@ -11,6 +14,16 @@ from curl_cffi import Curl
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..pdf import album_to_pdf
 from ..settings import AppPaths, DEFAULT_PATHS
+
+
+@contextmanager
+def _backend_smoke_workspace():
+    root = Path(tempfile.gettempdir()) / f"jm-downloader-backend-smoke-{uuid4().hex}"
+    root.mkdir(mode=0o777)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def run_backend_smoke(paths: AppPaths = DEFAULT_PATHS) -> None:
@@ -51,8 +64,7 @@ def run_backend_smoke(paths: AppPaths = DEFAULT_PATHS) -> None:
     if not certificate.is_file():
         raise FileNotFoundError(f"没有找到 CA 证书：{certificate}")
 
-    with TemporaryDirectory(prefix="jm-downloader-backend-smoke-") as temp_dir:
-        temp_root = Path(temp_dir)
+    with _backend_smoke_workspace() as temp_root:
         image_path = temp_root / "test.png"
         Image.new("RGB", (2, 2), (32, 128, 96)).save(image_path, format="PNG")
         with Image.open(image_path) as image:

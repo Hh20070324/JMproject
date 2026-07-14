@@ -1,13 +1,13 @@
-# JM 漫画下载器 v2.2.0
+# JM 漫画下载器 v2.3.0
 
 一个 Windows 原生漫画下载工具。可以按漫画名、作者、标签或精确 JM 号查找漫画，再将结果加入下载队列；程序会下载全部章节图片、显示首张图片预览，并自动生成 PDF。
 
-v2.2.0 提供 PySide6 原生桌面界面、批量任务、实时进度、本地漫画库和便携设置。发行版已经包含 Python 与运行依赖，解压即可使用。
+v2.3.0 新增真实的漫画名、作者、标签和精确 JM 搜索、封面懒加载及搜索结果下载入口，并统一桌面图标和设置控件。发行版已经包含 Python 与运行依赖，解压即可使用。
 
 ## 开箱即用版
 
-1. 下载 `JM-Downloader-v2.2.0-Windows-x64.zip` 及同名 `.sha256` 文件。
-2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.2.0-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
+1. 下载 `JM-Downloader-v2.3.0-Windows-x64.zip` 及同名 `.sha256` 文件。
+2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.3.0-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
 3. 解压 ZIP，保持文件夹结构完整，然后双击 `JM-Downloader.exe`。
 4. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。
 
@@ -146,10 +146,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 
 脚本会安装构建依赖、运行完整测试、构建 PyInstaller `onedir` 目录，验证正式版和调试版，并生成：
 
-- `release/JM-Downloader-v2.2.0-Windows-x64.zip`
-- `release/JM-Downloader-v2.2.0-Windows-x64.zip.sha256`
+- `release/JM-Downloader-v2.3.0-Windows-x64.zip`
+- `release/JM-Downloader-v2.3.0-Windows-x64.zip.sha256`
 
-构建不会覆盖保留的 v2.1.0 WebView2 历史发行包。
+构建不会覆盖保留的 v2.1.0 和 v2.2.0 历史发行包。
 
 ## 合规与免责声明
 

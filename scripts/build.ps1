@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ReleaseVersion = "2.2.0"
+$ReleaseVersion = "2.3.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -14,7 +14,10 @@ $AppDir = Join-Path $DistDir "JM-Downloader"
 $ArchiveName = "JM-Downloader-v$ReleaseVersion-Windows-x64.zip"
 $Archive = Join-Path $ReleaseDir $ArchiveName
 $ChecksumFile = "$Archive.sha256"
-$LegacyArchive = Join-Path $ReleaseDir "JM-Downloader-v2.1.0-Windows-x64.zip"
+$HistoricalArchives = @(
+    (Join-Path $ReleaseDir "JM-Downloader-v2.1.0-Windows-x64.zip"),
+    (Join-Path $ReleaseDir "JM-Downloader-v2.2.0-Windows-x64.zip")
+)
 $LicensesDir = Join-Path $ProjectRoot "LICENSES"
 $RequiredLicenseFiles = @(
     "README.md",
@@ -287,13 +290,15 @@ try
     Remove-BuildDirectory $DistDir
     Remove-BuildFile $Archive
     Remove-BuildFile $ChecksumFile
-    $LegacyHash = if (Test-Path -LiteralPath $LegacyArchive -PathType Leaf)
+    $HistoricalHashes = @{}
+    foreach ($HistoricalArchive in $HistoricalArchives)
     {
-        (Get-FileHash -LiteralPath $LegacyArchive -Algorithm SHA256).Hash
-    }
-    else
-    {
-        $null
+        if (Test-Path -LiteralPath $HistoricalArchive -PathType Leaf)
+        {
+            $HistoricalHashes[$HistoricalArchive] = (
+                Get-FileHash -LiteralPath $HistoricalArchive -Algorithm SHA256
+            ).Hash
+        }
     }
 
     Write-Host "正在构建 Windows 发行目录..."
@@ -387,14 +392,14 @@ try
     )
     Assert-ArchiveContents
 
-    if ($null -ne $LegacyHash)
+    foreach ($HistoricalArchive in $HistoricalHashes.Keys)
     {
-        $CurrentLegacyHash = (
-            Get-FileHash -LiteralPath $LegacyArchive -Algorithm SHA256
+        $CurrentHistoricalHash = (
+            Get-FileHash -LiteralPath $HistoricalArchive -Algorithm SHA256
         ).Hash
-        if ($CurrentLegacyHash -ne $LegacyHash)
+        if ($CurrentHistoricalHash -ne $HistoricalHashes[$HistoricalArchive])
         {
-            throw "构建过程修改了 v2.1.0 历史发行包。"
+            throw "构建过程修改了历史发行包：$HistoricalArchive"
         }
     }
 
