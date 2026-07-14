@@ -114,6 +114,20 @@ The complete upstream terms are retained in
 `LICENSES/PyInstaller-6.21.0.txt`. Source:
 https://github.com/pyinstaller/pyinstaller.
 
+## Game Icon Pack
+
+The desktop interface includes selected SVG icons from Game Icon Pack by
+Nieobie. The icon pack is released under the CC0 1.0 Universal Public Domain
+Dedication.
+
+* Source: https://github.com/Nieobie/game-icon-pack
+* License: CC0 1.0 Universal
+* Local notice: `LICENSES/Game-Icon-Pack-CC0-1.0.txt`
+
+Only the SVG files used by the application are included in the repository and
+portable distribution. The complete local source asset folder is development
+material and is not packaged.
+
 ## Disclaimer
 
 This project is an independent third-party tool and is not affiliated with,

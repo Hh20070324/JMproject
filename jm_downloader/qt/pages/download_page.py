@@ -661,14 +661,19 @@ class DownloadPage(SectionPage):
         )
 
     def _update_result_summary(self, snapshot: SearchPageSnapshot) -> None:
+        total_text = (
+            f"最多展示 {snapshot.total} 条"
+            if snapshot.truncated
+            else f"共 {snapshot.total} 条"
+        )
         if (
             snapshot.request.mode is SearchMode.EXACT_ID
             or snapshot.page_count <= 1
         ):
-            self.results_summary.setText(f"共 {snapshot.total} 条")
+            self.results_summary.setText(total_text)
             return
         self.results_summary.setText(
-            f"共 {snapshot.total} 条 · 第 {snapshot.request.page} / "
+            f"{total_text} · 第 {snapshot.request.page} / "
             f"{max(1, snapshot.page_count)} 页"
         )
 

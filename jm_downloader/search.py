@@ -21,6 +21,11 @@ LOGGER = logging.getLogger("jm-downloader")
 SEARCH_TIMEOUT_SECONDS = 8
 SEARCH_REQUEST_RETRIES = 1
 MAX_COVER_BYTES = 8 * 1024 * 1024
+REGULAR_SEARCH_PAGE_SIZE = 80
+REGULAR_SEARCH_RESULT_LIMIT = 1000
+REGULAR_SEARCH_PAGE_LIMIT = (
+    REGULAR_SEARCH_RESULT_LIMIT + REGULAR_SEARCH_PAGE_SIZE - 1
+) // REGULAR_SEARCH_PAGE_SIZE
 _CLIENT_BUILD_LOCK = threading.Lock()
 
 
@@ -75,8 +80,11 @@ def normalize_search_request(request: SearchRequest) -> SearchRequest:
             query = _normalize_search_album_id(query)
         except InvalidAlbumId as error:
             raise SearchValidationError(str(error)) from None
-    elif not query:
-        raise SearchValidationError("搜索内容不能为空")
+    else:
+        if not query:
+            raise SearchValidationError("搜索内容不能为空")
+        if request.page > REGULAR_SEARCH_PAGE_LIMIT:
+            raise SearchValidationError("搜索结果最多展示 1000 条")
 
     return SearchRequest(request.mode, query, request.page)
 
@@ -352,10 +360,34 @@ def _snapshot_page(
         )
 
     items_tuple = tuple(items)
-    total = _nonnegative_int(getattr(page, "total", None))
-    page_count = _nonnegative_int(getattr(page, "page_count", None))
-    _validate_page_totals(total, page_count, items_tuple, request.page)
-    return SearchPageSnapshot(request, total, page_count, items_tuple)
+    upstream_total = _nonnegative_int(getattr(page, "total", None))
+    upstream_page_count = _nonnegative_int(getattr(page, "page_count", None))
+    _validate_page_totals(
+        upstream_total,
+        upstream_page_count,
+        items_tuple,
+        request.page,
+    )
+
+    truncated = (
+        upstream_total > REGULAR_SEARCH_RESULT_LIMIT
+        or upstream_page_count > REGULAR_SEARCH_PAGE_LIMIT
+    )
+    total = min(upstream_total, REGULAR_SEARCH_RESULT_LIMIT)
+    page_count = min(upstream_page_count, REGULAR_SEARCH_PAGE_LIMIT)
+    if request.page == REGULAR_SEARCH_PAGE_LIMIT:
+        final_page_size = (
+            REGULAR_SEARCH_RESULT_LIMIT
+            - REGULAR_SEARCH_PAGE_SIZE * (REGULAR_SEARCH_PAGE_LIMIT - 1)
+        )
+        items_tuple = items_tuple[:final_page_size]
+    return SearchPageSnapshot(
+        request,
+        total,
+        page_count,
+        items_tuple,
+        truncated,
+    )
 
 
 def _snapshot_regular_item(raw_item) -> SearchResultSnapshot | None:

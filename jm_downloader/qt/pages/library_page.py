@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ...models import LibraryItem
+from ..icons import svg_icon
 from ..widgets.library_item_card import LibraryItemCard
 from ..widgets.thumbnail_loader import ThumbnailLoader
 from .base import SectionPage
@@ -132,9 +132,7 @@ class LibraryPage(SectionPage):
         self.refresh_button = QToolButton(self.toolbar)
         self.refresh_button.setObjectName("refreshLibraryButton")
         self.refresh_button.setToolTip("刷新本地库")
-        self.refresh_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
-        )
+        self.refresh_button.setIcon(svg_icon("refresh"))
         self.refresh_button.setFixedSize(38, 38)
         self.refresh_button.clicked.connect(self.refresh)
 

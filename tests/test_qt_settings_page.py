@@ -8,7 +8,7 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QSpinBox
 
 from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.pages.settings_page import SettingsPage
@@ -88,6 +88,42 @@ class SettingsPageTests(unittest.TestCase):
         self.assertFalse(
             self.page.settings_scroll.horizontalScrollBar().isVisible()
         )
+        downloads_index = self.page.startup_page_combo.findData("downloads")
+        self.assertEqual(
+            self.page.startup_page_combo.itemText(downloads_index),
+            "搜索与下载",
+        )
+
+    def test_compact_steppers_have_separate_safe_click_targets(self):
+        spin = self.page.max_concurrent_tasks_spin
+        decrease = self.page.maxConcurrentTasks_decrease_button
+        increase = self.page.maxConcurrentTasks_increase_button
+
+        self.assertEqual(spin.buttonSymbols(), QSpinBox.ButtonSymbols.NoButtons)
+        self.assertEqual(decrease.size().toTuple(), (28, 28))
+        self.assertEqual(increase.size().toTuple(), (28, 28))
+        self.assertFalse(decrease.geometry().intersects(spin.geometry()))
+        self.assertFalse(increase.geometry().intersects(spin.geometry()))
+
+        original = spin.value()
+        increase.click()
+        self.assertEqual(spin.value(), original + 1)
+        decrease.click()
+        self.assertEqual(spin.value(), original)
+
+        spin.setValue(spin.minimum())
+        self.assertFalse(decrease.isEnabled())
+        self.assertTrue(increase.isEnabled())
+        spin.setValue(spin.maximum())
+        self.assertTrue(decrease.isEnabled())
+        self.assertFalse(increase.isEnabled())
+
+    def test_window_size_fields_do_not_show_native_step_buttons(self):
+        for spin in (self.page.window_width_spin, self.page.window_height_spin):
+            self.assertEqual(
+                spin.buttonSymbols(),
+                QSpinBox.ButtonSymbols.NoButtons,
+            )
 
     def test_saves_one_complete_snapshot_and_emits_change(self):
         changes = []

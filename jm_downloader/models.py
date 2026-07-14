@@ -39,6 +39,7 @@ class SearchPageSnapshot:
     total: int
     page_count: int
     items: tuple[SearchResultSnapshot, ...]
+    truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)

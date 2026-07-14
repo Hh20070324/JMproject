@@ -6,13 +6,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QSizePolicy,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ...models import LibraryItem
+from ..icons import svg_icon
 
 
 def format_file_size(size: int) -> str:
@@ -92,12 +92,11 @@ class LibraryItemCard(QFrame):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(5)
 
-        style = self.style()
         self.open_images_button = self._make_icon_button(
             actions,
             "libraryOpenImagesButton",
             "打开图片目录",
-            style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            svg_icon("folder"),
         )
         self.open_images_button.clicked.connect(
             lambda: self.open_requested.emit(self.item.album_id, "images")
@@ -108,7 +107,7 @@ class LibraryItemCard(QFrame):
             actions,
             "libraryOpenPdfButton",
             "使用系统默认程序查看 PDF",
-            style.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
+            svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
             lambda: self.open_requested.emit(self.item.album_id, "pdf")
@@ -120,9 +119,7 @@ class LibraryItemCard(QFrame):
         self.rebuild_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self.rebuild_button.setIcon(
-            style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
-        )
+        self.rebuild_button.setIcon(svg_icon("refresh"))
         self.rebuild_button.setFixedSize(96, 34)
         self.rebuild_button.clicked.connect(
             lambda: self.rebuild_requested.emit(self.item.album_id)
@@ -133,7 +130,7 @@ class LibraryItemCard(QFrame):
             actions,
             "libraryDeleteButton",
             "删除本地文件",
-            style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            svg_icon("trash"),
         )
         self.delete_menu = QMenu(self.delete_button)
         self.delete_menu.setObjectName("libraryDeleteMenu")

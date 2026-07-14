@@ -9,6 +9,7 @@ import unittest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE_NAME = "JM-Downloader-v2.2.0-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
+    "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
     "commonX-0.6.40.txt": "Copyright (c) 2023 hect0x7",
     "curl_cffi-0.15.0.txt": "Copyright (c) 2022 curl_cffi developers",
@@ -43,6 +44,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertIn("OriginalFilename', 'JM-Downloader-Debug.exe'", debug)
         self.assertIn('version="version_info.txt"', spec)
         self.assertIn('version="version_info_debug.txt"', spec)
+        self.assertIn("resources/icons/*.svg", spec)
 
     def test_release_name_and_checksum_are_consistent(self):
         build_script = (PROJECT_ROOT / "scripts" / "build.ps1").read_text(
@@ -161,6 +163,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             "PyYAML | 6.0.3",
             "typing_extensions | 4.16.0",
             "PyInstaller 6.21.0",
+            "Game Icon Pack",
         ):
             self.assertIn(component, notices)
 

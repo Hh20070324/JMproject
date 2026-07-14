@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from ...settings import AppSettings, serialize_portable_path
 from ..controllers.settings_controller import SettingsController
+from ..icons import svg_icon
 from ..theme import Theme, ThemeManager
 from .base import SectionPage
 
@@ -115,15 +115,23 @@ class SettingsPage(SectionPage):
         self.max_concurrent_tasks_spin.setObjectName("settingsSpinBox")
         self.max_concurrent_tasks_spin.setRange(1, 8)
         self.max_concurrent_tasks_spin.setSuffix(" 个任务")
-        self.max_concurrent_tasks_spin.setFixedWidth(150)
-        self._add_row(section, "同时下载", self.max_concurrent_tasks_spin)
+        tasks_control = self._stepper_control(
+            section,
+            self.max_concurrent_tasks_spin,
+            "maxConcurrentTasks",
+        )
+        self._add_row(section, "同时下载", tasks_control)
 
         self.image_concurrency_spin = QSpinBox(section)
         self.image_concurrency_spin.setObjectName("settingsSpinBox")
         self.image_concurrency_spin.setRange(1, 64)
         self.image_concurrency_spin.setSuffix(" 张图片")
-        self.image_concurrency_spin.setFixedWidth(150)
-        self._add_row(section, "图片并发", self.image_concurrency_spin)
+        images_control = self._stepper_control(
+            section,
+            self.image_concurrency_spin,
+            "imageConcurrency",
+        )
+        self._add_row(section, "图片并发", images_control)
 
     def _create_application_section(self, layout: QVBoxLayout) -> None:
         section = self._create_section(layout, "应用")
@@ -143,7 +151,7 @@ class SettingsPage(SectionPage):
         self.startup_page_combo = QComboBox(section)
         self.startup_page_combo.setObjectName("settingsComboBox")
         for label, value in (
-            ("下载任务", "downloads"),
+            ("搜索与下载", "downloads"),
             ("本地漫画库", "library"),
             ("设置", "settings"),
         ):
@@ -160,6 +168,7 @@ class SettingsPage(SectionPage):
         self.window_width_spin = QSpinBox(size_control)
         self.window_width_spin.setObjectName("settingsSpinBox")
         self.window_width_spin.setRange(760, 10000)
+        self.window_width_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.window_width_spin.setSuffix(" px")
         self.window_width_spin.setFixedWidth(112)
         size_layout.addWidget(self.window_width_spin)
@@ -172,6 +181,7 @@ class SettingsPage(SectionPage):
         self.window_height_spin = QSpinBox(size_control)
         self.window_height_spin.setObjectName("settingsSpinBox")
         self.window_height_spin.setRange(520, 10000)
+        self.window_height_spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         self.window_height_spin.setSuffix(" px")
         self.window_height_spin.setFixedWidth(112)
         size_layout.addWidget(self.window_height_spin)
@@ -194,6 +204,7 @@ class SettingsPage(SectionPage):
             button.setObjectName("themeButton")
             button.setProperty("theme", theme.value)
             button.setText(text)
+            button.setIcon(svg_icon(f"{theme.value}-mode"))
             button.setCheckable(True)
             button.setFixedSize(76, 34)
             button.setSizePolicy(
@@ -227,21 +238,16 @@ class SettingsPage(SectionPage):
         )
         layout.addWidget(self.save_status_label, 1)
 
-        style = self.style()
         self.restore_defaults_button = QPushButton("恢复默认", action_bar)
         self.restore_defaults_button.setObjectName("restoreSettingsButton")
-        self.restore_defaults_button.setIcon(
-            style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
-        )
+        self.restore_defaults_button.setIcon(svg_icon("refresh"))
         self.restore_defaults_button.setFixedSize(112, 38)
         self.restore_defaults_button.clicked.connect(self._restore_defaults)
         layout.addWidget(self.restore_defaults_button)
 
         self.save_button = QPushButton("保存设置", action_bar)
         self.save_button.setObjectName("saveSettingsButton")
-        self.save_button.setIcon(
-            style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton)
-        )
+        self.save_button.setIcon(svg_icon("save"))
         self.save_button.setFixedSize(112, 38)
         self.save_button.clicked.connect(self._save)
         layout.addWidget(self.save_button)
@@ -297,12 +303,57 @@ class SettingsPage(SectionPage):
         button = QToolButton(control)
         button.setObjectName("settingsBrowseButton")
         button.setToolTip(tooltip)
-        button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
-        )
+        button.setIcon(svg_icon("folder"))
         button.setFixedSize(36, 36)
         button.clicked.connect(callback)
         layout.addWidget(button)
+        return control
+
+    def _stepper_control(
+        self,
+        parent: QWidget,
+        spin: QSpinBox,
+        name: str,
+    ) -> QWidget:
+        control = QWidget(parent)
+        control.setObjectName("settingsStepper")
+        layout = QHBoxLayout(control)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        spin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        spin.setFixedWidth(112)
+
+        decrease = QToolButton(control)
+        decrease.setObjectName("settingsStepButton")
+        decrease.setProperty("action", "decrease")
+        decrease.setToolTip("减少")
+        decrease.setIcon(svg_icon("minus"))
+        decrease.setFixedSize(28, 28)
+        decrease.clicked.connect(spin.stepDown)
+
+        increase = QToolButton(control)
+        increase.setObjectName("settingsStepButton")
+        increase.setProperty("action", "increase")
+        increase.setToolTip("增加")
+        increase.setIcon(svg_icon("plus"))
+        increase.setFixedSize(28, 28)
+        increase.clicked.connect(spin.stepUp)
+
+        def update_buttons(value: int) -> None:
+            decrease.setEnabled(value > spin.minimum())
+            increase.setEnabled(value < spin.maximum())
+
+        spin.valueChanged.connect(update_buttons)
+        update_buttons(spin.value())
+        setattr(self, f"{name}_decrease_button", decrease)
+        setattr(self, f"{name}_increase_button", increase)
+
+        layout.addWidget(decrease)
+        layout.addWidget(spin)
+        layout.addWidget(increase)
+        layout.addStretch(1)
         return control
 
     def _choose_directory(self, editor: QLineEdit) -> None:

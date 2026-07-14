@@ -8,6 +8,7 @@ build.
 | --- | --- | --- |
 | `GPL-3.0-only.txt` | Qt GPL reference text | GPL-3.0-only |
 | `LGPL-3.0-only.txt` | Qt 6.11.1, PySide6 Essentials 6.11.1, Shiboken6 6.11.1 | LGPL-3.0-only |
+| `Game-Icon-Pack-CC0-1.0.txt` | Selected Game Icon Pack SVG assets | CC0-1.0 |
 | `Python-3.14.txt` | CPython 3.14 runtime | Python-2.0 and incorporated notices |
 | `JMComic-Crawler-Python-2.7.1.txt` | JMComic-Crawler-Python 2.7.1 | MIT |
 | `commonX-0.6.40.txt` | commonX 0.6.40 | MIT |

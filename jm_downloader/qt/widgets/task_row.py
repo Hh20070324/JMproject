@@ -6,13 +6,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QSizePolicy,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ...models import TaskSnapshot, TaskStatus
+from ..icons import svg_icon
 
 
 class ElidedLabel(QLabel):
@@ -112,12 +112,11 @@ class DownloadTaskRow(QFrame):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(5)
 
-        style = self.style()
         self.retry_button = self._make_action(
             actions,
             "retryTaskButton",
             "重试下载",
-            style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
+            svg_icon("refresh"),
         )
         self.retry_button.clicked.connect(
             lambda: self.retry_requested.emit(self.snapshot.id)
@@ -128,7 +127,7 @@ class DownloadTaskRow(QFrame):
             actions,
             "openImagesButton",
             "打开图片目录",
-            style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+            svg_icon("folder"),
         )
         self.open_images_button.clicked.connect(
             lambda: self.open_requested.emit(self.snapshot.album_id, "images")
@@ -139,7 +138,7 @@ class DownloadTaskRow(QFrame):
             actions,
             "openPdfButton",
             "使用系统默认程序查看 PDF",
-            style.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
+            svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
             lambda: self.open_requested.emit(self.snapshot.album_id, "pdf")
@@ -150,7 +149,7 @@ class DownloadTaskRow(QFrame):
             actions,
             "removeTaskButton",
             "清除任务记录",
-            style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon),
+            svg_icon("trash"),
         )
         self.remove_button.clicked.connect(
             lambda: self.remove_requested.emit(self.snapshot.id)

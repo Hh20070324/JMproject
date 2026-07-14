@@ -1,0 +1,19 @@
+Game Icon Pack
+
+Project: https://github.com/Nieobie/game-icon-pack
+Creator: Nieobie
+License: CC0 1.0 Universal
+
+The upstream project dedicates these icons to the public domain under the
+CC0 1.0 Universal Public Domain Dedication. The selected SVG icons bundled
+with JM-Downloader may be copied, modified, distributed, and used for any
+purpose, including commercial purposes, without asking permission.
+
+Canonical CC0 deed and legal code:
+
+https://creativecommons.org/publicdomain/zero/1.0/
+https://creativecommons.org/publicdomain/zero/1.0/legalcode.en
+
+The source repository's LICENSE file is authoritative for the upstream icon
+pack. JM-Downloader retains this notice voluntarily; attribution is not a
+condition of CC0.

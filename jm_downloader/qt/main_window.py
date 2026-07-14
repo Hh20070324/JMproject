@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..desktop_runtime import WINDOW_TITLE
-from .icons import search_icon
+from .icons import svg_icon
 from .controllers.download_controller import DownloadController
 from .controllers.library_controller import LibraryController
 from .controllers.search_controller import SearchController
@@ -165,23 +165,21 @@ class MainWindow(QMainWindow):
         brand_layout.addWidget(name, 1)
         layout.addWidget(brand)
 
-        style = self.style()
-        navigation_search_icon = search_icon("#ffffff")
         entries = (
             (
                 "downloads",
                 "搜索与下载",
-                navigation_search_icon,
+                svg_icon("search", "#ffffff"),
             ),
             (
                 "library",
                 "本地漫画库",
-                style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
+                svg_icon("folder", "#ffffff"),
             ),
             (
                 "settings",
                 "设置",
-                style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+                svg_icon("settings", "#ffffff"),
             ),
         )
         for index, (key, text, icon) in enumerate(entries):

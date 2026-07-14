@@ -20,6 +20,7 @@ $RequiredLicenseFiles = @(
     "README.md",
     "GPL-3.0-only.txt",
     "LGPL-3.0-only.txt",
+    "Game-Icon-Pack-CC0-1.0.txt",
     "Python-3.14.txt",
     "JMComic-Crawler-Python-2.7.1.txt",
     "commonX-0.6.40.txt",

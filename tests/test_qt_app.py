@@ -19,6 +19,7 @@ from jm_downloader.models import (
 )
 from jm_downloader.qt.app import load_stylesheet, resource_path
 from jm_downloader.qt.controllers.settings_controller import SettingsController
+from jm_downloader.qt.icons import svg_icon
 from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.settings_store import SettingsStore
 from jm_downloader.qt.theme import Theme, ThemeManager
@@ -177,6 +178,24 @@ class QtMainWindowTests(unittest.TestCase):
             self.assertIn("QToolButton#searchModeButton", stylesheet)
             self.assertIn("QPushButton#searchResultActionButton", stylesheet)
             self.assertIn("QToolButton#themeButton", stylesheet)
+
+    def test_selected_svg_icon_resources_render(self):
+        for name in (
+            "search",
+            "folder",
+            "settings",
+            "arrow-left",
+            "arrow-right",
+            "plus",
+            "minus",
+            "download",
+        ):
+            with self.subTest(icon=name):
+                path = resource_path(f"icons/{name}.svg")
+                self.assertTrue(path.is_file())
+                icon = svg_icon(name)
+                self.assertFalse(icon.isNull())
+                self.assertFalse(icon.pixmap(24, 24).isNull())
 
 
 if __name__ == "__main__":

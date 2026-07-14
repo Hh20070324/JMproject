@@ -1,47 +1,45 @@
 from functools import lru_cache
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
+
+from .theme import resource_path
 
 
-@lru_cache(maxsize=8)
-def search_icon(color: str = "#748079") -> QIcon:
-    pixmap = QPixmap(64, 64)
+@lru_cache(maxsize=128)
+def svg_icon(name: str, color: str = "#748079", size: int = 64) -> QIcon:
+    if not name or any(character not in "abcdefghijklmnopqrstuvwxyz-" for character in name):
+        raise ValueError("invalid icon name")
+    if type(size) is not int or size < 1 or size > 256:
+        raise ValueError("invalid icon size")
+
+    try:
+        source = resource_path(f"icons/{name}.svg").read_text(encoding="utf-8")
+    except OSError:
+        return QIcon()
+
+    payload = source.replace("currentColor", color).encode("utf-8")
+    renderer = QSvgRenderer(QByteArray(payload))
+    if not renderer.isValid():
+        return QIcon()
+
+    pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
-
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = QPen(QColor(color), 6)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.drawEllipse(QRectF(9, 9, 34, 34))
-    painter.drawLine(39, 39, 55, 55)
+    renderer.render(painter)
     painter.end()
     return QIcon(pixmap)
 
 
-@lru_cache(maxsize=16)
+def search_icon(color: str = "#748079") -> QIcon:
+    return svg_icon("search", color)
+
+
 def arrow_icon(direction: str, color: str = "#748079") -> QIcon:
     if direction not in ("left", "right"):
         raise ValueError("direction must be left or right")
-
-    pixmap = QPixmap(64, 64)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    pen = QPen(QColor(color), 6)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    if direction == "left":
-        painter.drawLine(40, 12, 22, 32)
-        painter.drawLine(22, 32, 40, 52)
-    else:
-        painter.drawLine(24, 12, 42, 32)
-        painter.drawLine(42, 32, 24, 52)
-    painter.end()
-    return QIcon(pixmap)
+    return svg_icon(f"arrow-{direction}", color)
 
 
-__all__ = ["arrow_icon", "search_icon"]
+__all__ = ["arrow_icon", "search_icon", "svg_icon"]

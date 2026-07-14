@@ -18,6 +18,10 @@ a = Analysis(
             "jm_downloader/qt/resources/styles_dark.qss",
             "jm_downloader/qt/resources",
         ),
+        (
+            "jm_downloader/qt/resources/icons/*.svg",
+            "jm_downloader/qt/resources/icons",
+        ),
     ] + jm_datas,
     hiddenimports=jm_hiddenimports,
     hookspath=[],

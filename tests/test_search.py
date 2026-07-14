@@ -196,6 +196,7 @@ class SearchValidationTests(unittest.TestCase):
             SearchRequest(SearchMode.GENERAL, "query", True),
             SearchRequest(SearchMode.GENERAL, "query", 1.5),
             SearchRequest(SearchMode.GENERAL, "query", "1"),
+            SearchRequest(SearchMode.GENERAL, "query", 14),
             SearchRequest(SearchMode.EXACT_ID, "JM"),
             SearchRequest(SearchMode.EXACT_ID, "１２３"),
             SearchRequest(SearchMode.EXACT_ID, "12/3"),
@@ -296,6 +297,52 @@ class SearchRoutingTests(unittest.TestCase):
 
 
 class SearchAdaptationTests(unittest.TestCase):
+    def test_caps_regular_search_at_one_thousand_results(self):
+        page = FakePage(
+            [(str(index), {"name": str(index)}) for index in range(1, 81)],
+            total=10000,
+            page_count=125,
+        )
+
+        result = SearchService(
+            client_factory=lambda: FakeSearchClient(page=page)
+        ).search(SearchRequest(SearchMode.GENERAL, "query"))
+
+        self.assertEqual(result.total, 1000)
+        self.assertEqual(result.page_count, 13)
+        self.assertEqual(len(result.items), 80)
+        self.assertTrue(result.truncated)
+
+    def test_trims_thirteenth_page_to_the_one_thousandth_result(self):
+        page = FakePage(
+            [(str(index), {"name": str(index)}) for index in range(961, 1041)],
+            total=10000,
+            page_count=125,
+        )
+
+        result = SearchService(
+            client_factory=lambda: FakeSearchClient(page=page)
+        ).search(SearchRequest(SearchMode.AUTHOR, "query", 13))
+
+        self.assertEqual(len(result.items), 40)
+        self.assertEqual(result.items[-1].album_id, "1000")
+        self.assertTrue(result.truncated)
+
+    def test_exact_limit_is_not_marked_as_truncated(self):
+        page = FakePage(
+            [(str(index), {"name": str(index)}) for index in range(1, 81)],
+            total=1000,
+            page_count=13,
+        )
+
+        result = SearchService(
+            client_factory=lambda: FakeSearchClient(page=page)
+        ).search(SearchRequest(SearchMode.TAG, "query"))
+
+        self.assertEqual(result.total, 1000)
+        self.assertEqual(result.page_count, 13)
+        self.assertFalse(result.truncated)
+
     def test_empty_page_is_a_successful_result(self):
         page = FakePage([], total=0, page_count=0)
 

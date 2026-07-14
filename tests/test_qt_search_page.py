@@ -341,6 +341,19 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.assertEqual(len(self.page.comic_cards), 3)
         self.assertEqual(self.page.results_summary.text(), "共 7 条 · 第 1 / 3 页")
 
+        limited = SearchPageSnapshot(
+            request,
+            1000,
+            13,
+            results.items,
+            truncated=True,
+        )
+        self.page._update_result_summary(limited)
+        self.assertEqual(
+            self.page.results_summary.text(),
+            "最多展示 1000 条 · 第 1 / 13 页",
+        )
+
         empty_request = SearchRequest(SearchMode.TAG, "不存在")
         empty_generation = self.search_controller.search(
             empty_request.mode,

@@ -7,12 +7,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
 
 from ...models import SearchResultSnapshot
+from ..icons import svg_icon
 
 
 def _safe_tooltip_html(text: str) -> str:
@@ -200,13 +200,11 @@ class SearchResultCard(QFrame):
         if self._task_present:
             self.action_button.setText("查看任务")
             self.action_button.setToolTip("查看此漫画的下载任务")
-            icon = self.style().standardIcon(
-                QStyle.StandardPixmap.SP_ArrowForward
-            )
+            icon = svg_icon("arrow-right")
         else:
             self.action_button.setText("下载整本")
             self.action_button.setToolTip("将此漫画加入下载任务")
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown)
+            icon = svg_icon("download")
         self.action_button.setIcon(icon)
 
     def set_cover(self, image: QImage) -> None:

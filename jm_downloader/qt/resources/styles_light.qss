@@ -551,7 +551,8 @@ QScrollArea#settingsScrollArea {
 QScrollArea#settingsScrollArea > QWidget > QWidget,
 QWidget#settingsCanvas,
 QFrame#settingsSection,
-QWidget#settingsInlineControl {
+QWidget#settingsInlineControl,
+QWidget#settingsStepper {
     background: #f5f7f6;
 }
 
@@ -593,6 +594,27 @@ QToolButton#settingsBrowseButton {
     background: #ffffff;
     border: 1px solid #cdd5d0;
     border-radius: 6px;
+}
+
+QToolButton#settingsStepButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    padding: 3px;
+}
+
+QToolButton#settingsStepButton:hover {
+    background: #eef1ef;
+    border-color: #9da9a2;
+}
+
+QToolButton#settingsStepButton:pressed {
+    background: #e2e8e4;
+}
+
+QToolButton#settingsStepButton:disabled {
+    background: #f5f7f6;
+    border-color: #e1e6e3;
 }
 
 QToolButton#settingsBrowseButton:hover {
