@@ -18,8 +18,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..desktop_runtime import WINDOW_TITLE
+from .icons import search_icon
 from .controllers.download_controller import DownloadController
 from .controllers.library_controller import LibraryController
+from .controllers.search_controller import SearchController
 from .controllers.settings_controller import SettingsController
 from .pages import DownloadPage, LibraryPage, SettingsPage
 from .theme import ThemeManager
@@ -35,6 +37,7 @@ class MainWindow(QMainWindow):
         library_controller: LibraryController | None = None,
         parent=None,
         settings_controller: SettingsController | None = None,
+        search_controller: SearchController | None = None,
         persist_window_state: bool = True,
     ):
         super().__init__(parent)
@@ -42,6 +45,7 @@ class MainWindow(QMainWindow):
         self.download_controller = download_controller
         self.library_controller = library_controller
         self.settings_controller = settings_controller
+        self.search_controller = search_controller
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
         self._shutdown_complete = False
@@ -77,7 +81,11 @@ class MainWindow(QMainWindow):
         self._navigation.setExclusive(True)
         self._nav_buttons = {}
         self._pages = {
-            "downloads": DownloadPage(download_controller, self),
+            "downloads": DownloadPage(
+                download_controller,
+                self,
+                search_controller=search_controller,
+            ),
             "library": LibraryPage(library_controller, self),
             "settings": SettingsPage(
                 theme_manager,
@@ -158,11 +166,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(brand)
 
         style = self.style()
+        navigation_search_icon = search_icon("#ffffff")
         entries = (
             (
                 "downloads",
-                "下载任务",
-                style.standardIcon(QStyle.StandardPixmap.SP_ArrowDown),
+                "搜索与下载",
+                navigation_search_icon,
             ),
             (
                 "library",
@@ -219,6 +228,7 @@ class MainWindow(QMainWindow):
 
         controller = self.download_controller
         if controller is None or self._shutdown_complete:
+            self._dispose_search()
             self._save_window_size()
             super().closeEvent(event)
             return
@@ -226,6 +236,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         if not controller.has_active_tasks():
+            self._dispose_search()
             self._save_window_size()
             super().closeEvent(event)
             return
@@ -292,3 +303,11 @@ class MainWindow(QMainWindow):
                 "部分后台任务未能及时停止，可能留下未完成的文件。",
             )
         self.close()
+
+    def _dispose_search(self) -> None:
+        download_page = self._pages.get("downloads")
+        dispose_page = getattr(download_page, "dispose", None)
+        if dispose_page is not None:
+            dispose_page()
+        if self.search_controller is not None:
+            self.search_controller.dispose()

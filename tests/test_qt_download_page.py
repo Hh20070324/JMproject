@@ -111,7 +111,7 @@ class DownloadPageTests(unittest.TestCase):
         self.app.processEvents()
         self.temp_dir.cleanup()
 
-    def test_search_fields_remain_placeholders_and_download_has_own_command(self):
+    def test_manual_download_stays_separate_when_search_is_unavailable(self):
         page = self.window.page("downloads")
 
         page.jm_id_search_input.setText("111")

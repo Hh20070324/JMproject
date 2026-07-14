@@ -643,3 +643,143 @@ QPushButton#saveSettingsButton:disabled {
     border-color: #d7ddd9;
     color: #8a948e;
 }
+
+QToolButton#generalSearchButton,
+QToolButton#jmIdSearchButton,
+QToolButton#searchPageButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #46504a;
+}
+
+QToolButton#generalSearchButton:hover,
+QToolButton#jmIdSearchButton:hover,
+QToolButton#searchPageButton:hover {
+    background: #eef1ef;
+    border-color: #9da9a2;
+}
+
+QToolButton#generalSearchButton:pressed,
+QToolButton#jmIdSearchButton:pressed {
+    background: #e2e8e4;
+}
+
+QToolButton#generalSearchButton:disabled,
+QToolButton#jmIdSearchButton:disabled,
+QToolButton#searchPageButton:disabled {
+    background: #eef1ef;
+    border-color: #d7ddd9;
+    color: #9aa39e;
+}
+
+QFrame#searchModeSegment {
+    background: #eef1ef;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+}
+
+QToolButton#searchModeButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: #65706a;
+}
+
+QToolButton#searchModeButton:hover {
+    background: #e2e8e4;
+    color: #1d2320;
+}
+
+QToolButton#searchModeButton:checked {
+    background: #ffffff;
+    border-color: #cdd5d0;
+    color: #1d2320;
+    font-weight: 600;
+}
+
+QLabel#searchInputError,
+QLabel#searchPageErrorLabel,
+QLabel#searchResultsSummary[error="true"] {
+    color: #a43c3c;
+    font-size: 12px;
+}
+
+QLabel#searchResultsSummary,
+QLabel#searchPageLabel,
+QLabel#searchStateLabel {
+    color: #65706a;
+}
+
+QLabel#searchResultsSummary[busy="true"] {
+    color: #2e7d57;
+}
+
+QWidget#searchIdleState,
+QWidget#searchLoadingState,
+QWidget#searchEmptyState,
+QWidget#searchErrorState,
+QWidget#searchResultState,
+QWidget#searchResultsView,
+QWidget#resultsCanvas {
+    background: #f5f7f6;
+}
+
+QProgressBar#searchLoadingBar {
+    background: #dfe5e1;
+    border: none;
+    border-radius: 2px;
+}
+
+QProgressBar#searchLoadingBar::chunk {
+    background: #2e7d57;
+    border-radius: 2px;
+}
+
+QPushButton#retrySearchButton,
+QPushButton#retrySearchPageButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+}
+
+QPushButton#retrySearchButton:hover,
+QPushButton#retrySearchPageButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}
+
+QFrame#searchPageErrorBanner {
+    background: #fae8e8;
+    border: 1px solid #efc7c7;
+    border-radius: 5px;
+}
+
+QFrame#searchPagination {
+    border-top: 1px solid #d7ddd9;
+}
+
+QPushButton#searchResultActionButton {
+    background: #2e7d57;
+    border: 1px solid #2e7d57;
+    border-radius: 6px;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+QPushButton#searchResultActionButton:hover {
+    background: #256b49;
+    border-color: #256b49;
+}
+
+QPushButton#searchResultActionButton:pressed {
+    background: #1f5c3f;
+    border-color: #1f5c3f;
+}
+
+QPushButton#searchResultActionButton:disabled {
+    background: #dfe5e1;
+    border-color: #d0d8d3;
+    color: #8a948e;
+}

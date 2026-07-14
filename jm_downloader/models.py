@@ -11,6 +11,36 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 
+class SearchMode(str, Enum):
+    GENERAL = "general"
+    AUTHOR = "author"
+    TAG = "tag"
+    EXACT_ID = "exact_id"
+
+
+@dataclass(frozen=True, slots=True)
+class SearchRequest:
+    mode: SearchMode
+    query: str
+    page: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResultSnapshot:
+    album_id: str
+    title: str | None
+    authors: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SearchPageSnapshot:
+    request: SearchRequest
+    total: int
+    page_count: int
+    items: tuple[SearchResultSnapshot, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class TaskSnapshot:
     id: str

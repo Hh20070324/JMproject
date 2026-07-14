@@ -19,4 +19,16 @@ tools/ProcessMonitor/
 settings.ini
 settings.json
 settings.json.corrupt-*
+game-icon-pack-v1.4-svg/
 AGENTS.md
+
+# Local project planning and design artifacts
+/*开发计划*.md
+/*设计方案*.md
+/*设计文档*.md
+/*待办清单*.md
+/*功能分类与项目扩展参考*.md
+/DESIGN.md
+/design.md
+/*_DESIGN.md
+/*_design.md

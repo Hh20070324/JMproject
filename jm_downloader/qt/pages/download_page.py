@@ -2,110 +2,96 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QTabBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ...models import SearchMode, SearchPageSnapshot, SearchRequest
+from ..icons import arrow_icon, search_icon
+from ..widgets.search_cover_loader import SearchCoverLoader
+from ..widgets.search_result_card import SearchResultCard
 from ..widgets.task_row import DownloadTaskRow
 from ..widgets.thumbnail_loader import ThumbnailLoader
 from .base import SectionPage
 
 if TYPE_CHECKING:
     from ..controllers.download_controller import DownloadController
-
-
-class ComicPlaceholderCard(QFrame):
-    WIDTH = 184
-    HEIGHT = 292
-
-    def __init__(self, index: int, parent=None):
-        super().__init__(parent)
-        self.setObjectName("comicCard")
-        self.setProperty("placeholderIndex", index)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.cover = QFrame(self)
-        self.cover.setObjectName("coverPlaceholder")
-        self.cover.setFixedHeight(182)
-        cover_layout = QVBoxLayout(self.cover)
-        cover_layout.setContentsMargins(12, 12, 12, 12)
-        cover_layout.addStretch(1)
-
-        cover_mark = QLabel("JM", self.cover)
-        cover_mark.setObjectName("coverMark")
-        cover_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover_layout.addWidget(cover_mark)
-
-        cover_caption = QLabel("封面预览", self.cover)
-        cover_caption.setObjectName("coverCaption")
-        cover_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover_layout.addWidget(cover_caption)
-        cover_layout.addStretch(1)
-        layout.addWidget(self.cover)
-
-        info = QWidget(self)
-        info.setObjectName("comicInfo")
-        info_layout = QVBoxLayout(info)
-        info_layout.setContentsMargins(12, 10, 12, 10)
-        info_layout.setSpacing(4)
-
-        title = QLabel(f"漫画标题 {index:02d}", info)
-        title.setObjectName("comicTitle")
-        info_layout.addWidget(title)
-
-        author = QLabel("作者名称", info)
-        author.setObjectName("comicAuthor")
-        info_layout.addWidget(author)
-
-        metadata = QLabel("JM 000000  ·  # 标签", info)
-        metadata.setObjectName("comicMetadata")
-        info_layout.addWidget(metadata)
-        info_layout.addStretch(1)
-        layout.addWidget(info, 1)
+    from ..controllers.search_controller import SearchController
 
 
 class DownloadPage(SectionPage):
-    def __init__(self, controller: "DownloadController | None" = None, parent=None):
-        super().__init__("下载任务", "downloadPage", parent)
+    _MODE_LABELS = {
+        SearchMode.GENERAL: "综合",
+        SearchMode.AUTHOR: "作者",
+        SearchMode.TAG: "标签",
+    }
+    _MODE_PLACEHOLDERS = {
+        SearchMode.GENERAL: "搜索漫画名、标签或作者",
+        SearchMode.AUTHOR: "搜索作者名称",
+        SearchMode.TAG: "搜索标签",
+    }
+
+    def __init__(
+        self,
+        controller: "DownloadController | None" = None,
+        parent=None,
+        *,
+        search_controller: "SearchController | None" = None,
+        cover_loader: SearchCoverLoader | None = None,
+    ):
+        super().__init__("搜索与下载", "downloadPage", parent)
         self._controller = controller
+        self._search_controller = search_controller
+        self._search_mode = SearchMode.GENERAL
+        self._search_generation = 0
+        self._search_snapshot: SearchPageSnapshot | None = None
+        self._search_busy = False
+        self._disposed = False
         self._task_rows = {}
+        self._tasks_by_album = set()
         self._preview_requests = {}
+        self._cards_by_album: dict[str, list[SearchResultCard]] = {}
+        self._cover_attempted: set[tuple[int, str]] = set()
+        self._cover_update_scheduled = False
+        self.comic_cards: tuple[SearchResultCard, ...] = ()
+        self._column_count = 0
+
         self._thumbnail_loader = ThumbnailLoader(self)
         self._thumbnail_loader.thumbnail_ready.connect(self._on_thumbnail_ready)
 
-        search_layout = QHBoxLayout()
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(12)
+        if cover_loader is not None:
+            self._cover_loader = cover_loader
+        elif (
+            search_controller is not None
+            and hasattr(search_controller, "service")
+            and hasattr(search_controller.service, "fetch_cover")
+        ):
+            self._cover_loader = SearchCoverLoader(
+                search_controller.service,
+                self,
+            )
+        else:
+            self._cover_loader = None
+        if self._cover_loader is not None:
+            self._cover_loader.cover_ready.connect(self._on_cover_ready)
+            self._cover_loader.cover_failed.connect(self._on_cover_failed)
 
-        self.general_search_input = QLineEdit(self.content)
-        self.general_search_input.setObjectName("generalSearchInput")
-        self.general_search_input.setPlaceholderText("搜索漫画名、标签或作者")
-        self.general_search_input.setClearButtonEnabled(True)
-        self.general_search_input.setFixedHeight(42)
-        search_layout.addWidget(self.general_search_input, 1)
-
-        self.jm_id_search_input = QLineEdit(self.content)
-        self.jm_id_search_input.setObjectName("jmIdSearchInput")
-        self.jm_id_search_input.setPlaceholderText("精确 JM 号")
-        self.jm_id_search_input.setClearButtonEnabled(True)
-        self.jm_id_search_input.setFixedSize(190, 42)
-        search_layout.addWidget(self.jm_id_search_input)
-        self.content_layout.addLayout(search_layout)
+        self._create_search_bar()
+        self._create_search_mode_row()
 
         self.view_tabs = QTabBar(self.content)
         self.view_tabs.setObjectName("downloadViewTabs")
@@ -118,19 +104,116 @@ class DownloadPage(SectionPage):
         self.view_stack = QStackedWidget(self.content)
         self.view_stack.setObjectName("downloadViewStack")
         self.content_layout.addWidget(self.view_stack, 1)
-        self.view_tabs.currentChanged.connect(self.view_stack.setCurrentIndex)
+        self.view_tabs.currentChanged.connect(self._on_view_changed)
 
         self._create_results_view()
         self._create_tasks_view()
         self.view_tabs.setCurrentIndex(0)
 
+        if self._search_controller is not None:
+            self._connect_search_controller()
         if self._controller is not None:
             self._controller.tasks_reset.connect(self._set_tasks)
             self._controller.command_failed.connect(self._show_command_error)
             self._set_tasks(self._controller.list_tasks())
 
-        self._column_count = 0
+        search_enabled = self._search_controller is not None
+        self.general_search_input.setEnabled(search_enabled)
+        self.general_search_button.setEnabled(search_enabled)
+        self.jm_id_search_input.setEnabled(search_enabled)
+        self.jm_id_search_button.setEnabled(search_enabled)
+        for button in self._mode_buttons.values():
+            button.setEnabled(search_enabled)
+
         QTimer.singleShot(0, self._reflow_cards)
+
+    def _create_search_bar(self) -> None:
+        search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(10)
+
+        search_button_icon = search_icon()
+
+        self.general_search_input = QLineEdit(self.content)
+        self.general_search_input.setObjectName("generalSearchInput")
+        self.general_search_input.setPlaceholderText(
+            self._MODE_PLACEHOLDERS[self._search_mode]
+        )
+        self.general_search_input.setClearButtonEnabled(True)
+        self.general_search_input.setFixedHeight(42)
+        self.general_search_input.returnPressed.connect(self._submit_general_search)
+        search_layout.addWidget(self.general_search_input, 1)
+
+        self.general_search_button = QToolButton(self.content)
+        self.general_search_button.setObjectName("generalSearchButton")
+        self.general_search_button.setIcon(search_button_icon)
+        self.general_search_button.setToolTip("搜索")
+        self.general_search_button.setFixedSize(42, 42)
+        self.general_search_button.clicked.connect(self._submit_general_search)
+        search_layout.addWidget(self.general_search_button)
+
+        self.jm_id_search_input = QLineEdit(self.content)
+        self.jm_id_search_input.setObjectName("jmIdSearchInput")
+        self.jm_id_search_input.setPlaceholderText("精确 JM 号")
+        self.jm_id_search_input.setClearButtonEnabled(True)
+        self.jm_id_search_input.setFixedSize(150, 42)
+        self.jm_id_search_input.returnPressed.connect(self._submit_exact_search)
+        search_layout.addWidget(self.jm_id_search_input)
+
+        self.jm_id_search_button = QToolButton(self.content)
+        self.jm_id_search_button.setObjectName("jmIdSearchButton")
+        self.jm_id_search_button.setIcon(search_button_icon)
+        self.jm_id_search_button.setToolTip("精确查询")
+        self.jm_id_search_button.setFixedSize(42, 42)
+        self.jm_id_search_button.clicked.connect(self._submit_exact_search)
+        search_layout.addWidget(self.jm_id_search_button)
+        self.content_layout.addLayout(search_layout)
+
+    def _create_search_mode_row(self) -> None:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(12)
+
+        segment = QFrame(self.content)
+        segment.setObjectName("searchModeSegment")
+        segment_layout = QHBoxLayout(segment)
+        segment_layout.setContentsMargins(2, 2, 2, 2)
+        segment_layout.setSpacing(0)
+
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        self._mode_buttons = {}
+        for index, mode in enumerate(
+            (SearchMode.GENERAL, SearchMode.AUTHOR, SearchMode.TAG)
+        ):
+            button = QToolButton(segment)
+            button.setObjectName("searchModeButton")
+            button.setText(self._MODE_LABELS[mode])
+            button.setCheckable(True)
+            button.setFixedSize(62, 32)
+            button.clicked.connect(
+                lambda checked=False, selected=mode: self._select_search_mode(
+                    selected
+                )
+            )
+            self._mode_group.addButton(button, index)
+            self._mode_buttons[mode] = button
+            segment_layout.addWidget(button)
+        self._mode_buttons[self._search_mode].setChecked(True)
+        row.addWidget(segment)
+
+        row.addStretch(1)
+        self.results_summary = QLabel(self.content)
+        self.results_summary.setObjectName("searchResultsSummary")
+        self.results_summary.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.results_summary.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
+        row.addWidget(self.results_summary, 1)
+        self.content_layout.addLayout(row)
 
     def _create_results_view(self) -> None:
         results_view = QWidget(self.view_stack)
@@ -139,7 +222,63 @@ class DownloadPage(SectionPage):
         results_layout.setContentsMargins(0, 0, 0, 0)
         results_layout.setSpacing(0)
 
-        self.results_scroll = QScrollArea(results_view)
+        self.results_state_stack = QStackedWidget(results_view)
+        self.results_state_stack.setObjectName("searchStateStack")
+        results_layout.addWidget(self.results_state_stack, 1)
+
+        self._search_states = {
+            "idle": self._create_state_page(
+                "searchIdleState",
+                "暂无搜索内容",
+            ),
+            "loading": self._create_state_page(
+                "searchLoadingState",
+                "正在搜索...",
+                loading=True,
+            ),
+            "empty": self._create_state_page(
+                "searchEmptyState",
+                "没有找到匹配结果",
+                retry=True,
+            ),
+            "error": self._create_state_page(
+                "searchErrorState",
+                "搜索暂时失败，请稍后重试",
+                retry=True,
+            ),
+        }
+        self.search_error_label = self._search_states["error"].findChild(
+            QLabel,
+            "searchStateLabel",
+        )
+
+        result_state = QWidget(self.results_state_stack)
+        result_state.setObjectName("searchResultState")
+        result_state_layout = QVBoxLayout(result_state)
+        result_state_layout.setContentsMargins(0, 0, 0, 0)
+        result_state_layout.setSpacing(8)
+
+        self.page_error_banner = QFrame(result_state)
+        self.page_error_banner.setObjectName("searchPageErrorBanner")
+        banner_layout = QHBoxLayout(self.page_error_banner)
+        banner_layout.setContentsMargins(10, 6, 8, 6)
+        banner_layout.setSpacing(8)
+        self.page_error_label = QLabel(self.page_error_banner)
+        self.page_error_label.setObjectName("searchPageErrorLabel")
+        self.page_error_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        banner_layout.addWidget(self.page_error_label, 1)
+        self.page_retry_button = QPushButton("重试翻页", self.page_error_banner)
+        self.page_retry_button.setObjectName("retrySearchPageButton")
+        self.page_retry_button.setFixedHeight(30)
+        self.page_retry_button.clicked.connect(self._retry_search)
+        banner_layout.addWidget(self.page_retry_button)
+        self.page_error_banner.hide()
+        result_state_layout.addWidget(self.page_error_banner)
+
+        self.results_scroll = QScrollArea(result_state)
         self.results_scroll.setObjectName("resultsScroll")
         self.results_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.results_scroll.setWidgetResizable(True)
@@ -147,7 +286,8 @@ class DownloadPage(SectionPage):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.results_scroll.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
         )
 
         self.results_canvas = QWidget(self.results_scroll)
@@ -159,15 +299,89 @@ class DownloadPage(SectionPage):
         self.results_grid.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
         )
-
-        self.comic_cards = tuple(
-            ComicPlaceholderCard(index, self.results_canvas)
-            for index in range(1, 9)
-        )
         self.results_scroll.setWidget(self.results_canvas)
         self.results_scroll.viewport().installEventFilter(self)
-        results_layout.addWidget(self.results_scroll)
+        self.results_scroll.verticalScrollBar().valueChanged.connect(
+            self._schedule_visible_covers
+        )
+        result_state_layout.addWidget(self.results_scroll, 1)
+
+        self.pagination = QFrame(result_state)
+        self.pagination.setObjectName("searchPagination")
+        self.pagination.setFixedHeight(38)
+        pagination_layout = QHBoxLayout(self.pagination)
+        pagination_layout.setContentsMargins(0, 2, 0, 2)
+        pagination_layout.setSpacing(12)
+        pagination_layout.addStretch(1)
+
+        self.previous_page_button = QToolButton(self.pagination)
+        self.previous_page_button.setObjectName("searchPageButton")
+        self.previous_page_button.setIcon(arrow_icon("left"))
+        self.previous_page_button.setToolTip("上一页")
+        self.previous_page_button.setFixedSize(32, 32)
+        self.previous_page_button.clicked.connect(self._previous_page)
+        pagination_layout.addWidget(self.previous_page_button)
+
+        self.page_label = QLabel("第 1 / 1 页", self.pagination)
+        self.page_label.setObjectName("searchPageLabel")
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_label.setMinimumWidth(96)
+        pagination_layout.addWidget(self.page_label)
+
+        self.next_page_button = QToolButton(self.pagination)
+        self.next_page_button.setObjectName("searchPageButton")
+        self.next_page_button.setIcon(arrow_icon("right"))
+        self.next_page_button.setToolTip("下一页")
+        self.next_page_button.setFixedSize(32, 32)
+        self.next_page_button.clicked.connect(self._next_page)
+        pagination_layout.addWidget(self.next_page_button)
+        pagination_layout.addStretch(1)
+        self.pagination.hide()
+        result_state_layout.addWidget(self.pagination)
+
+        self._search_states["results"] = result_state
+        self.results_state_stack.addWidget(result_state)
+        self._set_search_state("idle")
         self.view_stack.addWidget(results_view)
+
+    def _create_state_page(
+        self,
+        object_name: str,
+        message: str,
+        *,
+        loading: bool = False,
+        retry: bool = False,
+    ) -> QWidget:
+        page = QWidget(self.results_state_stack)
+        page.setObjectName(object_name)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+        layout.addStretch(1)
+
+        label = QLabel(message, page)
+        label.setObjectName("searchStateLabel")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        if loading:
+            progress = QProgressBar(page)
+            progress.setObjectName("searchLoadingBar")
+            progress.setRange(0, 0)
+            progress.setTextVisible(False)
+            progress.setFixedSize(180, 4)
+            layout.addWidget(progress, 0, Qt.AlignmentFlag.AlignHCenter)
+        if retry:
+            button = QPushButton("重试", page)
+            button.setObjectName("retrySearchButton")
+            button.setFixedSize(88, 34)
+            button.clicked.connect(self._retry_search)
+            layout.addWidget(button, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        layout.addStretch(1)
+        self.results_state_stack.addWidget(page)
+        return page
 
     def _create_tasks_view(self) -> None:
         tasks_view = QWidget(self.view_stack)
@@ -223,9 +437,43 @@ class DownloadPage(SectionPage):
         tasks_layout.addWidget(self.tasks_scroll, 1)
         self.view_stack.addWidget(tasks_view)
 
+    def _connect_search_controller(self) -> None:
+        controller = self._search_controller
+        controller.search_submitted.connect(self._on_search_submitted)
+        controller.results_ready.connect(self._on_search_results)
+        controller.empty_results.connect(self._on_search_empty)
+        controller.search_failed.connect(self._on_search_failed)
+        controller.validation_failed.connect(self._on_search_validation_failed)
+        controller.busy_changed.connect(self._on_search_busy_changed)
+
     @property
     def column_count(self) -> int:
         return self._column_count
+
+    @property
+    def search_mode(self) -> SearchMode:
+        return self._search_mode
+
+    @property
+    def search_state(self) -> str:
+        current = self.results_state_stack.currentWidget()
+        for name, widget in self._search_states.items():
+            if widget is current:
+                return name
+        return "unknown"
+
+    def _set_search_state(self, state: str) -> None:
+        self.results_state_stack.setCurrentWidget(self._search_states[state])
+
+    def activate(self) -> None:
+        self._schedule_visible_covers()
+
+    def dispose(self) -> None:
+        if self._disposed:
+            return
+        self._disposed = True
+        if self._cover_loader is not None:
+            self._cover_loader.dispose()
 
     def eventFilter(self, watched, event):
         if (
@@ -235,11 +483,236 @@ class DownloadPage(SectionPage):
             QTimer.singleShot(0, self._reflow_cards)
         return super().eventFilter(watched, event)
 
+    def _select_search_mode(self, mode: SearchMode) -> None:
+        self._search_mode = mode
+        self.general_search_input.setPlaceholderText(
+            self._MODE_PLACEHOLDERS[mode]
+        )
+
+    def _submit_general_search(self) -> None:
+        if self._search_controller is None:
+            return
+        generation = self._search_controller.search(
+            self._search_mode,
+            self.general_search_input.text(),
+            1,
+        )
+        if generation is None:
+            self.general_search_input.setFocus()
+
+    def _submit_exact_search(self) -> None:
+        if self._search_controller is None:
+            return
+        generation = self._search_controller.search(
+            SearchMode.EXACT_ID,
+            self.jm_id_search_input.text(),
+            1,
+        )
+        if generation is None:
+            self.jm_id_search_input.setFocus()
+
+    def _on_search_submitted(
+        self,
+        generation: int,
+        request: SearchRequest,
+    ) -> None:
+        self._search_generation = generation
+        self._set_summary_error(False)
+        self.page_error_banner.hide()
+        current = self._search_snapshot
+        is_page_change = bool(
+            current is not None
+            and current.request.mode is request.mode
+            and current.request.query == request.query
+            and current.request.page != request.page
+        )
+        if is_page_change:
+            self.results_summary.setText(f"正在载入第 {request.page} 页...")
+        else:
+            self.results_summary.setText("正在搜索...")
+            self._set_search_state("loading")
+
+    def _on_search_results(
+        self,
+        generation: int,
+        snapshot: SearchPageSnapshot,
+        _is_page_change: bool,
+    ) -> None:
+        if generation != self._search_generation or self._disposed:
+            return
+        self._set_summary_error(False)
+        self._search_snapshot = snapshot
+        self._set_result_cards(snapshot)
+        self._set_search_state("results")
+        self.page_error_banner.hide()
+        self._update_result_summary(snapshot)
+        self._refresh_pagination()
+        self.results_scroll.verticalScrollBar().setValue(0)
+        self._schedule_visible_covers()
+
+    def _on_search_empty(
+        self,
+        generation: int,
+        snapshot: SearchPageSnapshot,
+        _is_page_change: bool,
+    ) -> None:
+        if generation != self._search_generation or self._disposed:
+            return
+        self._set_summary_error(False)
+        self._search_snapshot = snapshot
+        self._set_result_cards(snapshot)
+        self.results_summary.setText("共 0 条")
+        self.page_error_banner.hide()
+        self._set_search_state("empty")
+
+    def _on_search_failed(
+        self,
+        generation: int,
+        _code: str,
+        message: str,
+        is_page_change: bool,
+    ) -> None:
+        if generation != self._search_generation or self._disposed:
+            return
+        self._set_summary_error(False)
+        if is_page_change and self._search_snapshot is not None:
+            self.page_error_label.setText(message)
+            self.page_error_banner.show()
+            self._set_search_state("results")
+            self._update_result_summary(self._search_snapshot)
+            self._refresh_pagination()
+            return
+        self.search_error_label.setText(message)
+        self.results_summary.clear()
+        self._set_search_state("error")
+
+    def _on_search_validation_failed(self, _code: str, message: str) -> None:
+        self._set_summary_error(True)
+        self.results_summary.setText(message)
+        QTimer.singleShot(
+            4000,
+            lambda expected=message: self._clear_input_error(expected),
+        )
+
+    def _clear_input_error(self, expected: str) -> None:
+        if self.results_summary.text() != expected:
+            return
+        self._set_summary_error(False)
+        if self.search_state == "results" and self._search_snapshot is not None:
+            self._update_result_summary(self._search_snapshot)
+        elif self.search_state == "empty":
+            self.results_summary.setText("共 0 条")
+        else:
+            self.results_summary.clear()
+
+    def _set_summary_error(self, error: bool) -> None:
+        self.results_summary.setProperty("error", bool(error))
+        self.results_summary.style().unpolish(self.results_summary)
+        self.results_summary.style().polish(self.results_summary)
+
+    def _on_search_busy_changed(self, busy: bool) -> None:
+        self._search_busy = bool(busy)
+        self.results_summary.setProperty("busy", self._search_busy)
+        self.results_summary.style().unpolish(self.results_summary)
+        self.results_summary.style().polish(self.results_summary)
+        self._refresh_pagination()
+        self._refresh_card_actions()
+
+    def _retry_search(self) -> None:
+        if self._search_controller is not None:
+            self._search_controller.retry()
+
+    def _previous_page(self) -> None:
+        if self._search_controller is None or self._search_snapshot is None:
+            return
+        self._search_controller.change_page(
+            self._search_snapshot.request.page - 1
+        )
+
+    def _next_page(self) -> None:
+        if self._search_controller is None or self._search_snapshot is None:
+            return
+        self._search_controller.change_page(
+            self._search_snapshot.request.page + 1
+        )
+
+    def _refresh_pagination(self) -> None:
+        snapshot = self._search_snapshot
+        if snapshot is None:
+            self.pagination.hide()
+            self.previous_page_button.setEnabled(False)
+            self.next_page_button.setEnabled(False)
+            return
+        show_pagination = (
+            snapshot.request.mode is not SearchMode.EXACT_ID
+            and snapshot.page_count > 1
+        )
+        self.pagination.setVisible(show_pagination)
+        current_page = snapshot.request.page
+        page_count = max(1, snapshot.page_count)
+        self.page_label.setText(f"第 {current_page} / {page_count} 页")
+        self.previous_page_button.setEnabled(
+            not self._search_busy and current_page > 1
+        )
+        self.next_page_button.setEnabled(
+            not self._search_busy
+            and snapshot.page_count > 0
+            and current_page < snapshot.page_count
+        )
+
+    def _update_result_summary(self, snapshot: SearchPageSnapshot) -> None:
+        if (
+            snapshot.request.mode is SearchMode.EXACT_ID
+            or snapshot.page_count <= 1
+        ):
+            self.results_summary.setText(f"共 {snapshot.total} 条")
+            return
+        self.results_summary.setText(
+            f"共 {snapshot.total} 条 · 第 {snapshot.request.page} / "
+            f"{max(1, snapshot.page_count)} 页"
+        )
+
+    def _set_result_cards(self, snapshot: SearchPageSnapshot) -> None:
+        while self.results_grid.count():
+            self.results_grid.takeAt(0)
+        for card in self.comic_cards:
+            card.hide()
+            card.deleteLater()
+
+        cards = []
+        self._cards_by_album = {}
+        self._cover_attempted.clear()
+        for item in snapshot.items:
+            card = SearchResultCard(item, self.results_canvas)
+            card.set_task_present(item.album_id in self._tasks_by_album)
+            card.action_button.setEnabled(
+                self._controller is not None and not self._search_busy
+            )
+            card.download_requested.connect(self._download_search_result)
+            card.view_task_requested.connect(self._view_search_task)
+            cards.append(card)
+            self._cards_by_album.setdefault(item.album_id, []).append(card)
+        self.comic_cards = tuple(cards)
+        self._column_count = 0
+        self._reflow_cards()
+
+    def _refresh_card_actions(self) -> None:
+        enabled = self._controller is not None and not self._search_busy
+        for card in self.comic_cards:
+            card.action_button.setEnabled(enabled)
+
     def _reflow_cards(self) -> None:
+        if not hasattr(self, "results_scroll"):
+            return
         available_width = max(1, self.results_scroll.viewport().width() - 8)
-        step = ComicPlaceholderCard.WIDTH + self.results_grid.horizontalSpacing()
-        columns = max(1, (available_width + self.results_grid.horizontalSpacing()) // step)
-        if columns == self._column_count and self.results_grid.count():
+        spacing = self.results_grid.horizontalSpacing()
+        step = SearchResultCard.WIDTH + spacing
+        columns = max(1, (available_width + spacing) // step)
+        if (
+            columns == self._column_count
+            and self.results_grid.count() == len(self.comic_cards)
+        ):
+            self._schedule_visible_covers()
             return
 
         while self.results_grid.count():
@@ -247,6 +720,87 @@ class DownloadPage(SectionPage):
         for index, card in enumerate(self.comic_cards):
             self.results_grid.addWidget(card, index // columns, index % columns)
         self._column_count = columns
+        self._schedule_visible_covers()
+
+    def _schedule_visible_covers(self, *_args) -> None:
+        if self._disposed or self._cover_update_scheduled:
+            return
+        self._cover_update_scheduled = True
+        QTimer.singleShot(0, self._request_visible_covers)
+
+    def _request_visible_covers(self) -> None:
+        self._cover_update_scheduled = False
+        if (
+            self._disposed
+            or self._cover_loader is None
+            or not self.comic_cards
+            or self.view_tabs.currentIndex() != 0
+            or self.search_state != "results"
+        ):
+            return
+
+        columns = max(1, self._column_count)
+        row_step = SearchResultCard.HEIGHT + self.results_grid.verticalSpacing()
+        scroll_top = self.results_scroll.verticalScrollBar().value()
+        viewport_height = max(1, self.results_scroll.viewport().height())
+        first_row = max(0, scroll_top // row_step)
+        last_visible_row = max(
+            first_row,
+            (scroll_top + viewport_height - 1) // row_step,
+        )
+        final_row = min(
+            (len(self.comic_cards) - 1) // columns,
+            last_visible_row + 1,
+        )
+        start = first_row * columns
+        stop = min(len(self.comic_cards), (final_row + 1) * columns)
+        target_size = QSize(
+            SearchResultCard.WIDTH - 2,
+            SearchResultCard.COVER_HEIGHT,
+        )
+        for card in self.comic_cards[start:stop]:
+            key = (self._search_generation, card.snapshot.album_id)
+            if key in self._cover_attempted:
+                continue
+            if self._cover_loader.request(
+                self._search_generation,
+                card.snapshot.album_id,
+                target_size,
+            ):
+                self._cover_attempted.add(key)
+
+    def _on_cover_ready(self, generation: int, album_id: str, image) -> None:
+        if generation != self._search_generation or self._disposed:
+            return
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_cover(image)
+
+    def _on_cover_failed(self, generation: int, album_id: str) -> None:
+        if generation != self._search_generation or self._disposed:
+            return
+        for card in self._cards_by_album.get(album_id, ()):
+            card.clear_cover()
+
+    def _download_search_result(self, album_id: str) -> None:
+        if self._controller is None:
+            return
+        snapshot = self._controller.add_task(album_id)
+        if snapshot is None:
+            return
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_task_present(True)
+
+    def _view_search_task(self, album_id: str) -> None:
+        self.view_tabs.setCurrentIndex(1)
+        for row in self._task_rows.values():
+            if row.snapshot.album_id == album_id:
+                self.tasks_scroll.ensureWidgetVisible(row)
+                break
+
+    def _on_view_changed(self, index: int) -> None:
+        self.view_stack.setCurrentIndex(index)
+        if index == 0:
+            self._schedule_visible_covers()
 
     def _add_download_task(self) -> None:
         if self._controller is None:
@@ -261,6 +815,7 @@ class DownloadPage(SectionPage):
     def _set_tasks(self, snapshots) -> None:
         snapshots = list(snapshots)
         task_ids = {snapshot.id for snapshot in snapshots}
+        self._tasks_by_album = {snapshot.album_id for snapshot in snapshots}
         for task_id in tuple(self._task_rows):
             if task_id in task_ids:
                 continue
@@ -306,6 +861,11 @@ class DownloadPage(SectionPage):
             self.tasks_layout.addWidget(self.empty_tasks_label)
         self.tasks_layout.addStretch(1)
         self.view_tabs.setTabText(1, f"下载任务 {len(snapshots)}")
+
+        for album_id, cards in self._cards_by_album.items():
+            task_present = album_id in self._tasks_by_album
+            for card in cards:
+                card.set_task_present(task_present)
 
     def _on_thumbnail_ready(self, task_id: str, revision: int, image) -> None:
         row = self._task_rows.get(task_id)

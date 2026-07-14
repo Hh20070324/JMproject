@@ -13,11 +13,18 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 from ..desktop_runtime import SingleInstance, configure_logging
 from ..downloader import DownloadWorker
+from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
+from ..search import SearchService
 from ..settings import AppPaths, AppSettings, DEFAULT_PATHS, SettingsError
 from ..tasks import TaskManager
 from .backend_smoke import run_backend_smoke
-from .controllers import DownloadController, LibraryController, SettingsController
+from .controllers import (
+    DownloadController,
+    LibraryController,
+    SearchController,
+    SettingsController,
+)
 from .main_window import MainWindow
 from .settings_store import SettingsStore, SettingsStoreError
 from .theme import ThemeManager, load_stylesheet, resource_path
@@ -121,12 +128,14 @@ def run_qt_app(
     smoke_test: bool = False,
     base_paths: AppPaths | None = None,
 ) -> int:
+    install_safe_jmcomic_logging()
     base_paths = base_paths or DEFAULT_PATHS
     instance = SingleInstance()
     previous_hook = sys.excepthook
     logger = None
     download_controller = None
     library_controller = None
+    search_controller = None
     try:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -181,6 +190,7 @@ def run_qt_app(
         library = LibraryService(paths)
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
+        search_controller = SearchController(SearchService(paths=paths))
         settings_controller = SettingsController(
             settings_store,
             settings_validator=partial(
@@ -193,6 +203,7 @@ def run_qt_app(
             theme_manager,
             download_controller,
             library_controller,
+            search_controller=search_controller,
             settings_controller=settings_controller,
             persist_window_state=not smoke_test,
         )
@@ -215,6 +226,8 @@ def run_qt_app(
             )
         raise
     finally:
+        if search_controller is not None:
+            search_controller.dispose()
         if library_controller is not None:
             if not library_controller.shutdown(timeout=5.0):
                 logger.warning(
@@ -234,6 +247,7 @@ def run_qt_app(
 
 
 def main(arguments: list[str] | None = None) -> int:
+    install_safe_jmcomic_logging()
     parser = argparse.ArgumentParser(
         description="JM-Downloader desktop application"
     )
@@ -243,8 +257,11 @@ def main(arguments: list[str] | None = None) -> int:
     if parsed.backend_smoke_test:
         try:
             run_backend_smoke()
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            print(
+                f"Backend smoke test failed ({type(error).__name__})",
+                file=sys.stderr,
+            )
             return 1
         return 0
     return run_qt_app([sys.argv[0], *qt_arguments], smoke_test=parsed.smoke_test)

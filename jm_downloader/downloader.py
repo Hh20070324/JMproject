@@ -4,6 +4,7 @@ from pathlib import Path
 
 import jmcomic
 
+from .jmcomic_logging import install_safe_jmcomic_logging
 from .pdf import album_to_pdf, natural_key
 from .settings import AppPaths, DEFAULT_PATHS
 
@@ -43,11 +44,13 @@ class DownloadWorker:
         self.paths.ensure_output_directories()
 
     def _make_option(self):
+        install_safe_jmcomic_logging()
         option = jmcomic.create_option_by_file(str(self.paths.option_file))
         option.download.threading.image = self.image_concurrency
         return option
 
     def fetch_info(self):
+        install_safe_jmcomic_logging()
         try:
             option = self._make_option()
             album = option.build_jm_client().get_album_detail(self.album_id)
@@ -59,6 +62,7 @@ class DownloadWorker:
             return None, None, 0
 
     def run(self):
+        install_safe_jmcomic_logging()
         try:
             if self._stop_flag.is_set():
                 return
@@ -100,8 +104,15 @@ class DownloadWorker:
             pdf_path = album_to_pdf(str(album_dir), str(self.paths.pdfs))
             self.on_complete(self.album_id, pdf_path)
         except Exception as error:
-            LOGGER.exception("Download failed for JM %s", self.album_id)
-            self.on_error(self.album_id, str(error))
+            LOGGER.error(
+                "Download failed for JM %s (%s)",
+                self.album_id,
+                type(error).__name__,
+            )
+            self.on_error(
+                self.album_id,
+                "任务失败，请检查网络、配置或磁盘后重试",
+            )
 
     def start(self):
         self._thread = threading.Thread(target=self.run, daemon=True)

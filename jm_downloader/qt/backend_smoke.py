@@ -8,11 +8,13 @@ from Crypto.Cipher import AES
 from PIL import Image
 from curl_cffi import Curl
 
+from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..pdf import album_to_pdf
 from ..settings import AppPaths, DEFAULT_PATHS
 
 
 def run_backend_smoke(paths: AppPaths = DEFAULT_PATHS) -> None:
+    install_safe_jmcomic_logging()
     option_file = paths.option_file
     if not option_file.is_file():
         raise FileNotFoundError(f"没有找到下载配置：{option_file}")

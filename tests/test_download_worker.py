@@ -1,3 +1,4 @@
+import logging
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ class DownloadWorkerTests(unittest.TestCase):
     def test_make_option_overrides_image_concurrency_in_memory(self):
         option = Mock()
         option.download.threading.image = 30
+        calls = []
         with tempfile.TemporaryDirectory() as temp_dir:
             worker = downloader.DownloadWorker(
                 "123456",
@@ -18,16 +20,82 @@ class DownloadWorkerTests(unittest.TestCase):
                 image_concurrency=7,
             )
 
-            with patch.object(
-                downloader.jmcomic,
-                "create_option_by_file",
-                return_value=option,
-            ) as create_option:
+            def install_logging():
+                calls.append("install")
+
+            def create_option_file(_option_path):
+                calls.append("create")
+                return option
+
+            with (
+                patch.object(
+                    downloader,
+                    "install_safe_jmcomic_logging",
+                    side_effect=install_logging,
+                ) as install,
+                patch.object(
+                    downloader.jmcomic,
+                    "create_option_by_file",
+                    side_effect=create_option_file,
+                ) as create_option,
+            ):
                 result = worker._make_option()
 
         self.assertIs(result, option)
         self.assertEqual(option.download.threading.image, 7)
+        self.assertEqual(calls, ["install", "create"])
+        install.assert_called_once_with()
         create_option.assert_called_once_with(str(worker.paths.option_file))
+
+    def test_fetch_info_installs_safe_logging_before_option_use(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            worker = downloader.DownloadWorker(
+                "123456",
+                paths=AppPaths(Path(temp_dir)),
+            )
+
+            def make_option():
+                calls.append("make")
+                raise RuntimeError("stop")
+
+            worker._make_option = Mock(side_effect=make_option)
+
+            with patch.object(
+                downloader,
+                "install_safe_jmcomic_logging",
+                side_effect=lambda: calls.append("install"),
+            ):
+                result = worker.fetch_info()
+
+        self.assertEqual(result, (None, None, 0))
+        self.assertEqual(calls, ["install", "make"])
+
+    def test_run_installs_safe_logging_before_option_use(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            worker = downloader.DownloadWorker(
+                "123456",
+                paths=AppPaths(Path(temp_dir)),
+            )
+
+            def make_option():
+                calls.append("make")
+                raise RuntimeError("stop")
+
+            worker._make_option = Mock(side_effect=make_option)
+
+            with (
+                patch.object(
+                    downloader,
+                    "install_safe_jmcomic_logging",
+                    side_effect=lambda: calls.append("install"),
+                ),
+                self.assertLogs("jm-downloader", logging.ERROR),
+            ):
+                worker.run()
+
+        self.assertEqual(calls, ["install", "make"])
 
     def test_run_reports_info_progress_and_completion(self):
         events = []
@@ -100,17 +168,25 @@ class DownloadWorkerTests(unittest.TestCase):
 
     def test_run_reports_download_errors(self):
         errors = []
+        secret = "network failed with token=secret"
         with tempfile.TemporaryDirectory() as temp_dir:
             worker = downloader.DownloadWorker(
                 "123456",
                 on_error=lambda album_id, message: errors.append((album_id, message)),
                 paths=AppPaths(Path(temp_dir)),
             )
-            worker._make_option = Mock(side_effect=RuntimeError("network failed"))
+            worker._make_option = Mock(side_effect=RuntimeError(secret))
 
-            worker.run()
+            with self.assertLogs("jm-downloader", logging.ERROR) as logs:
+                worker.run()
 
-        self.assertEqual(errors, [("123456", "network failed")])
+        self.assertEqual(
+            errors,
+            [("123456", "任务失败，请检查网络、配置或磁盘后重试")],
+        )
+        output = "\n".join(logs.output)
+        self.assertIn("Download failed for JM 123456 (RuntimeError)", output)
+        self.assertNotIn(secret, output)
 
     @staticmethod
     def _write_image(path: Path):

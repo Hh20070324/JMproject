@@ -8,9 +8,15 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from jm_downloader.desktop_runtime import WINDOW_TITLE
+from jm_downloader.models import (
+    SearchMode,
+    SearchPageSnapshot,
+    SearchRequest,
+    SearchResultSnapshot,
+)
 from jm_downloader.qt.app import load_stylesheet, resource_path
 from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.main_window import MainWindow
@@ -82,12 +88,20 @@ class QtMainWindowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.window.select_page("missing")
 
-    def test_search_layout_and_placeholder_cards(self):
+    def test_search_layout_and_real_result_cards(self):
         self.window.resize(760, 520)
         self.app.processEvents()
         self.app.processEvents()
 
         page = self.window.page("downloads")
+        self.assertEqual(
+            page.findChild(QLabel, "pageTitle").text(),
+            "搜索与下载",
+        )
+        self.assertEqual(
+            self.window.navigation_button("downloads").text(),
+            "搜索与下载",
+        )
         self.assertEqual(
             page.general_search_input.placeholderText(),
             "搜索漫画名、标签或作者",
@@ -102,11 +116,32 @@ class QtMainWindowTests(unittest.TestCase):
             )
         )
 
+        request = SearchRequest(SearchMode.GENERAL, "query")
+        snapshot = SearchPageSnapshot(
+            request,
+            8,
+            1,
+            tuple(
+                SearchResultSnapshot(
+                    str(index),
+                    f"真实标题 {index}",
+                    ("作者",),
+                    ("标签",),
+                )
+                for index in range(1, 9)
+            ),
+        )
+        page._on_search_submitted(1, request)
+        page._on_search_results(1, snapshot, False)
+        self.app.processEvents()
+        self.app.processEvents()
+
         self.assertEqual(len(page.comic_cards), 8)
         card = page.comic_cards[0]
         info = card.findChild(QWidget, "comicInfo")
         self.assertGreater(card.height(), card.width())
-        self.assertLess(card.cover.geometry().top(), info.geometry().top())
+        self.assertLess(card.cover_label.geometry().top(), info.geometry().top())
+        self.assertEqual(card.snapshot.title, "真实标题 1")
         self.assertEqual(page.column_count, 2)
 
         self.window.resize(1100, 720)
@@ -139,6 +174,8 @@ class QtMainWindowTests(unittest.TestCase):
             stylesheet = load_stylesheet(theme)
             self.assertIn("QToolButton#navButton", stylesheet)
             self.assertIn("QFrame#comicCard", stylesheet)
+            self.assertIn("QToolButton#searchModeButton", stylesheet)
+            self.assertIn("QPushButton#searchResultActionButton", stylesheet)
             self.assertIn("QToolButton#themeButton", stylesheet)
 
 
