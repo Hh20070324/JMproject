@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ReleaseVersion = "2.3.0"
+$ReleaseVersion = "2.4.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -16,7 +16,8 @@ $Archive = Join-Path $ReleaseDir $ArchiveName
 $ChecksumFile = "$Archive.sha256"
 $HistoricalArchives = @(
     (Join-Path $ReleaseDir "JM-Downloader-v2.1.0-Windows-x64.zip"),
-    (Join-Path $ReleaseDir "JM-Downloader-v2.2.0-Windows-x64.zip")
+    (Join-Path $ReleaseDir "JM-Downloader-v2.2.0-Windows-x64.zip"),
+    (Join-Path $ReleaseDir "JM-Downloader-v2.3.0-Windows-x64.zip")
 )
 $LicensesDir = Join-Path $ProjectRoot "LICENSES"
 $RequiredLicenseFiles = @(
@@ -82,23 +83,35 @@ function Remove-RuntimeArtifacts
         Remove-BuildDirectory (Join-Path $AppDir $Name)
     }
 
-    foreach ($Name in @("settings.json", "settings.ini"))
+    foreach ($Name in @("settings.json", "settings.ini", "tasks.json"))
     {
         Remove-BuildFile (Join-Path $AppDir $Name)
     }
 
-    $CorruptBackups = Get-ChildItem -LiteralPath $AppDir -File -Force `
-        -Filter "settings.json.corrupt-*" -ErrorAction SilentlyContinue
-    foreach ($Backup in $CorruptBackups)
+    $RuntimeFiles = Get-ChildItem -LiteralPath $AppDir -Recurse -File -Force `
+        -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -like "settings.json.corrupt-*" -or
+            $_.Name -like "tasks.json.corrupt-*" -or
+            $_.Name -like ".tasks.json.*.tmp" -or
+            $_.Name -like "*.jm-part-*"
+        }
+    foreach ($RuntimeFile in $RuntimeFiles)
     {
-        Remove-BuildFile $Backup.FullName
+        Remove-BuildFile $RuntimeFile.FullName
     }
 }
 
 function Assert-NoRuntimeArtifacts
 {
     $Artifacts = @()
-    foreach ($Name in @("logs", "Pictures", "PDFs", "settings.json", "settings.ini"))
+    foreach ($Name in @(
+        "logs",
+        "Pictures",
+        "PDFs",
+        "settings.json",
+        "settings.ini",
+        "tasks.json"
+    ))
     {
         $Path = Join-Path $AppDir $Name
         if (Test-Path -LiteralPath $Path)
@@ -107,9 +120,13 @@ function Assert-NoRuntimeArtifacts
         }
     }
 
-    $Artifacts += Get-ChildItem -LiteralPath $AppDir -File -Force `
-        -Filter "settings.json.corrupt-*" -ErrorAction SilentlyContinue |
-        Select-Object -ExpandProperty FullName
+    $Artifacts += Get-ChildItem -LiteralPath $AppDir -Recurse -File -Force `
+        -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -like "settings.json.corrupt-*" -or
+            $_.Name -like "tasks.json.corrupt-*" -or
+            $_.Name -like ".tasks.json.*.tmp" -or
+            $_.Name -like "*.jm-part-*"
+        } | Select-Object -ExpandProperty FullName
     if ($Artifacts)
     {
         throw "发行目录包含运行时文件，拒绝打包：$($Artifacts -join ', ')"
@@ -189,7 +206,11 @@ function Assert-ArchiveContents
         $RuntimeArtifacts = $Entries | Where-Object {
             $_ -match "^JM-Downloader/(?:Pictures|PDFs|logs)(?:/|$)" -or
             $_ -match "^JM-Downloader/settings\.(?:json|ini)$" -or
-            $_ -match "^JM-Downloader/settings\.json\.corrupt-"
+            $_ -match "^JM-Downloader/settings\.json\.corrupt-" -or
+            $_ -match "^JM-Downloader/tasks\.json$" -or
+            $_ -match "^JM-Downloader/tasks\.json\.corrupt-" -or
+            $_ -match "^JM-Downloader/\.tasks\.json\..*\.tmp$" -or
+            $_ -match "\.jm-part-[^/]*$"
         }
         if ($RuntimeArtifacts)
         {

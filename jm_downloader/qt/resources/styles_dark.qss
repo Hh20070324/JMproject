@@ -279,6 +279,15 @@ QFrame#downloadTaskRow[status="downloading"] {
     border-left-color: #58b989;
 }
 
+QFrame#downloadTaskRow[status="pausing"],
+QFrame#downloadTaskRow[status="cancelling"] {
+    border-left-color: #b49a76;
+}
+
+QFrame#downloadTaskRow[status="paused"] {
+    border-left-color: #8297b0;
+}
+
 QFrame#downloadTaskRow[status="completed"] {
     border-left-color: #58b989;
 }
@@ -337,6 +346,17 @@ QLabel#taskStatus[status="downloading"],
 QLabel#taskStatus[status="completed"] {
     background: #20382d;
     color: #79cfa3;
+}
+
+QLabel#taskStatus[status="pausing"],
+QLabel#taskStatus[status="cancelling"] {
+    background: #3a3228;
+    color: #cfb58e;
+}
+
+QLabel#taskStatus[status="paused"] {
+    background: #293442;
+    color: #a9bdd4;
 }
 
 QLabel#taskStatus[status="failed"] {

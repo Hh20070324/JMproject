@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from jm_downloader.pdf import album_to_pdf, natural_key
+from jm_downloader.pdf import PdfPublishAborted, album_to_pdf, natural_key
 
 
 class NaturalKeyTests(unittest.TestCase):
@@ -84,6 +84,26 @@ class AlbumToPdfTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(PermissionError, "PDF 文件被占用"):
                     album_to_pdf(str(album_dir), str(output_dir))
+
+            self.assertEqual(pdf_path.read_bytes(), b"existing pdf")
+            self.assertEqual(list(output_dir.glob("*.pdf.part")), [])
+
+    def test_publish_guard_preserves_existing_pdf_and_cleans_temp(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            album_dir = root / "123456"
+            output_dir = root / "pdfs"
+            output_dir.mkdir()
+            pdf_path = output_dir / "123456.pdf"
+            pdf_path.write_bytes(b"existing pdf")
+            self._write_image(album_dir / "chapter" / "1.jpg", (1, 2, 3))
+
+            with self.assertRaises(PdfPublishAborted):
+                album_to_pdf(
+                    str(album_dir),
+                    str(output_dir),
+                    publish_guard=lambda: False,
+                )
 
             self.assertEqual(pdf_path.read_bytes(), b"existing pdf")
             self.assertEqual(list(output_dir.glob("*.pdf.part")), [])

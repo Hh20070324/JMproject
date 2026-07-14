@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
             if self.settings_controller is not None
             else None
         )
+        self._last_settings = settings
         initial_size = self._constrained_window_size(
             settings.window_width if settings is not None else 1100,
             settings.window_height if settings is not None else 720,
@@ -242,7 +243,7 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             "下载仍在进行",
-            "关闭窗口将停止正在进行的下载，确定要退出吗？",
+            "关闭窗口会保存未完成任务并将其暂停。下次启动后可手动继续，确定要退出吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -256,6 +257,8 @@ class MainWindow(QMainWindow):
         controller.begin_shutdown(timeout=5.0)
 
     def _apply_settings(self, settings) -> None:
+        previous = self._last_settings
+        self._last_settings = settings
         self.theme_manager.set_theme(settings.theme)
         target_size = self._constrained_window_size(
             settings.window_width,
@@ -263,6 +266,20 @@ class MainWindow(QMainWindow):
         )
         if (self.width(), self.height()) != target_size:
             self.resize(*target_size)
+        if (
+            previous is not None
+            and self.download_controller is not None
+            and (
+                previous.pictures_directory != settings.pictures_directory
+                or previous.pdf_directory != settings.pdf_directory
+            )
+            and self.download_controller.list_tasks()
+        ):
+            QMessageBox.information(
+                self,
+                "下载目录已更新",
+                "现有任务仍使用创建时的原目录；重启后新建的任务使用新目录。",
+            )
 
     def _constrained_window_size(
         self,
@@ -298,7 +315,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "下载尚未完全停止",
-                "部分后台任务未能及时停止，可能留下未完成的文件。",
+                "部分后台任务未能及时停止。任务已保存，下次启动后会以暂停状态恢复。",
             )
         self.close()
 

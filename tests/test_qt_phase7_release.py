@@ -7,7 +7,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "JM-Downloader-v2.3.0-Windows-x64.zip"
+ARCHIVE_NAME = "JM-Downloader-v2.4.0-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
@@ -34,10 +34,10 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         spec = (PROJECT_ROOT / "JM-Downloader.spec").read_text(encoding="utf-8")
 
         for resource in (formal, debug):
-            self.assertIn("filevers=(2, 3, 0, 0)", resource)
-            self.assertIn("prodvers=(2, 3, 0, 0)", resource)
-            self.assertIn("StringStruct('FileVersion', '2.3.0')", resource)
-            self.assertIn("StringStruct('ProductVersion', '2.3.0')", resource)
+            self.assertIn("filevers=(2, 4, 0, 0)", resource)
+            self.assertIn("prodvers=(2, 4, 0, 0)", resource)
+            self.assertIn("StringStruct('FileVersion', '2.4.0')", resource)
+            self.assertIn("StringStruct('ProductVersion', '2.4.0')", resource)
             self.assertNotIn("2.1.0", resource)
 
         self.assertIn("OriginalFilename', 'JM-Downloader.exe'", formal)
@@ -55,7 +55,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
 
         for document in (readme, guide):
             self.assertIn(ARCHIVE_NAME, document)
-        self.assertIn('$ReleaseVersion = "2.3.0"', build_script)
+        self.assertIn('$ReleaseVersion = "2.4.0"', build_script)
         self.assertIn(
             '"JM-Downloader-v$ReleaseVersion-Windows-x64.zip"',
             build_script,
@@ -65,8 +65,26 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertNotIn('Remove-BuildDirectory $ReleaseDir', build_script)
         self.assertIn("JM-Downloader-v2.1.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.2.0-Windows-x64.zip", build_script)
+        self.assertIn("JM-Downloader-v2.3.0-Windows-x64.zip", build_script)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", readme)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", guide)
+
+    def test_runtime_task_state_is_excluded_from_release(self):
+        build_script = (PROJECT_ROOT / "scripts" / "build.ps1").read_text(
+            encoding="utf-8"
+        )
+        gitignore = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        for runtime_name in (
+            "tasks.json",
+            "tasks.json.corrupt-*",
+            ".tasks.json.*.tmp",
+            "*.jm-part-*",
+        ):
+            self.assertIn(runtime_name, build_script)
+            self.assertIn(runtime_name, gitignore)
+        self.assertIn('$_ -match "^JM-Downloader/tasks\\.json$"', build_script)
+        self.assertIn('$_ -match "\\.jm-part-[^/]*$"', build_script)
 
     def test_qt_lgpl_materials_are_complete_and_referenced(self):
         lgpl = (PROJECT_ROOT / "LICENSES" / "LGPL-3.0-only.txt").read_text(
@@ -227,10 +245,12 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             from PySide6.QtGui import QGuiApplication
             from PySide6.QtWidgets import QApplication
 
+            from jm_downloader.models import TaskSnapshot, TaskStatus
             from jm_downloader.qt.controllers.settings_controller import SettingsController
             from jm_downloader.qt.main_window import MainWindow
             from jm_downloader.qt.settings_store import SettingsStore
             from jm_downloader.qt.theme import ThemeManager
+            from jm_downloader.qt.widgets.task_row import DownloadTaskRow
             from jm_downloader.settings import AppPaths
 
             QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -246,8 +266,41 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                     settings_controller=controller,
                     persist_window_state=False,
                 )
+                window.resize(760, 520)
                 window.show()
                 app.processEvents()
+                download_page = window.page("downloads")
+                task_row = DownloadTaskRow(
+                    TaskSnapshot(
+                        id="scale-task",
+                        album_id="123456",
+                        title="用于验证高缩放布局的长标题",
+                        status=TaskStatus.PAUSED,
+                        progress=42,
+                        chapter="第一章",
+                        page="4/10",
+                        preview_path=Path(temp_dir) / "preview.jpg",
+                        preview_revision=1,
+                        pdf_path=None,
+                        error=None,
+                        cover_url=None,
+                    ),
+                    download_page.tasks_canvas,
+                )
+                download_page.empty_tasks_label.hide()
+                download_page.tasks_layout.insertWidget(0, task_row)
+                download_page.view_tabs.setCurrentIndex(1)
+                task_row.show()
+                app.processEvents()
+                visible_actions = [
+                    task_row.resume_button,
+                    task_row.open_images_button,
+                    task_row.cancel_button,
+                ]
+                assert all(button.isVisible() for button in visible_actions)
+                for index, button in enumerate(visible_actions):
+                    for other in visible_actions[index + 1:]:
+                        assert not button.geometry().intersects(other.geometry())
                 screenshot_dir = os.environ.get("JM_PHASE7_SCREENSHOT_DIR")
                 for page in window.PAGE_ORDER:
                     window.select_page(page)

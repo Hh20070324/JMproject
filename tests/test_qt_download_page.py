@@ -9,7 +9,7 @@ from unittest.mock import patch
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from jm_downloader.models import TaskSnapshot, TaskStatus
@@ -28,6 +28,9 @@ class FakeDownloadController(QObject):
         self.added = []
         self.retried = []
         self.removed = []
+        self.paused = []
+        self.resumed = []
+        self.cancelled = []
         self.opened = []
         self.shutdown_timeouts = []
 
@@ -48,11 +51,23 @@ class FakeDownloadController(QObject):
     def retry_task(self, task_id):
         self.retried.append(task_id)
 
+    def pause_task(self, task_id):
+        self.paused.append(task_id)
+
+    def resume_task(self, task_id):
+        self.resumed.append(task_id)
+
+    def cancel_task(self, task_id, delete_files=False):
+        self.cancelled.append((task_id, delete_files))
+
     def remove_task(self, task_id):
         self.removed.append(task_id)
 
     def open_item(self, album_id, kind):
         self.opened.append((album_id, kind))
+
+    def open_task_item(self, task_id, kind):
+        self.opened.append((task_id, kind))
 
     def has_active_tasks(self):
         return any(
@@ -146,13 +161,18 @@ class DownloadPageTests(unittest.TestCase):
         row = page._task_rows[active.id]
         self.assertTrue(row.retry_button.isHidden())
         self.assertTrue(row.remove_button.isHidden())
+        self.assertFalse(row.pause_button.isHidden())
+        self.assertFalse(row.cancel_button.isHidden())
+        row.pause_button.click()
+        self.assertEqual(self.controller.paused, [active.id])
 
         failed = replace(active, status=TaskStatus.FAILED, error="网络失败")
         self.controller.tasks = [failed]
         self.controller.tasks_reset.emit([failed])
         self.app.processEvents()
         self.assertFalse(row.retry_button.isHidden())
-        self.assertFalse(row.remove_button.isHidden())
+        self.assertTrue(row.remove_button.isHidden())
+        self.assertFalse(row.cancel_button.isHidden())
         self.assertTrue(row.progress.isHidden())
         row.retry_button.click()
         self.assertEqual(self.controller.retried, [active.id])
@@ -174,7 +194,7 @@ class DownloadPageTests(unittest.TestCase):
         row.open_pdf_button.click()
         self.assertEqual(
             self.controller.opened,
-            [(completed.album_id, "images"), (completed.album_id, "pdf")],
+            [(completed.id, "images"), (completed.id, "pdf")],
         )
 
     def test_task_row_displays_transitional_states_without_actions(self):
@@ -197,6 +217,80 @@ class DownloadPageTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(row.status.text(), "取消中")
         self.assertIn("安全停止", row.detail.toolTip())
+
+    def test_cancel_dialog_routes_keep_delete_and_back_choices(self):
+        page = self.window.page("downloads")
+        paused = make_snapshot(status=TaskStatus.PAUSED)
+        self.controller.tasks = [paused]
+        self.controller.tasks_reset.emit([paused])
+        self.app.processEvents()
+
+        class FakeMessageBox:
+            Icon = QMessageBox.Icon
+            ButtonRole = QMessageBox.ButtonRole
+            selection = ""
+
+            def __init__(self, _parent):
+                self.buttons = {}
+
+            def setIcon(self, _icon):
+                pass
+
+            def setWindowTitle(self, _title):
+                pass
+
+            def setText(self, _text):
+                pass
+
+            def setInformativeText(self, _text):
+                pass
+
+            def addButton(self, label, _role):
+                button = object()
+                self.buttons[label] = button
+                return button
+
+            def setDefaultButton(self, _button):
+                pass
+
+            def setEscapeButton(self, _button):
+                pass
+
+            def exec(self):
+                pass
+
+            def clickedButton(self):
+                return self.buttons.get(self.selection)
+
+        with patch(
+            "jm_downloader.qt.pages.download_page.QMessageBox",
+            FakeMessageBox,
+        ):
+            FakeMessageBox.selection = "仅移除任务"
+            page._confirm_cancel(paused.id)
+            FakeMessageBox.selection = "移除并删除文件"
+            page._confirm_cancel(paused.id)
+            FakeMessageBox.selection = "返回"
+            page._confirm_cancel(paused.id)
+
+        self.assertEqual(
+            self.controller.cancelled,
+            [(paused.id, False), (paused.id, True)],
+        )
+
+    def test_completed_task_is_scheduled_for_removal_after_five_seconds(self):
+        page = self.window.page("downloads")
+        completed = make_snapshot(status=TaskStatus.COMPLETED, progress=100)
+
+        with patch.object(QTimer, "singleShot") as single_shot:
+            self.controller.tasks = [completed]
+            self.controller.tasks_reset.emit([completed])
+            self.app.processEvents()
+
+        delay, callback = single_shot.call_args.args
+        self.assertEqual(delay, 5000)
+        callback()
+        self.assertEqual(self.controller.removed, [completed.id])
 
     def test_close_with_active_task_requires_confirmation_and_waits_async(self):
         active = make_snapshot(status=TaskStatus.DOWNLOADING)

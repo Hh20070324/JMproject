@@ -43,6 +43,9 @@ class ElidedLabel(QLabel):
 
 
 class DownloadTaskRow(QFrame):
+    pause_requested = Signal(str)
+    resume_requested = Signal(str)
+    cancel_requested = Signal(str)
     retry_requested = Signal(str)
     remove_requested = Signal(str)
     open_requested = Signal(str, str)
@@ -126,6 +129,28 @@ class DownloadTaskRow(QFrame):
         )
         actions_layout.addWidget(self.retry_button)
 
+        self.pause_button = self._make_action(
+            actions,
+            "pauseTaskButton",
+            "暂停下载",
+            svg_icon("pause"),
+        )
+        self.pause_button.clicked.connect(
+            lambda: self.pause_requested.emit(self.snapshot.id)
+        )
+        actions_layout.addWidget(self.pause_button)
+
+        self.resume_button = self._make_action(
+            actions,
+            "resumeTaskButton",
+            "继续下载",
+            svg_icon("play"),
+        )
+        self.resume_button.clicked.connect(
+            lambda: self.resume_requested.emit(self.snapshot.id)
+        )
+        actions_layout.addWidget(self.resume_button)
+
         self.open_images_button = self._make_action(
             actions,
             "openImagesButton",
@@ -133,7 +158,7 @@ class DownloadTaskRow(QFrame):
             svg_icon("folder"),
         )
         self.open_images_button.clicked.connect(
-            lambda: self.open_requested.emit(self.snapshot.album_id, "images")
+            lambda: self.open_requested.emit(self.snapshot.id, "images")
         )
         actions_layout.addWidget(self.open_images_button)
 
@@ -144,7 +169,7 @@ class DownloadTaskRow(QFrame):
             svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
-            lambda: self.open_requested.emit(self.snapshot.album_id, "pdf")
+            lambda: self.open_requested.emit(self.snapshot.id, "pdf")
         )
         actions_layout.addWidget(self.open_pdf_button)
 
@@ -158,6 +183,17 @@ class DownloadTaskRow(QFrame):
             lambda: self.remove_requested.emit(self.snapshot.id)
         )
         actions_layout.addWidget(self.remove_button)
+
+        self.cancel_button = self._make_action(
+            actions,
+            "cancelTaskButton",
+            "取消任务",
+            svg_icon("stop"),
+        )
+        self.cancel_button.clicked.connect(
+            lambda: self.cancel_requested.emit(self.snapshot.id)
+        )
+        actions_layout.addWidget(self.cancel_button)
         layout.addWidget(actions)
 
         self.update_snapshot(snapshot)
@@ -188,18 +224,42 @@ class DownloadTaskRow(QFrame):
         self.status.setText(self.STATUS_LABELS[snapshot.status])
         self.detail.set_full_text(self._detail_text(snapshot))
 
-        terminal = snapshot.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
         self.retry_button.setVisible(snapshot.status == TaskStatus.FAILED)
-        self.remove_button.setVisible(
-            snapshot.status in (TaskStatus.PENDING, TaskStatus.PAUSED) or terminal
+        self.pause_button.setVisible(
+            snapshot.status
+            in (
+                TaskStatus.PENDING,
+                TaskStatus.FETCHING,
+                TaskStatus.DOWNLOADING,
+            )
         )
-        self.remove_button.setToolTip(
-            "删除等待任务"
-            if snapshot.status == TaskStatus.PENDING
-            else "清除任务记录"
+        self.resume_button.setVisible(snapshot.status == TaskStatus.PAUSED)
+        self.cancel_button.setVisible(
+            snapshot.status
+            in (
+                TaskStatus.PENDING,
+                TaskStatus.FETCHING,
+                TaskStatus.DOWNLOADING,
+                TaskStatus.PAUSED,
+                TaskStatus.FAILED,
+            )
         )
-        self.open_images_button.setVisible(terminal and snapshot.preview_path is not None)
-        self.open_pdf_button.setVisible(terminal and snapshot.pdf_path is not None)
+        self.remove_button.hide()
+        self.open_images_button.setVisible(
+            snapshot.status
+            in (TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.COMPLETED)
+            and snapshot.preview_path is not None
+        )
+        self.open_pdf_button.setVisible(
+            (
+                snapshot.status == TaskStatus.COMPLETED
+                or (
+                    snapshot.status == TaskStatus.FAILED
+                    and snapshot.preview_path is None
+                )
+            )
+            and snapshot.pdf_path is not None
+        )
 
     def set_preview(self, image: QImage, revision: int) -> None:
         if image.isNull() or revision < self._preview_revision:

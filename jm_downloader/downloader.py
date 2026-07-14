@@ -1,19 +1,52 @@
 import logging
+import os
+import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import jmcomic
+from PIL import Image, UnidentifiedImageError
 
 from .jmcomic_logging import install_safe_jmcomic_logging
-from .pdf import album_to_pdf, natural_key
+from .pdf import (
+    PART_FILE_MARKER,
+    PdfPublishAborted,
+    album_to_pdf,
+    find_album_images,
+    is_linked_directory,
+    natural_key,
+)
 from .settings import AppPaths, DEFAULT_PATHS
 
 
 LOGGER = logging.getLogger("jm-downloader")
 
 
+class DownloadStopped(Exception):
+    pass
+
+
+class DownloadIntegrityError(Exception):
+    pass
+
+
+class ImageValidationError(DownloadIntegrityError):
+    pass
+
+
+class ManagedPathError(DownloadIntegrityError):
+    pass
+
+
+class PdfPackagingError(Exception):
+    pass
+
+
 class DownloadWorker:
     PDF_PCT = 95
+    REQUEST_TIMEOUT_SECONDS = 60
+    REQUEST_RETRIES = 3
 
     def __init__(
         self,
@@ -42,6 +75,10 @@ class DownloadWorker:
         self._album_total_known = False
         self._downloaded_count = 0
         self._progress_lock = threading.Lock()
+        self._integrity_lock = threading.Lock()
+        self._expected_images: set[Path] = set()
+        self._verified_images: set[Path] = set()
+        self._active_downloader = None
         self._preview_path = None
         self.paths.ensure_output_directories()
 
@@ -49,6 +86,8 @@ class DownloadWorker:
         install_safe_jmcomic_logging()
         option = jmcomic.create_option_by_file(str(self.paths.option_file))
         option.download.threading.image = self.image_concurrency
+        option.client.retry_times = self.REQUEST_RETRIES
+        option.client.postman.meta_data.timeout = self.REQUEST_TIMEOUT_SECONDS
         return option
 
     def fetch_info(self):
@@ -71,10 +110,15 @@ class DownloadWorker:
             option = self._make_option()
             album_dir = self.paths.pictures / self.album_id
             album_dir.mkdir(parents=True, exist_ok=True)
+            self._cleanup_stale_parts(album_dir)
             option.dir_rule.base_dir = str(self.paths.pictures)
             owner = self
 
             class ProgressDownloader(jmcomic.JmDownloader):
+                def __init__(self, active_option):
+                    super().__init__(active_option)
+                    owner._active_downloader = self
+
                 def before_album(self, album):
                     super().before_album(album)
                     owner._total_photos = getattr(album, "page_count", 0) or 0
@@ -89,22 +133,73 @@ class DownloadWorker:
                         with owner._progress_lock:
                             owner._total_photos += len(photo)
 
-                def before_image(self, image, image_path):
-                    super().before_image(image, image_path)
-                    if image.cache and image.exists:
-                        owner._on_image_ready(image, image_path)
+                def download_by_image_detail(self, image):
+                    try:
+                        owner._download_image(self, image)
+                    except DownloadStopped:
+                        return
+                    except Exception as error:
+                        self.download_failed_image.append((image, error))
 
-                def after_image(self, image, image_path):
-                    super().after_image(image, image_path)
-                    owner._on_image_ready(image, image_path)
+                def execute_on_condition(
+                    self,
+                    iter_objs,
+                    apply,
+                    count_batch,
+                ):
+                    items = list(self.do_filter(iter_objs))
+                    if not items or owner._stop_flag.is_set():
+                        return
+                    if type(count_batch) is not int or count_batch < 1:
+                        worker_count = len(items)
+                    else:
+                        worker_count = min(count_batch, len(items))
 
-            jmcomic.download_album(self.album_id, option, downloader=ProgressDownloader)
+                    def apply_unless_stopped(item):
+                        if owner._stop_flag.is_set():
+                            return
+                        try:
+                            apply(item)
+                        except DownloadStopped:
+                            return
+                        except Exception:
+                            return
+
+                    with ThreadPoolExecutor(
+                        max_workers=max(1, worker_count),
+                        thread_name_prefix="jm-download",
+                    ) as executor:
+                        futures = [
+                            executor.submit(apply_unless_stopped, item)
+                            for item in items
+                        ]
+                        for future in futures:
+                            future.result()
+
+            jmcomic.download_album(
+                self.album_id,
+                option,
+                downloader=ProgressDownloader,
+                check_exception=False,
+            )
             if self._stop_flag.is_set():
                 return
 
+            self._verify_download_result()
+
             self.on_progress(self.album_id, self.PDF_PCT, "打包 PDF", "")
-            pdf_path = album_to_pdf(str(album_dir), str(self.paths.pdfs))
+            pdf_path = album_to_pdf(
+                str(album_dir),
+                str(self.paths.pdfs),
+                publish_guard=lambda: not self._stop_flag.is_set(),
+            )
+            if not pdf_path:
+                raise PdfPackagingError("PDF generator returned no output")
+            if self._stop_flag.is_set():
+                return
             self.on_complete(self.album_id, pdf_path)
+        except (DownloadStopped, PdfPublishAborted):
+            return
         except Exception as error:
             LOGGER.error(
                 "Download failed for JM %s (%s)",
@@ -113,7 +208,7 @@ class DownloadWorker:
             )
             self.on_error(
                 self.album_id,
-                "任务失败，请检查网络、配置或磁盘后重试",
+                self._public_error_message(error),
             )
         finally:
             try:
@@ -123,6 +218,185 @@ class DownloadWorker:
                     "Download stopped callback failed for JM %s",
                     self.album_id,
                 )
+
+    def _download_image(self, downloader, image) -> None:
+        final_path = self._managed_image_path(
+            Path(downloader.option.decide_image_filepath(image))
+        )
+        with self._integrity_lock:
+            self._expected_images.add(final_path)
+
+        image.save_path = str(final_path)
+        image.exists = final_path.is_file()
+        image.cache = downloader.option.decide_download_cache(image)
+
+        if image.exists and not self._is_valid_image(final_path):
+            final_path.unlink()
+            image.exists = False
+
+        downloader.before_image(image, str(final_path))
+        if image.skip:
+            return
+
+        if image.cache and image.exists:
+            self._record_verified_image(downloader, image, final_path)
+            return
+        if self._stop_flag.is_set():
+            raise DownloadStopped()
+
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=final_path.parent,
+            prefix=f".{final_path.stem}{PART_FILE_MARKER}",
+            suffix=final_path.suffix,
+        )
+        os.close(descriptor)
+        temp_path = Path(temp_name)
+        try:
+            decode_image = downloader.option.decide_download_image_decode(image)
+            downloader.client.download_by_image_detail(
+                image,
+                str(temp_path),
+                decode_image=decode_image,
+            )
+            if not self._is_valid_image(temp_path):
+                raise ImageValidationError("downloaded image is invalid")
+            os.replace(temp_path, final_path)
+            self._record_verified_image(downloader, image, final_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    def _record_verified_image(self, downloader, image, path: Path) -> None:
+        with self._integrity_lock:
+            self._verified_images.add(path)
+        downloader.after_image(image, str(path))
+        self._on_image_ready(image, str(path))
+
+    def _verify_download_result(self) -> None:
+        downloader = self._active_downloader
+        if downloader is None:
+            raise DownloadIntegrityError("downloader result is unavailable")
+        failures = [
+            error
+            for _detail, error in (
+                *downloader.download_failed_image,
+                *downloader.download_failed_photo,
+            )
+        ]
+        if failures:
+            for error in failures:
+                if isinstance(
+                    error,
+                    (
+                        ManagedPathError,
+                        ImageValidationError,
+                        PermissionError,
+                        OSError,
+                        ConnectionError,
+                        TimeoutError,
+                    ),
+                ):
+                    raise error
+            raise DownloadIntegrityError("upstream reported partial download")
+
+        with self._integrity_lock:
+            expected = set(self._expected_images)
+            verified = set(self._verified_images)
+        if not expected:
+            raise DownloadIntegrityError("no images were discovered")
+        if self._album_total_known and len(expected) != self._total_photos:
+            raise DownloadIntegrityError("expected image count does not match album")
+        if expected != verified:
+            raise DownloadIntegrityError("not every expected image was verified")
+        if any(not self._is_valid_image(path) for path in expected):
+            raise DownloadIntegrityError("published image validation failed")
+
+    def _managed_image_path(self, candidate: Path) -> Path:
+        if not candidate.is_absolute():
+            candidate = self.paths.root / candidate
+        album_root = (self.paths.pictures / self.album_id).resolve()
+        if is_linked_directory(album_root):
+            raise ManagedPathError("album directory is a link")
+        resolved = candidate.resolve()
+        if not resolved.is_relative_to(album_root):
+            raise ManagedPathError("image path escapes the managed album")
+        if candidate.is_symlink():
+            raise ManagedPathError("image path is a symbolic link")
+
+        current = resolved.parent
+        while current != album_root:
+            if is_linked_directory(current):
+                raise ManagedPathError("image directory is a link")
+            parent = current.parent
+            if parent == current:
+                raise ManagedPathError("image directory is outside the album")
+            current = parent
+        return resolved
+
+    def _cleanup_stale_parts(self, album_dir: Path) -> None:
+        album_root = album_dir.resolve()
+        if is_linked_directory(album_root):
+            raise ManagedPathError("album directory is a link")
+        for root, directories, filenames in os.walk(album_root, followlinks=False):
+            root_path = Path(root)
+            directories[:] = [
+                name
+                for name in directories
+                if not is_linked_directory(root_path / name)
+            ]
+            for filename in filenames:
+                if PART_FILE_MARKER not in filename:
+                    continue
+                candidate = root_path / filename
+                if candidate.is_symlink():
+                    continue
+                resolved = candidate.resolve()
+                if resolved.is_relative_to(album_root):
+                    candidate.unlink(missing_ok=True)
+
+    @staticmethod
+    def _is_valid_image(path: Path) -> bool:
+        try:
+            if (
+                not path.is_file()
+                or path.is_symlink()
+                or path.stat().st_size <= 0
+            ):
+                return False
+            with Image.open(path) as image:
+                detected_format = str(image.format or "").upper()
+                image.verify()
+            expected_formats = {
+                ".jpg": {"JPEG"},
+                ".jpeg": {"JPEG"},
+                ".png": {"PNG"},
+                ".webp": {"WEBP"},
+                ".bmp": {"BMP"},
+                ".gif": {"GIF"},
+            }.get(path.suffix.lower())
+            if expected_formats is None or detected_format not in expected_formats:
+                return False
+            with Image.open(path) as image:
+                image.load()
+                return image.width > 0 and image.height > 0
+        except (OSError, ValueError, UnidentifiedImageError):
+            return False
+
+    @staticmethod
+    def _public_error_message(error: Exception) -> str:
+        if isinstance(error, ManagedPathError):
+            return "下载路径未通过安全检查，请检查目录设置"
+        if isinstance(error, (ImageValidationError, DownloadIntegrityError)):
+            return "图片不完整或已损坏，请点击继续重试"
+        if isinstance(error, PdfPackagingError):
+            return "PDF 生成失败，图片已保留，可稍后继续"
+        if isinstance(error, PermissionError):
+            return "无法写入下载目录，请检查权限和磁盘空间"
+        if isinstance(error, OSError):
+            return "本地文件操作失败，请检查磁盘和下载目录"
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            return "网络暂时不可用，请检查连接后继续"
+        return "下载失败，请检查网络或稍后继续"
 
     def start(self):
         self._thread = threading.Thread(target=self.run, daemon=True)
@@ -165,17 +439,28 @@ class DownloadWorker:
                 f"{self._downloaded_count}/{self._total_photos or '?'}",
             )
 
-            candidate = self._find_first_downloaded_image()
+            album_dir = self.paths.pictures / self.album_id
+            with self._integrity_lock:
+                verified = tuple(self._verified_images)
+            candidate = min(
+                verified,
+                key=lambda path: tuple(
+                    natural_key(part)
+                    for part in path.relative_to(album_dir).parts
+                ),
+                default=None,
+            )
             if candidate is not None and candidate != self._preview_path:
                 self._preview_path = candidate
                 self.on_preview(self.album_id, str(candidate))
 
     def _find_first_downloaded_image(self) -> Path | None:
-        album_dir = self.paths.pictures / self.album_id
+        return self.find_valid_preview(self.paths.pictures / self.album_id)
+
+    @classmethod
+    def find_valid_preview(cls, album_dir: Path) -> Path | None:
         images = (
-            path
-            for path in album_dir.rglob("*")
-            if path.is_file() and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+            path for path in find_album_images(album_dir) if cls._is_valid_image(path)
         )
         return min(
             images,

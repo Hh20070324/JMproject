@@ -3,6 +3,8 @@ import threading
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 from jm_downloader.models import TaskStatus
 from jm_downloader.settings import AppPaths
 from jm_downloader.task_store import StoredTask, TaskStore
@@ -166,6 +168,34 @@ class TaskStateMachineTests(unittest.TestCase):
         self.assertEqual([task.id for task in tasks], [second.id])
         self.assertEqual(tasks[0].status, TaskStatus.FETCHING)
 
+    def test_deferred_cancel_keeps_record_until_cleanup_succeeds(self):
+        task = self.manager.add("1")
+        worker = ControlledWorker.instances[0]
+
+        self.manager.prepare_cancel(task.id)
+        worker.emit_stopped()
+
+        self.assertTrue(self.manager.is_cancel_ready(task.id))
+        self.assertEqual(
+            self.manager.get_task(task.id).status,
+            TaskStatus.CANCELLING,
+        )
+        self.manager.finish_cancel(task.id)
+        self.assertEqual(self.manager.list_tasks(), [])
+
+    def test_failed_deferred_cleanup_preserves_task_as_failed(self):
+        task = self.manager.add("1")
+        worker = ControlledWorker.instances[0]
+        self.manager.prepare_cancel(task.id)
+        worker.emit_stopped()
+
+        self.manager.fail_cancel(task.id, "删除失败")
+
+        snapshot = self.manager.get_task(task.id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertEqual(snapshot.error, "删除失败")
+        self.assertFalse(self.manager.is_cancel_ready(task.id))
+
     def test_completion_callback_cannot_override_pause_intent(self):
         task = self.manager.add("1")
         worker = ControlledWorker.instances[0]
@@ -244,6 +274,23 @@ class TaskStateMachineTests(unittest.TestCase):
             self.manager.get_task(first.id).status,
             TaskStatus.PAUSED,
         )
+
+    def test_restore_preview_scans_valid_image_without_starting_worker(self):
+        task = self.manager.add("1")
+        worker = ControlledWorker.instances[0]
+        self.manager.pause(task.id)
+        worker.emit_stopped()
+        image = self.paths.pictures / "1" / "chapter" / "1.jpg"
+        image.parent.mkdir(parents=True)
+        Image.new("RGB", (4, 4), "white").save(image, "JPEG")
+
+        restored = self.manager.restore_preview(task.id)
+
+        self.assertEqual(restored, image.resolve())
+        snapshot = self.manager.get_task(task.id)
+        self.assertEqual(snapshot.preview_path, image.resolve())
+        self.assertEqual(snapshot.preview_revision, 1)
+        self.assertEqual(len(ControlledWorker.instances), 1)
 
 
 class TransitionalStateRecoveryTests(unittest.TestCase):

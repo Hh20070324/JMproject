@@ -7,7 +7,12 @@ from pathlib import Path
 from PIL import Image
 
 
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")
+PART_FILE_MARKER = ".jm-part-"
+
+
+class PdfPublishAborted(Exception):
+    pass
 
 
 def natural_key(name: str):
@@ -28,7 +33,12 @@ def jpg_to_pdf(folder: str, output_dir: str | None = None):
     return _images_to_pdf(image_files, folder_path.name, folder_path.parent, output_dir)
 
 
-def album_to_pdf(album_dir: str, output_dir: str | None = None):
+def album_to_pdf(
+    album_dir: str,
+    output_dir: str | None = None,
+    *,
+    publish_guard=None,
+):
     album_path = Path(album_dir)
     if not album_path.is_dir() or is_linked_directory(album_path):
         print(f"错误: '{album_path}' 不是有效的目录")
@@ -36,7 +46,13 @@ def album_to_pdf(album_dir: str, output_dir: str | None = None):
 
     image_files = find_album_images(album_path)
 
-    return _images_to_pdf(image_files, album_path.name, album_path.parent, output_dir)
+    return _images_to_pdf(
+        image_files,
+        album_path.name,
+        album_path.parent,
+        output_dir,
+        publish_guard=publish_guard,
+    )
 
 
 def find_album_images(album_path: Path) -> list[Path]:
@@ -116,6 +132,7 @@ def _is_image(path: Path) -> bool:
     return (
         path.is_file()
         and not path.is_symlink()
+        and PART_FILE_MARKER not in path.name
         and path.suffix.lower() in IMAGE_EXTENSIONS
     )
 
@@ -125,6 +142,8 @@ def _images_to_pdf(
     pdf_name: str,
     default_output_dir: Path,
     output_dir: str | None,
+    *,
+    publish_guard=None,
 ):
     if not image_files:
         print("没有找到可用于生成 PDF 的图片文件")
@@ -159,6 +178,8 @@ def _images_to_pdf(
                 save_all=True,
                 append_images=images[1:],
             )
+            if publish_guard is not None and not publish_guard():
+                raise PdfPublishAborted("PDF publish was cancelled")
             os.replace(temp_path, pdf_path)
         finally:
             temp_path.unlink(missing_ok=True)

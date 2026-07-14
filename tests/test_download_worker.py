@@ -2,7 +2,10 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
+
+from PIL import Image
 
 from jm_downloader import downloader
 from jm_downloader.settings import AppPaths
@@ -43,6 +46,14 @@ class DownloadWorkerTests(unittest.TestCase):
 
         self.assertIs(result, option)
         self.assertEqual(option.download.threading.image, 7)
+        self.assertEqual(
+            option.client.retry_times,
+            downloader.DownloadWorker.REQUEST_RETRIES,
+        )
+        self.assertEqual(
+            option.client.postman.meta_data.timeout,
+            downloader.DownloadWorker.REQUEST_TIMEOUT_SECONDS,
+        )
         self.assertEqual(calls, ["install", "create"])
         install.assert_called_once_with()
         create_option.assert_called_once_with(str(worker.paths.option_file))
@@ -133,9 +144,15 @@ class DownloadWorkerTests(unittest.TestCase):
             )
             worker._make_option = Mock(return_value=option)
 
-            def fake_download(album_id, received_option, downloader):
+            def fake_download(
+                album_id,
+                received_option,
+                downloader,
+                check_exception,
+            ):
                 self.assertEqual(album_id, "123456")
                 self.assertIs(received_option, option)
+                self.assertFalse(check_exception)
                 active_downloader = downloader(received_option)
                 album = MagicMock()
                 album.id = "123456"
@@ -146,17 +163,42 @@ class DownloadWorkerTests(unittest.TestCase):
                 album.cover = "https://example.test/cover.jpg"
                 album.tags = []
                 album.__len__.return_value = 1
-                photo = Mock(from_album=album, title="第一章")
-                first_image = Mock(from_photo=photo)
-                second_image = Mock(from_photo=photo)
-                active_downloader.download_success_dict = {album: {photo: []}}
+                photo = MagicMock(from_album=album, title="第一章")
+                photo.__len__.return_value = 2
+                first_image = SimpleNamespace(
+                    from_photo=photo,
+                    filename="1.jpg",
+                    tag="1",
+                    img_url="https://example.test/1.jpg",
+                    skip=False,
+                )
+                second_image = SimpleNamespace(
+                    from_photo=photo,
+                    filename="2.jpg",
+                    tag="2",
+                    img_url="https://example.test/2.jpg",
+                    skip=False,
+                )
                 active_downloader.before_album(album)
-
                 chapter_dir = project_root / "Pictures" / "123456" / "第一章"
-                self._write_image(chapter_dir / "2.jpg")
-                active_downloader.after_image(second_image, str(chapter_dir / "2.jpg"))
-                self._write_image(chapter_dir / "1.jpg")
-                active_downloader.after_image(first_image, str(chapter_dir / "1.jpg"))
+                active_downloader.before_photo(photo)
+                received_option.decide_image_filepath.side_effect = (
+                    lambda image: str(chapter_dir / image.filename)
+                )
+                received_option.decide_download_cache.return_value = True
+                received_option.decide_download_image_decode.return_value = True
+
+                def save_image(_image, target, decode_image):
+                    self.assertTrue(decode_image)
+                    self._write_image(Path(target))
+
+                active_downloader.client.download_by_image_detail.side_effect = (
+                    save_image
+                )
+                active_downloader.download_by_image_detail(second_image)
+                active_downloader.download_by_image_detail(first_image)
+                active_downloader.after_photo(photo)
+                active_downloader.after_album(album)
 
             expected_pdf = project_root / "PDFs" / "123456.pdf"
             with (
@@ -166,10 +208,15 @@ class DownloadWorkerTests(unittest.TestCase):
                 worker.run()
 
             self.assertEqual(option.dir_rule.base_dir, str(project_root / "Pictures"))
-            make_pdf.assert_called_once_with(
-                str(project_root / "Pictures" / "123456"),
-                str(project_root / "PDFs"),
+            pdf_args, pdf_kwargs = make_pdf.call_args
+            self.assertEqual(
+                pdf_args,
+                (
+                    str(project_root / "Pictures" / "123456"),
+                    str(project_root / "PDFs"),
+                ),
             )
+            self.assertTrue(pdf_kwargs["publish_guard"]())
             self.assertEqual(events[0], ("info", ("123456", "测试漫画", "https://example.test/cover.jpg")))
             progress_events = [event for event in events if event[0] == "progress"]
             self.assertEqual(progress_events[0], ("progress", ("123456", 47, "第一章", "1/2")))
@@ -201,17 +248,58 @@ class DownloadWorkerTests(unittest.TestCase):
 
         self.assertEqual(
             errors,
-            [("123456", "任务失败，请检查网络、配置或磁盘后重试")],
+            [("123456", "下载失败，请检查网络或稍后继续")],
         )
         self.assertEqual(stopped, ["123456"])
         output = "\n".join(logs.output)
         self.assertIn("Download failed for JM 123456 (RuntimeError)", output)
         self.assertNotIn(secret, output)
 
+    def test_partial_download_never_starts_pdf_packaging(self):
+        errors = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            option = Mock()
+            option.dir_rule = Mock()
+            worker = downloader.DownloadWorker(
+                "123456",
+                on_error=lambda _album_id, message: errors.append(message),
+                paths=AppPaths(Path(temp_dir)),
+            )
+            worker._make_option = Mock(return_value=option)
+
+            def fake_download(
+                _album_id,
+                received_option,
+                downloader,
+                check_exception,
+            ):
+                self.assertFalse(check_exception)
+                active = downloader(received_option)
+                active.download_failed_image.append(
+                    (object(), downloader_module.ImageValidationError("bad"))
+                )
+
+            downloader_module = downloader
+            with (
+                patch.object(
+                    downloader.jmcomic,
+                    "download_album",
+                    side_effect=fake_download,
+                ),
+                patch.object(downloader, "album_to_pdf") as make_pdf,
+            ):
+                worker.run()
+
+        make_pdf.assert_not_called()
+        self.assertEqual(
+            errors,
+            ["图片不完整或已损坏，请点击继续重试"],
+        )
+
     @staticmethod
     def _write_image(path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"image")
+        Image.new("RGB", (4, 4), "white").save(path, "JPEG")
 
 
 if __name__ == "__main__":

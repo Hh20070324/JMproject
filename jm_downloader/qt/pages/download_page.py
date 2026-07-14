@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import SearchMode, SearchPageSnapshot, SearchRequest
+from ...models import SearchMode, SearchPageSnapshot, SearchRequest, TaskStatus
 from ..icons import arrow_icon, search_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
 from ..widgets.search_result_card import SearchResultCard
@@ -64,6 +64,7 @@ class DownloadPage(SectionPage):
         self._task_rows = {}
         self._tasks_by_album = set()
         self._preview_requests = {}
+        self._completion_scheduled = set()
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
@@ -827,6 +828,7 @@ class DownloadPage(SectionPage):
             row = self._task_rows.pop(task_id)
             self._preview_requests.pop(task_id, None)
             self._thumbnail_loader.clear_task(task_id)
+            self._completion_scheduled.discard(task_id)
             row.hide()
             row.deleteLater()
 
@@ -834,12 +836,27 @@ class DownloadPage(SectionPage):
             row = self._task_rows.get(snapshot.id)
             if row is None:
                 row = DownloadTaskRow(snapshot, self.tasks_canvas)
+                row.pause_requested.connect(self._controller.pause_task)
+                row.resume_requested.connect(self._controller.resume_task)
+                row.cancel_requested.connect(self._confirm_cancel)
                 row.retry_requested.connect(self._controller.retry_task)
                 row.remove_requested.connect(self._controller.remove_task)
-                row.open_requested.connect(self._controller.open_item)
+                row.open_requested.connect(self._controller.open_task_item)
                 self._task_rows[snapshot.id] = row
             else:
                 row.update_snapshot(snapshot)
+
+            if (
+                snapshot.status == TaskStatus.COMPLETED
+                and snapshot.id not in self._completion_scheduled
+            ):
+                self._completion_scheduled.add(snapshot.id)
+                QTimer.singleShot(
+                    5000,
+                    lambda task_id=snapshot.id: self._expire_completed_task(
+                        task_id
+                    ),
+                )
 
             if snapshot.preview_path is not None:
                 preview_key = (
@@ -880,3 +897,46 @@ class DownloadPage(SectionPage):
 
     def _show_command_error(self, _command: str, message: str) -> None:
         QMessageBox.warning(self, "操作失败", message)
+
+    def _confirm_cancel(self, task_id: str) -> None:
+        row = self._task_rows.get(task_id)
+        if row is None or self._controller is None:
+            return
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("取消下载任务")
+        dialog.setText(f"取消 JM {row.snapshot.album_id} 的下载任务？")
+        dialog.setInformativeText(
+            "可以只移除任务并保留现有文件，或同时删除已经下载的图片和 PDF。"
+        )
+        keep_button = dialog.addButton(
+            "仅移除任务",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        delete_button = dialog.addButton(
+            "移除并删除文件",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        back_button = dialog.addButton(
+            "返回",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(keep_button)
+        dialog.setEscapeButton(back_button)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked is keep_button:
+            self._controller.cancel_task(task_id, False)
+        elif clicked is delete_button:
+            self._controller.cancel_task(task_id, True)
+
+    def _expire_completed_task(self, task_id: str) -> None:
+        self._completion_scheduled.discard(task_id)
+        row = self._task_rows.get(task_id)
+        if (
+            row is None
+            or row.snapshot.status != TaskStatus.COMPLETED
+            or self._controller is None
+        ):
+            return
+        self._controller.remove_task(task_id)

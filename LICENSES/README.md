@@ -1,6 +1,6 @@
 # Bundled License Texts
 
-This directory is the license inventory for the JM-Downloader v2.3.0 Windows
+This directory is the license inventory for the JM-Downloader v2.4.0 Windows
 x64 portable distribution. Versions match the packages used by the release
 build.
 

@@ -11,8 +11,9 @@ if os.name != "nt":
 
 from PySide6.QtCore import QEventLoop, QThread, QTimer
 from PySide6.QtWidgets import QApplication
+from PIL import Image
 
-from jm_downloader.library import LibraryService
+from jm_downloader.library import LibraryError, LibraryService
 from jm_downloader.models import TaskStatus
 from jm_downloader.qt.controllers import DownloadController
 from jm_downloader.settings import AppPaths
@@ -163,6 +164,122 @@ class DownloadControllerTests(unittest.TestCase):
         )
         replacement.callbacks["on_stopped"]("1")
         self.assertEqual(self.controller.list_tasks(), [])
+
+    def test_cancel_with_delete_waits_for_stop_then_deletes_files(self):
+        snapshot = self.controller.add_task("1")
+        image = self.paths.pictures / "1" / "chapter" / "1.jpg"
+        pdf = self.paths.pdfs / "1.pdf"
+        image.parent.mkdir(parents=True)
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (4, 4), "white").save(image, "JPEG")
+        pdf.write_bytes(b"pdf")
+        worker = ControlledWorker.instances[0]
+
+        self.controller.cancel_task(snapshot.id, True)
+        self.assertEqual(
+            self.controller.list_tasks()[0].status,
+            TaskStatus.CANCELLING,
+        )
+        self.assertTrue(image.exists())
+        worker.callbacks["on_stopped"]("1")
+
+        self.assertTrue(
+            self._wait_until(lambda: self.controller.list_tasks() == [])
+        )
+        self.assertFalse(image.exists())
+        self.assertFalse(pdf.exists())
+
+    def test_delete_failure_keeps_failed_task_and_reports_error(self):
+        snapshot = self.controller.add_task("1")
+        worker = ControlledWorker.instances[0]
+        errors = []
+        self.controller.command_failed.connect(
+            lambda command, message: errors.append((command, message))
+        )
+
+        with patch(
+            "jm_downloader.qt.controllers.download_controller.LibraryService.delete_all",
+            side_effect=LibraryError("文件被占用"),
+        ):
+            self.controller.cancel_task(snapshot.id, True)
+            worker.callbacks["on_stopped"]("1")
+            self.assertTrue(
+                self._wait_until(
+                    lambda: self.controller.list_tasks()[0].status
+                    == TaskStatus.FAILED
+                )
+            )
+
+        failed = self.controller.list_tasks()[0]
+        self.assertIn("文件被占用", failed.error)
+        self.assertTrue(any(command == "cancel" for command, _ in errors))
+
+    def test_controller_restores_paused_preview_in_background(self):
+        self.controller.dispose()
+        self.controller.deleteLater()
+        task = self.manager.add("9")
+        worker = ControlledWorker.instances[-1]
+        self.manager.pause(task.id)
+        worker.callbacks["on_stopped"]("9")
+        image = self.paths.pictures / "9" / "chapter" / "1.jpg"
+        image.parent.mkdir(parents=True)
+        Image.new("RGB", (4, 4), "white").save(image, "JPEG")
+
+        self.controller = DownloadController(
+            self.manager,
+            self.library,
+            event_interval_ms=10,
+            reconcile_interval_ms=100,
+        )
+
+        self.assertTrue(
+            self._wait_until(
+                lambda: self.controller.list_tasks()[0].preview_path
+                == image.resolve()
+            )
+        )
+
+    def test_task_actions_keep_using_original_bound_directories(self):
+        self.assertTrue(self.controller.shutdown(timeout=1))
+        old_pictures = self.paths.root / "old-pictures"
+        old_pdfs = self.paths.root / "old-pdfs"
+        bound_paths = AppPaths(
+            self.paths.root,
+            pictures_override=old_pictures,
+            pdfs_override=old_pdfs,
+        )
+        self.manager = TaskManager(
+            paths=bound_paths,
+            worker_factory=ControlledWorker,
+        )
+        self.library = LibraryService(self.paths)
+        self.controller = DownloadController(
+            self.manager,
+            self.library,
+            event_interval_ms=10,
+            reconcile_interval_ms=100,
+        )
+        task = self.controller.add_task("7")
+        worker = ControlledWorker.instances[-1]
+        self.controller.pause_task(task.id)
+        worker.callbacks["on_stopped"]("7")
+        old_image = old_pictures / "7" / "chapter" / "1.jpg"
+        current_image = self.paths.pictures / "7" / "chapter" / "1.jpg"
+        old_image.parent.mkdir(parents=True)
+        current_image.parent.mkdir(parents=True)
+        Image.new("RGB", (4, 4), "white").save(old_image, "JPEG")
+        Image.new("RGB", (4, 4), "black").save(current_image, "JPEG")
+
+        with patch("jm_downloader.library.os.startfile") as startfile:
+            self.controller.open_task_item(task.id, "images")
+        startfile.assert_called_once_with((old_pictures / "7").resolve())
+
+        self.controller.cancel_task(task.id, True)
+        self.assertTrue(
+            self._wait_until(lambda: self.controller.list_tasks() == [])
+        )
+        self.assertFalse(old_image.exists())
+        self.assertTrue(current_image.exists())
 
     def test_open_os_error_is_reported_as_command_failure(self):
         errors = []

@@ -130,6 +130,7 @@ class TaskManager:
                 "error": None,
                 "pdf_path": None,
                 "run_generation": 0,
+                "_cancel_deferred": False,
                 "_paths": self.paths,
             }
             self._tasks.append(task)
@@ -220,6 +221,7 @@ class TaskManager:
                 for task in self._tasks:
                     if task["status"] in self.SHUTDOWN_PAUSE_STATUSES:
                         task["status"] = TaskStatus.PAUSED.value
+                        task["_cancel_deferred"] = False
                 handles = list(self._workers.items())
 
             self._queue_persist()
@@ -325,8 +327,15 @@ class TaskManager:
         self.resume(task_id)
 
     def cancel(self, task_id: str) -> None:
+        self._request_cancel(task_id, deferred=False)
+
+    def prepare_cancel(self, task_id: str) -> None:
+        self._request_cancel(task_id, deferred=True)
+
+    def _request_cancel(self, task_id: str, *, deferred: bool) -> None:
         handle = None
         removed = False
+        ready = False
         with self._lifecycle_lock:
             with self._lock:
                 if self._stopping:
@@ -338,23 +347,40 @@ class TaskManager:
                     TaskStatus.PAUSED.value,
                     TaskStatus.FAILED.value,
                 ):
-                    self._tasks.remove(task)
-                    self._workers.pop(task_id, None)
-                    removed = True
+                    if deferred:
+                        task["status"] = TaskStatus.CANCELLING.value
+                        task["_cancel_deferred"] = True
+                        ready = True
+                    else:
+                        self._tasks.remove(task)
+                        self._workers.pop(task_id, None)
+                        removed = True
                 elif status in self.ACTIVE_STATUSES:
                     handle = self._workers.get(task_id)
                     if handle is None:
-                        self._tasks.remove(task)
-                        removed = True
+                        if deferred:
+                            task["status"] = TaskStatus.CANCELLING.value
+                            task["_cancel_deferred"] = True
+                            ready = True
+                        else:
+                            self._tasks.remove(task)
+                            removed = True
                     else:
                         task["status"] = TaskStatus.CANCELLING.value
+                        task["_cancel_deferred"] = deferred
                 else:
                     raise InvalidTaskState("任务当前不可取消")
 
             self._queue_persist()
             self.broadcast(
                 {
-                    "type": "cancelled" if removed else "cancelling",
+                    "type": (
+                        "cancelled"
+                        if removed
+                        else "cancel_ready"
+                        if ready
+                        else "cancelling"
+                    ),
                     "id": task_id,
                 }
             )
@@ -363,13 +389,115 @@ class TaskManager:
         if removed:
             self.schedule()
 
+    def finish_cancel(self, task_id: str) -> None:
+        with self._lock:
+            task = self._find_locked(task_id)
+            if (
+                task["status"] != TaskStatus.CANCELLING.value
+                or task_id in self._workers
+                or not task.get("_cancel_deferred")
+            ):
+                raise InvalidTaskState("取消任务尚未准备完成")
+            self._tasks.remove(task)
+        self._queue_persist()
+        self.broadcast({"type": "cancelled", "id": task_id})
+        self.schedule()
+
+    def fail_cancel(self, task_id: str, error: str) -> None:
+        with self._lock:
+            task = self._find_locked(task_id)
+            if (
+                task["status"] != TaskStatus.CANCELLING.value
+                or task_id in self._workers
+                or not task.get("_cancel_deferred")
+            ):
+                raise InvalidTaskState("取消任务尚未准备完成")
+            task.update(
+                status=TaskStatus.FAILED.value,
+                error=str(error) or "删除下载文件失败",
+                _cancel_deferred=False,
+            )
+        self._queue_persist()
+        self.broadcast(
+            {"type": "failed", "id": task_id, "error": task["error"]}
+        )
+
+    def get_task_paths(self, task_id: str) -> AppPaths:
+        with self._lock:
+            return self._find_locked(task_id)["_paths"]
+
+    def is_cancel_ready(self, task_id: str) -> bool:
+        with self._lock:
+            try:
+                task = self._find_locked(task_id)
+            except TaskNotFound:
+                return False
+            return (
+                task["status"] == TaskStatus.CANCELLING.value
+                and task_id not in self._workers
+                and bool(task.get("_cancel_deferred"))
+            )
+
+    def restore_preview(self, task_id: str) -> Path | None:
+        with self._lock:
+            task = self._find_locked(task_id)
+            album_id = task["album_id"]
+            task_paths = task["_paths"]
+        candidate = DownloadWorker.find_valid_preview(
+            task_paths.pictures / album_id
+        )
+        pdf_candidate = task_paths.pdfs / f"{album_id}.pdf"
+        if (
+            pdf_candidate.is_symlink()
+            or not pdf_candidate.is_file()
+            or not pdf_candidate.resolve().is_relative_to(
+                task_paths.pdfs.resolve()
+            )
+        ):
+            pdf_candidate = None
+        else:
+            pdf_candidate = pdf_candidate.resolve()
+        if candidate is None and pdf_candidate is None:
+            return None
+        with self._lock:
+            task = self._find_locked(task_id)
+            if task["album_id"] != album_id or task["_paths"] != task_paths:
+                return None
+            revision = int(task.get("preview_revision", 0)) + 1
+            task.update(
+                _preview_path=str(candidate) if candidate is not None else None,
+                preview_revision=revision,
+                pdf_path=(
+                    str(pdf_candidate) if pdf_candidate is not None else None
+                ),
+            )
+        self.broadcast(
+            {
+                "type": "preview",
+                "id": task_id,
+                "preview_path": candidate,
+                "preview_revision": revision,
+                "pdf_path": pdf_candidate,
+            }
+        )
+        return candidate
+
     def schedule(self) -> None:
         while True:
             with self._lock:
                 if self._stopping:
                     return
                 active_count = sum(
-                    task["status"] in self.WORKER_STATUSES for task in self._tasks
+                    task["status"] in self.ACTIVE_STATUSES
+                    or (
+                        task["status"]
+                        in (
+                            TaskStatus.PAUSING.value,
+                            TaskStatus.CANCELLING.value,
+                        )
+                        and task["id"] in self._workers
+                    )
+                    for task in self._tasks
                 )
                 if active_count >= self.max_concurrent:
                     return
@@ -495,6 +623,7 @@ class TaskManager:
             "error": stored.error if status == TaskStatus.FAILED else None,
             "pdf_path": None,
             "run_generation": 0,
+            "_cancel_deferred": False,
             "_paths": stored.to_paths(self.paths.root),
         }
 
@@ -711,8 +840,11 @@ class TaskManager:
                 task.update(status=TaskStatus.PAUSED.value, error=None)
                 event = {"type": "paused", "id": task_id}
             elif status == TaskStatus.CANCELLING.value:
-                self._tasks.remove(task)
-                event = {"type": "cancelled", "id": task_id}
+                if task.get("_cancel_deferred"):
+                    event = {"type": "cancel_ready", "id": task_id}
+                else:
+                    self._tasks.remove(task)
+                    event = {"type": "cancelled", "id": task_id}
             elif status in self.ACTIVE_STATUSES:
                 message = "下载任务意外停止，请点击继续重试"
                 task.update(status=TaskStatus.FAILED.value, error=message)

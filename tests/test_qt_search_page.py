@@ -150,6 +150,15 @@ class FakeDownloadController(QObject):
     def retry_task(self, task_id):
         self.retried.append(task_id)
 
+    def pause_task(self, _task_id):
+        pass
+
+    def resume_task(self, _task_id):
+        pass
+
+    def cancel_task(self, _task_id, _delete_files=False):
+        pass
+
     def remove_task(self, task_id):
         self.removed.append(task_id)
         self.tasks = [task for task in self.tasks if task.id != task_id]
@@ -163,6 +172,9 @@ class FakeDownloadController(QObject):
 
     def open_item(self, album_id, kind):
         self.opened.append((album_id, kind))
+
+    def open_task_item(self, task_id, kind):
+        self.opened.append((task_id, kind))
 
     def has_active_tasks(self):
         return bool(self.tasks)

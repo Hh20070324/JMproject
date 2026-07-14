@@ -189,6 +189,9 @@ class QtMainWindowTests(unittest.TestCase):
             "plus",
             "minus",
             "download",
+            "pause",
+            "play",
+            "stop",
         ):
             with self.subTest(icon=name):
                 path = resource_path(f"icons/{name}.svg")
