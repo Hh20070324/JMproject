@@ -22,6 +22,7 @@ class AppPathsTests(unittest.TestCase):
             self.assertEqual(paths.pdfs, root / "PDFs")
             self.assertEqual(paths.option_file, root / "option.yml")
             self.assertEqual(paths.settings_file, root / "settings.json")
+            self.assertEqual(paths.tasks_file, root / "tasks.json")
             self.assertEqual(paths.legacy_settings_file, root / "settings.ini")
             self.assertEqual(paths.logs, root / "logs")
 

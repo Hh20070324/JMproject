@@ -9,6 +9,7 @@ from pathlib import Path
 from .downloader import DownloadWorker
 from .models import TaskSnapshot, TaskStatus
 from .settings import AppPaths, DEFAULT_PATHS
+from .task_store import StoredTask, TaskStore, TaskStoreError
 
 
 class TaskError(Exception):
@@ -50,25 +51,48 @@ class _WorkerHandle:
 
 class TaskManager:
     ACTIVE_STATUSES = (TaskStatus.FETCHING.value, TaskStatus.DOWNLOADING.value)
-    TERMINAL_STATUSES = (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value)
+    WORKER_STATUSES = (
+        *ACTIVE_STATUSES,
+        TaskStatus.PAUSING.value,
+        TaskStatus.CANCELLING.value,
+    )
+    RESERVED_STATUSES = (
+        TaskStatus.PENDING.value,
+        *WORKER_STATUSES,
+        TaskStatus.PAUSED.value,
+        TaskStatus.FAILED.value,
+    )
+    SHUTDOWN_PAUSE_STATUSES = (
+        TaskStatus.PENDING.value,
+        *WORKER_STATUSES,
+    )
 
     def __init__(
         self,
         paths: AppPaths = DEFAULT_PATHS,
         max_concurrent: int = 2,
         worker_factory: Callable = DownloadWorker,
+        task_store: TaskStore | None = None,
     ):
         self.paths = paths
         self.max_concurrent = max_concurrent
         self.worker_factory = worker_factory
+        self.task_store = task_store or TaskStore(paths)
         self._lock = threading.Lock()
         self._lifecycle_lock = threading.RLock()
-        self._tasks = []
         self._workers = {}
         self._listeners_lock = threading.Lock()
         self._listeners = []
         self._stopping = False
         self._library_operations = set()
+        stored_tasks = self.task_store.load()
+        self._persistence_started = bool(stored_tasks) or self.paths.tasks_file.exists()
+        self._tasks = [self._restore_task(task) for task in stored_tasks]
+        if any(
+            task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED)
+            for task in stored_tasks
+        ):
+            self._queue_persist()
 
     def list_tasks(self) -> list[TaskSnapshot]:
         with self._lock:
@@ -87,7 +111,7 @@ class TaskManager:
                 raise TaskConflict("该漫画正在进行本地库操作")
             if any(
                 task["album_id"] == album_id
-                and task["status"] not in self.TERMINAL_STATUSES
+                and task["status"] != TaskStatus.COMPLETED.value
                 for task in self._tasks
             ):
                 raise TaskConflict("该车号已在队列中")
@@ -106,10 +130,12 @@ class TaskManager:
                 "error": None,
                 "pdf_path": None,
                 "run_generation": 0,
+                "_paths": self.paths,
             }
             self._tasks.append(task)
             created = self._snapshot_locked(task)
 
+        self._queue_persist()
         self.broadcast({"type": "added", "id": task["id"], "album_id": album_id})
         self.schedule()
         return created
@@ -118,8 +144,7 @@ class TaskManager:
         with self._lock:
             return any(
                 task["album_id"] == album_id
-                and task["status"]
-                in (TaskStatus.PENDING.value, *self.ACTIVE_STATUSES)
+                and task["status"] in self.RESERVED_STATUSES
                 for task in self._tasks
             )
 
@@ -132,11 +157,10 @@ class TaskManager:
                 raise TaskConflict("该漫画正在进行本地库操作")
             if any(
                 task["album_id"] == album_id
-                and task["status"]
-                in (TaskStatus.PENDING.value, *self.ACTIVE_STATUSES)
+                and task["status"] in self.RESERVED_STATUSES
                 for task in self._tasks
             ):
-                raise TaskConflict("下载中的漫画暂不可修改")
+                raise TaskConflict("该漫画仍有下载任务，暂不可修改")
             self._library_operations.add(album_id)
         return album_id
 
@@ -157,51 +181,83 @@ class TaskManager:
         with self._lock:
             return any(
                 task["status"]
-                in (TaskStatus.PENDING.value, *self.ACTIVE_STATUSES)
+                in (TaskStatus.PENDING.value, *self.WORKER_STATUSES)
                 for task in self._tasks
             )
 
     def stop_all(self) -> None:
         with self._lock:
-            handles = list(self._workers.values())
+            handles = []
+            changed = []
+            for task in self._tasks:
+                status = task["status"]
+                if status == TaskStatus.PENDING.value:
+                    task["status"] = TaskStatus.PAUSED.value
+                    changed.append((task["id"], TaskStatus.PAUSED.value))
+                    continue
+                if status not in self.ACTIVE_STATUSES:
+                    continue
+                handle = self._workers.get(task["id"])
+                if handle is None:
+                    task["status"] = TaskStatus.PAUSED.value
+                    changed.append((task["id"], TaskStatus.PAUSED.value))
+                    continue
+                task["status"] = TaskStatus.PAUSING.value
+                handles.append(handle)
+                changed.append((task["id"], TaskStatus.PAUSING.value))
+        if changed:
+            self._queue_persist()
+        for task_id, status in changed:
+            self.broadcast({"type": status, "id": task_id})
         for handle in handles:
             handle.worker.stop()
+        self.schedule()
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         with self._lifecycle_lock:
             with self._lock:
                 self._stopping = True
+                for task in self._tasks:
+                    if task["status"] in self.SHUTDOWN_PAUSE_STATUSES:
+                        task["status"] = TaskStatus.PAUSED.value
                 handles = list(self._workers.items())
 
+            self._queue_persist()
             for _, handle in handles:
                 handle.worker.stop()
 
         deadline = time.monotonic() + max(0.0, timeout)
         all_finished = True
         finished = []
-        for task_id, handle in handles:
-            wait = getattr(handle.worker, "wait", None)
-            if wait is None:
-                all_finished = False
-                continue
-            remaining = max(0.0, deadline - time.monotonic())
-            worker_finished = bool(wait(remaining))
-            all_finished = worker_finished and all_finished
-            if worker_finished:
-                finished.append((task_id, handle.generation))
-
-        with self._lock:
-            for task_id, generation in finished:
-                self._retire_worker_locked(task_id, generation)
-        return all_finished
+        store_finished = False
+        try:
+            for task_id, handle in handles:
+                wait = getattr(handle.worker, "wait", None)
+                if wait is None:
+                    all_finished = False
+                    continue
+                remaining = max(0.0, deadline - time.monotonic())
+                worker_finished = bool(wait(remaining))
+                all_finished = worker_finished and all_finished
+                if worker_finished:
+                    finished.append((task_id, handle.generation))
+        finally:
+            with self._lock:
+                for task_id, generation in finished:
+                    self._retire_worker_locked(task_id, generation)
+            remaining = max(1.0, deadline - time.monotonic())
+            store_finished = self.task_store.close(remaining)
+        return all_finished and store_finished
 
     def remove(self, task_id: str) -> None:
         with self._lifecycle_lock:
             with self._lock:
+                if self._stopping:
+                    raise InvalidTaskState("任务管理器正在关闭")
                 for index, task in enumerate(self._tasks):
                     if task["id"] != task_id:
                         continue
-                    if task["status"] in self.ACTIVE_STATUSES:
+                    if task["status"] in self.WORKER_STATUSES:
                         raise InvalidTaskState("下载中的任务暂不支持移除")
                     handle = self._workers.pop(task_id, None)
                     del self._tasks[index]
@@ -211,26 +267,101 @@ class TaskManager:
 
             if handle is not None:
                 handle.worker.stop()
+        self._queue_persist()
         self.broadcast({"type": "removed", "id": task_id})
         self.schedule()
 
-    def retry(self, task_id: str) -> None:
-        with self._lock:
-            task = self._find_locked(task_id)
-            if task["status"] != TaskStatus.FAILED.value:
-                raise InvalidTaskState("任务不存在或不可重试")
-            if task["album_id"] in self._library_operations:
-                raise TaskConflict("该漫画正在进行本地库操作")
-            task.update(
-                status=TaskStatus.PENDING.value,
-                error=None,
-                progress=0,
-                chapter="",
-                page="",
-            )
+    def pause(self, task_id: str) -> None:
+        handle = None
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._stopping:
+                    raise InvalidTaskState("任务管理器正在关闭")
+                task = self._find_locked(task_id)
+                status = task["status"]
+                if status == TaskStatus.PENDING.value:
+                    task["status"] = TaskStatus.PAUSED.value
+                    event_type = "paused"
+                elif status in self.ACTIVE_STATUSES:
+                    handle = self._workers.get(task_id)
+                    if handle is None:
+                        task["status"] = TaskStatus.PAUSED.value
+                        event_type = "paused"
+                    else:
+                        task["status"] = TaskStatus.PAUSING.value
+                        event_type = "pausing"
+                else:
+                    raise InvalidTaskState("任务当前不可暂停")
 
-        self.broadcast({"type": "retry", "id": task_id})
+            self._queue_persist()
+            self.broadcast({"type": event_type, "id": task_id})
+            if handle is not None:
+                handle.worker.stop()
         self.schedule()
+
+    def resume(self, task_id: str) -> None:
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._stopping:
+                    raise InvalidTaskState("任务管理器正在关闭")
+                task = self._find_locked(task_id)
+                if task["status"] not in (
+                    TaskStatus.PAUSED.value,
+                    TaskStatus.FAILED.value,
+                ):
+                    raise InvalidTaskState("任务当前不可继续")
+                if task["album_id"] in self._library_operations:
+                    raise TaskConflict("该漫画正在进行本地库操作")
+                task.update(
+                    status=TaskStatus.PENDING.value,
+                    error=None,
+                )
+
+            self._queue_persist()
+            self.broadcast({"type": "resumed", "id": task_id})
+        self.schedule()
+
+    def retry(self, task_id: str) -> None:
+        self.resume(task_id)
+
+    def cancel(self, task_id: str) -> None:
+        handle = None
+        removed = False
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._stopping:
+                    raise InvalidTaskState("任务管理器正在关闭")
+                task = self._find_locked(task_id)
+                status = task["status"]
+                if status in (
+                    TaskStatus.PENDING.value,
+                    TaskStatus.PAUSED.value,
+                    TaskStatus.FAILED.value,
+                ):
+                    self._tasks.remove(task)
+                    self._workers.pop(task_id, None)
+                    removed = True
+                elif status in self.ACTIVE_STATUSES:
+                    handle = self._workers.get(task_id)
+                    if handle is None:
+                        self._tasks.remove(task)
+                        removed = True
+                    else:
+                        task["status"] = TaskStatus.CANCELLING.value
+                else:
+                    raise InvalidTaskState("任务当前不可取消")
+
+            self._queue_persist()
+            self.broadcast(
+                {
+                    "type": "cancelled" if removed else "cancelling",
+                    "id": task_id,
+                }
+            )
+            if handle is not None:
+                handle.worker.stop()
+        if removed:
+            self.schedule()
 
     def schedule(self) -> None:
         while True:
@@ -238,7 +369,7 @@ class TaskManager:
                 if self._stopping:
                     return
                 active_count = sum(
-                    task["status"] in self.ACTIVE_STATUSES for task in self._tasks
+                    task["status"] in self.WORKER_STATUSES for task in self._tasks
                 )
                 if active_count >= self.max_concurrent:
                     return
@@ -256,14 +387,16 @@ class TaskManager:
                 task["status"] = TaskStatus.FETCHING.value
                 task_id = task["id"]
                 album_id = task["album_id"]
+                task_paths = task["_paths"]
                 task["run_generation"] += 1
                 generation = task["run_generation"]
 
+            self._queue_persist()
             try:
                 callbacks = self._worker_callbacks(task_id, generation)
                 worker = self.worker_factory(
                     album_id,
-                    paths=self.paths,
+                    paths=task_paths,
                     **callbacks,
                 )
             except Exception as error:
@@ -342,6 +475,49 @@ class TaskManager:
             cover_url=task.get("cover_url"),
         )
 
+    def _restore_task(self, stored: StoredTask) -> dict:
+        status = (
+            TaskStatus.FAILED
+            if stored.status == TaskStatus.FAILED
+            else TaskStatus.PAUSED
+        )
+        return {
+            "id": stored.id,
+            "album_id": stored.album_id,
+            "title": stored.title,
+            "cover_url": None,
+            "preview_revision": 0,
+            "_preview_path": None,
+            "status": status.value,
+            "progress": stored.progress,
+            "chapter": stored.chapter,
+            "page": stored.page,
+            "error": stored.error if status == TaskStatus.FAILED else None,
+            "pdf_path": None,
+            "run_generation": 0,
+            "_paths": stored.to_paths(self.paths.root),
+        }
+
+    def _queue_persist(self) -> None:
+        with self._lock:
+            records = tuple(
+                StoredTask.from_runtime(
+                    task,
+                    task["_paths"],
+                    self.paths.root,
+                )
+                for task in self._tasks
+                if task["status"] != TaskStatus.COMPLETED.value
+            )
+        if not records and not self._persistence_started:
+            return
+        try:
+            self.task_store.save(records)
+            self._persistence_started = True
+        except TaskStoreError:
+            if not self._stopping:
+                raise
+
     def _find_active_generation_locked(
         self, task_id: str, generation: int
     ) -> dict | None:
@@ -371,12 +547,16 @@ class TaskManager:
         def on_preview(_album_id, preview_path):
             self._on_preview(task_id, generation, preview_path)
 
+        def on_stopped(_album_id):
+            self._on_stopped(task_id, generation)
+
         return {
             "on_info": on_info,
             "on_progress": on_progress,
             "on_complete": on_complete,
             "on_error": on_error,
             "on_preview": on_preview,
+            "on_stopped": on_stopped,
         }
 
     def _retire_worker_locked(self, task_id: str, generation: int) -> None:
@@ -400,6 +580,7 @@ class TaskManager:
         self.broadcast(
             {"type": "info", "id": task_id, "title": resolved_title, "cover": cover}
         )
+        self._queue_persist()
 
     def _on_progress(
         self,
@@ -429,15 +610,21 @@ class TaskManager:
                 "page": page,
             }
         )
+        self._queue_persist()
 
     def _on_complete(
         self, task_id: str, generation: int, pdf_path: str
     ) -> None:
+        with self._lock:
+            task = self._find_active_generation_locked(task_id, generation)
+            if task is None:
+                return
+            task_paths = task["_paths"]
         path = Path(pdf_path)
         if not path.is_absolute():
-            path = self.paths.root / path
+            path = task_paths.root / path
         path = path.resolve()
-        if not path.is_relative_to(self.paths.pdfs.resolve()):
+        if not path.is_relative_to(task_paths.pdfs.resolve()):
             self._on_error(
                 task_id, generation, "PDF 输出路径不在受管目录中"
             )
@@ -464,16 +651,22 @@ class TaskManager:
                 "pdf_path": path,
             }
         )
+        self._queue_persist()
         self.schedule()
 
     def _on_preview(
         self, task_id: str, generation: int, preview_path: str
     ) -> None:
+        with self._lock:
+            task = self._find_active_generation_locked(task_id, generation)
+            if task is None:
+                return
+            task_paths = task["_paths"]
         path = Path(preview_path)
         if not path.is_absolute():
-            path = self.paths.root / path
+            path = task_paths.root / path
         path = path.resolve()
-        if not path.is_relative_to(self.paths.pictures.resolve()) or not path.is_file():
+        if not path.is_relative_to(task_paths.pictures.resolve()) or not path.is_file():
             return
         with self._lock:
             task = self._find_active_generation_locked(task_id, generation)
@@ -489,6 +682,7 @@ class TaskManager:
                 "preview_revision": revision,
             }
         )
+        self._queue_persist()
 
     def _on_error(self, task_id: str, generation: int, error: str) -> None:
         with self._lock:
@@ -498,4 +692,34 @@ class TaskManager:
             task.update(status=TaskStatus.FAILED.value, error=error)
             self._retire_worker_locked(task_id, generation)
         self.broadcast({"type": "failed", "id": task_id, "error": error})
+        self._queue_persist()
+        self.schedule()
+
+    def _on_stopped(self, task_id: str, generation: int) -> None:
+        event = None
+        with self._lock:
+            try:
+                task = self._find_locked(task_id)
+            except TaskNotFound:
+                return
+            if task["run_generation"] != generation:
+                return
+
+            status = task["status"]
+            self._retire_worker_locked(task_id, generation)
+            if status == TaskStatus.PAUSING.value:
+                task.update(status=TaskStatus.PAUSED.value, error=None)
+                event = {"type": "paused", "id": task_id}
+            elif status == TaskStatus.CANCELLING.value:
+                self._tasks.remove(task)
+                event = {"type": "cancelled", "id": task_id}
+            elif status in self.ACTIVE_STATUSES:
+                message = "下载任务意外停止，请点击继续重试"
+                task.update(status=TaskStatus.FAILED.value, error=message)
+                event = {"type": "failed", "id": task_id, "error": message}
+
+        if event is None:
+            return
+        self._queue_persist()
+        self.broadcast(event)
         self.schedule()

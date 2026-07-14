@@ -151,21 +151,14 @@ class TaskManagerTests(unittest.TestCase):
         self.assertTrue(replacement.stopped)
         self.assertIsNotNone(replacement.wait_timeout)
 
-    def test_retry_conflicts_with_reserved_library_operation(self):
-        task = self.manager.add("1")
+    def test_failed_task_remains_reserved_until_removed(self):
+        self.manager.add("1")
         WaitingWorker.instances[0].callbacks["on_error"]("1", "failure")
-        album_id = self.manager.begin_library_operation("JM1")
 
-        try:
-            with self.assertRaisesRegex(TaskConflict, "本地库操作"):
-                self.manager.retry(task.id)
-        finally:
-            self.manager.end_library_operation(album_id)
-
-        self.assertEqual(
-            self.manager.get_task(task.id).status,
-            TaskStatus.FAILED,
-        )
+        with self.assertRaisesRegex(TaskConflict, "暂不可修改"):
+            self.manager.begin_library_operation("JM1")
+        with self.assertRaisesRegex(TaskConflict, "已在队列"):
+            self.manager.add("1")
 
     def test_stop_all_notifies_active_workers(self):
         self.manager.add("1")

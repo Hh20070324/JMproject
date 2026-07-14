@@ -51,6 +51,9 @@ class DownloadTaskRow(QFrame):
         TaskStatus.PENDING: "等待中",
         TaskStatus.FETCHING: "读取信息",
         TaskStatus.DOWNLOADING: "下载中",
+        TaskStatus.PAUSING: "暂停中",
+        TaskStatus.PAUSED: "已暂停",
+        TaskStatus.CANCELLING: "取消中",
         TaskStatus.COMPLETED: "已完成",
         TaskStatus.FAILED: "失败",
     }
@@ -187,7 +190,9 @@ class DownloadTaskRow(QFrame):
 
         terminal = snapshot.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
         self.retry_button.setVisible(snapshot.status == TaskStatus.FAILED)
-        self.remove_button.setVisible(snapshot.status == TaskStatus.PENDING or terminal)
+        self.remove_button.setVisible(
+            snapshot.status in (TaskStatus.PENDING, TaskStatus.PAUSED) or terminal
+        )
         self.remove_button.setToolTip(
             "删除等待任务"
             if snapshot.status == TaskStatus.PENDING
@@ -216,6 +221,12 @@ class DownloadTaskRow(QFrame):
             return "图片与 PDF 已保存到本地"
         if snapshot.status == TaskStatus.PENDING:
             return "等待空闲下载位置"
+        if snapshot.status == TaskStatus.PAUSED:
+            return "任务已暂停，等待继续"
+        if snapshot.status == TaskStatus.PAUSING:
+            return "等待当前下载请求结束"
+        if snapshot.status == TaskStatus.CANCELLING:
+            return "等待下载线程安全停止"
         if snapshot.status == TaskStatus.FETCHING:
             return "正在读取漫画信息"
 

@@ -132,6 +132,38 @@ class DownloadControllerTests(unittest.TestCase):
         self.controller.remove_task(snapshot.id)
         self.assertEqual(self.controller.list_tasks(), [])
 
+    def test_pause_resume_and_cancel_follow_worker_stopped_boundary(self):
+        snapshot = self.controller.add_task("1")
+        worker = ControlledWorker.instances[0]
+
+        self.controller.pause_task(snapshot.id)
+        self.assertEqual(
+            self.controller.list_tasks()[0].status,
+            TaskStatus.PAUSING,
+        )
+        self.assertTrue(worker.stopped)
+
+        worker.callbacks["on_stopped"]("1")
+        self.assertEqual(
+            self.controller.list_tasks()[0].status,
+            TaskStatus.PAUSED,
+        )
+
+        self.controller.resume_task(snapshot.id)
+        replacement = ControlledWorker.instances[1]
+        self.assertEqual(
+            self.controller.list_tasks()[0].status,
+            TaskStatus.FETCHING,
+        )
+
+        self.controller.cancel_task(snapshot.id)
+        self.assertEqual(
+            self.controller.list_tasks()[0].status,
+            TaskStatus.CANCELLING,
+        )
+        replacement.callbacks["on_stopped"]("1")
+        self.assertEqual(self.controller.list_tasks(), [])
+
     def test_open_os_error_is_reported_as_command_failure(self):
         errors = []
         self.controller.command_failed.connect(

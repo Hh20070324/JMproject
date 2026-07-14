@@ -7,6 +7,9 @@ class TaskStatus(str, Enum):
     PENDING = "pending"
     FETCHING = "fetching"
     DOWNLOADING = "downloading"
+    PAUSING = "pausing"
+    PAUSED = "paused"
+    CANCELLING = "cancelling"
     COMPLETED = "completed"
     FAILED = "failed"
 

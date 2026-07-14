@@ -67,6 +67,10 @@ class LibraryController(QObject):
         TaskStatus.PENDING,
         TaskStatus.FETCHING,
         TaskStatus.DOWNLOADING,
+        TaskStatus.PAUSING,
+        TaskStatus.PAUSED,
+        TaskStatus.CANCELLING,
+        TaskStatus.FAILED,
     }
 
     def __init__(

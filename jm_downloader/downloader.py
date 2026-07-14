@@ -23,6 +23,7 @@ class DownloadWorker:
         on_error=None,
         on_info=None,
         on_preview=None,
+        on_stopped=None,
         paths: AppPaths = DEFAULT_PATHS,
         image_concurrency: int = 16,
     ):
@@ -32,6 +33,7 @@ class DownloadWorker:
         self.on_error = on_error or (lambda *args: None)
         self.on_info = on_info or (lambda *args: None)
         self.on_preview = on_preview or (lambda *args: None)
+        self.on_stopped = on_stopped or (lambda *args: None)
         self.paths = paths
         self.image_concurrency = max(1, int(image_concurrency))
         self._stop_flag = threading.Event()
@@ -62,8 +64,8 @@ class DownloadWorker:
             return None, None, 0
 
     def run(self):
-        install_safe_jmcomic_logging()
         try:
+            install_safe_jmcomic_logging()
             if self._stop_flag.is_set():
                 return
             option = self._make_option()
@@ -113,6 +115,14 @@ class DownloadWorker:
                 self.album_id,
                 "任务失败，请检查网络、配置或磁盘后重试",
             )
+        finally:
+            try:
+                self.on_stopped(self.album_id)
+            except Exception:
+                LOGGER.exception(
+                    "Download stopped callback failed for JM %s",
+                    self.album_id,
+                )
 
     def start(self):
         self._thread = threading.Thread(target=self.run, daemon=True)

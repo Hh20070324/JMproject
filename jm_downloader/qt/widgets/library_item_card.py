@@ -212,9 +212,9 @@ class LibraryItemCard(QFrame):
             self.state_label.setProperty("state", "busy")
             tooltip = "本地库操作正在进行"
         elif self._active:
-            self.state_label.setText("下载中")
+            self.state_label.setText("任务占用")
             self.state_label.setProperty("state", "active")
-            tooltip = "下载进行中，暂不可修改本地文件"
+            tooltip = "该漫画仍有下载任务，暂不可修改本地文件"
         else:
             self.state_label.clear()
             self.state_label.setProperty("state", "")

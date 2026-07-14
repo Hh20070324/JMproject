@@ -17,6 +17,7 @@ from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
 from ..search import SearchService
 from ..settings import AppPaths, AppSettings, DEFAULT_PATHS, SettingsError
+from ..task_store import TaskStore, TaskStoreError
 from ..tasks import TaskManager
 from .backend_smoke import run_backend_smoke
 from .controllers import (
@@ -136,6 +137,7 @@ def run_qt_app(
     download_controller = None
     library_controller = None
     search_controller = None
+    task_store = None
     try:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -182,11 +184,22 @@ def run_qt_app(
             DownloadWorker,
             image_concurrency=settings.image_concurrency,
         )
-        manager = TaskManager(
-            paths=paths,
-            max_concurrent=settings.max_concurrent_tasks,
-            worker_factory=worker_factory,
-        )
+        try:
+            task_store = TaskStore(paths)
+            manager = TaskManager(
+                paths=paths,
+                max_concurrent=settings.max_concurrent_tasks,
+                worker_factory=worker_factory,
+                task_store=task_store,
+            )
+        except TaskStoreError as error:
+            _show_startup_error(str(error))
+            return 1
+        if task_store.last_recovery_backup is not None:
+            logger.warning(
+                "Damaged task records were backed up to %s",
+                task_store.last_recovery_backup,
+            )
         library = LibraryService(paths)
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
@@ -238,6 +251,8 @@ def run_qt_app(
                 logger.warning(
                     "Some download workers did not stop before shutdown timeout"
                 )
+        elif task_store is not None:
+            task_store.close(timeout=5.0)
         if logger is not None:
             for handler in tuple(logger.handlers):
                 logger.removeHandler(handler)

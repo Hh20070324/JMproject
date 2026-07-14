@@ -70,6 +70,33 @@ class DownloadController(QObject):
         self._publish(force=True)
 
     @Slot(str)
+    def pause_task(self, task_id: str) -> None:
+        try:
+            self.manager.pause(task_id)
+        except TaskError as error:
+            self.command_failed.emit("pause", str(error))
+            return
+        self._publish(force=True)
+
+    @Slot(str)
+    def resume_task(self, task_id: str) -> None:
+        try:
+            self.manager.resume(task_id)
+        except TaskError as error:
+            self.command_failed.emit("resume", str(error))
+            return
+        self._publish(force=True)
+
+    @Slot(str)
+    def cancel_task(self, task_id: str) -> None:
+        try:
+            self.manager.cancel(task_id)
+        except TaskError as error:
+            self.command_failed.emit("cancel", str(error))
+            return
+        self._publish(force=True)
+
+    @Slot(str)
     def remove_task(self, task_id: str) -> None:
         try:
             self.manager.remove(task_id)

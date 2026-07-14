@@ -25,6 +25,7 @@ from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.settings_store import SettingsStore
 from jm_downloader.qt.theme import Theme, ThemeManager
 from jm_downloader.settings import AppPaths, AppSettings
+from jm_downloader.task_store import TaskStore
 
 
 class PhaseFiveAcceptanceTests(unittest.TestCase):
@@ -129,6 +130,9 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
             for manager_call in task_manager_class.call_args_list:
                 self.assertEqual(manager_call.kwargs["paths"], expected_paths)
                 self.assertEqual(manager_call.kwargs["max_concurrent"], 6)
+                task_store = manager_call.kwargs["task_store"]
+                self.assertIsInstance(task_store, TaskStore)
+                self.assertEqual(task_store.paths, expected_paths)
                 worker_factory = manager_call.kwargs["worker_factory"]
                 self.assertIs(worker_factory.func, DownloadWorker)
                 self.assertEqual(

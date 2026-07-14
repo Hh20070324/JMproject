@@ -19,6 +19,9 @@ tools/ProcessMonitor/
 settings.ini
 settings.json
 settings.json.corrupt-*
+tasks.json
+tasks.json.corrupt-*
+.tasks.json.*.tmp
 game-icon-pack-v1.4-svg/
 AGENTS.md
 

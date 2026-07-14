@@ -97,6 +97,21 @@ class DownloadWorkerTests(unittest.TestCase):
 
         self.assertEqual(calls, ["install", "make"])
 
+    def test_pre_stopped_worker_reports_stopped_without_building_option(self):
+        stopped = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            worker = downloader.DownloadWorker(
+                "123456",
+                on_stopped=stopped.append,
+                paths=AppPaths(Path(temp_dir)),
+            )
+            worker._make_option = Mock(side_effect=AssertionError("must not run"))
+            worker.stop()
+            worker.run()
+
+        self.assertEqual(stopped, ["123456"])
+        worker._make_option.assert_not_called()
+
     def test_run_reports_info_progress_and_completion(self):
         events = []
 
@@ -113,6 +128,7 @@ class DownloadWorkerTests(unittest.TestCase):
                 on_complete=lambda *args: events.append(("complete", args)),
                 on_error=lambda *args: events.append(("error", args)),
                 on_preview=lambda *args: events.append(("preview", args)),
+                on_stopped=lambda *args: events.append(("stopped", args)),
                 paths=paths,
             )
             worker._make_option = Mock(return_value=option)
@@ -164,15 +180,18 @@ class DownloadWorkerTests(unittest.TestCase):
                 [Path(event[1][1]).name for event in preview_events],
                 ["2.jpg", "1.jpg"],
             )
-            self.assertEqual(events[-1], ("complete", ("123456", str(expected_pdf))))
+            self.assertEqual(events[-2], ("complete", ("123456", str(expected_pdf))))
+            self.assertEqual(events[-1], ("stopped", ("123456",)))
 
     def test_run_reports_download_errors(self):
         errors = []
+        stopped = []
         secret = "network failed with token=secret"
         with tempfile.TemporaryDirectory() as temp_dir:
             worker = downloader.DownloadWorker(
                 "123456",
                 on_error=lambda album_id, message: errors.append((album_id, message)),
+                on_stopped=stopped.append,
                 paths=AppPaths(Path(temp_dir)),
             )
             worker._make_option = Mock(side_effect=RuntimeError(secret))
@@ -184,6 +203,7 @@ class DownloadWorkerTests(unittest.TestCase):
             errors,
             [("123456", "任务失败，请检查网络、配置或磁盘后重试")],
         )
+        self.assertEqual(stopped, ["123456"])
         output = "\n".join(logs.output)
         self.assertIn("Download failed for JM 123456 (RuntimeError)", output)
         self.assertNotIn(secret, output)

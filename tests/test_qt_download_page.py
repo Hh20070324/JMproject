@@ -177,6 +177,27 @@ class DownloadPageTests(unittest.TestCase):
             [(completed.album_id, "images"), (completed.album_id, "pdf")],
         )
 
+    def test_task_row_displays_transitional_states_without_actions(self):
+        page = self.window.page("downloads")
+        page.view_tabs.setCurrentIndex(1)
+        pausing = make_snapshot(status=TaskStatus.PAUSING, progress=42)
+        self.controller.tasks = [pausing]
+        self.controller.tasks_reset.emit([pausing])
+        self.app.processEvents()
+        row = page._task_rows[pausing.id]
+
+        self.assertEqual(row.status.text(), "暂停中")
+        self.assertIn("等待当前下载请求结束", row.detail.toolTip())
+        self.assertTrue(row.retry_button.isHidden())
+        self.assertTrue(row.remove_button.isHidden())
+
+        cancelling = replace(pausing, status=TaskStatus.CANCELLING)
+        self.controller.tasks = [cancelling]
+        self.controller.tasks_reset.emit([cancelling])
+        self.app.processEvents()
+        self.assertEqual(row.status.text(), "取消中")
+        self.assertIn("安全停止", row.detail.toolTip())
+
     def test_close_with_active_task_requires_confirmation_and_waits_async(self):
         active = make_snapshot(status=TaskStatus.DOWNLOADING)
         self.controller.tasks = [active]

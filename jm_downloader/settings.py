@@ -44,6 +44,30 @@ def serialize_portable_path(root: Path, selected_path: str | Path) -> str:
     return value or "."
 
 
+def validate_portable_directory(label: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip() or "\0" in value:
+        raise SettingsValidationError(f"{label}无效")
+    windows_path = PureWindowsPath(value)
+    if windows_path.root and not windows_path.drive:
+        raise SettingsValidationError(f"{label}不能使用无盘符根路径")
+    if windows_path.drive and not windows_path.root:
+        raise SettingsValidationError(f"{label}不能使用盘符相对路径")
+    if not windows_path.is_absolute() and _relative_path_escapes(windows_path):
+        raise SettingsValidationError(f"{label}的相对路径不能超出程序目录")
+
+
+def _relative_path_escapes(path: PureWindowsPath) -> bool:
+    depth = 0
+    for part in path.parts:
+        if part == "..":
+            if depth == 0:
+                return True
+            depth -= 1
+        else:
+            depth += 1
+    return False
+
+
 @dataclass(frozen=True)
 class AppSettings:
     schema_version: int = SETTINGS_SCHEMA_VERSION
@@ -72,24 +96,7 @@ class AppSettings:
             ("图片目录", self.pictures_directory),
             ("PDF 目录", self.pdf_directory),
         ):
-            if not isinstance(value, str) or not value.strip() or "\0" in value:
-                raise SettingsValidationError(f"{label}无效")
-            windows_path = PureWindowsPath(value)
-            if windows_path.root and not windows_path.drive:
-                raise SettingsValidationError(
-                    f"{label}不能使用无盘符根路径"
-                )
-            if windows_path.drive and not windows_path.root:
-                raise SettingsValidationError(
-                    f"{label}不能使用盘符相对路径"
-                )
-            if (
-                not windows_path.is_absolute()
-                and self._relative_path_escapes(windows_path)
-            ):
-                raise SettingsValidationError(
-                    f"{label}的相对路径不能超出程序目录"
-                )
+            validate_portable_directory(label, value)
 
         self._validate_integer(
             "最大同时任务数", self.max_concurrent_tasks, minimum=1, maximum=8
@@ -202,19 +209,6 @@ class AppSettings:
                 f"{label}必须在 {minimum} 到 {maximum} 之间"
             )
 
-    @staticmethod
-    def _relative_path_escapes(path: PureWindowsPath) -> bool:
-        depth = 0
-        for part in path.parts:
-            if part == "..":
-                if depth == 0:
-                    return True
-                depth -= 1
-            else:
-                depth += 1
-        return False
-
-
 @dataclass(frozen=True)
 class AppPaths:
     root: Path = SOURCE_ROOT
@@ -236,6 +230,10 @@ class AppPaths:
     @property
     def settings_file(self) -> Path:
         return self.root / "settings.json"
+
+    @property
+    def tasks_file(self) -> Path:
+        return self.root / "tasks.json"
 
     @property
     def legacy_settings_file(self) -> Path:

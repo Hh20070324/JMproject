@@ -127,7 +127,7 @@ class LibraryPageTests(unittest.TestCase):
         self.assertFalse(card.rebuild_button.isEnabled())
         self.assertFalse(card.delete_button.isEnabled())
         self.assertTrue(card.open_pdf_button.isEnabled())
-        self.assertEqual(card.state_label.text(), "下载中")
+        self.assertEqual(card.state_label.text(), "任务占用")
 
         self.controller.active = frozenset()
         self.controller.active_albums_changed.emit(self.controller.active)
