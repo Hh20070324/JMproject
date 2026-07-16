@@ -6,6 +6,7 @@ from pathlib import Path
 import jmcomic
 from curl_cffi.requests.exceptions import RequestException
 
+from .jmcomic_client import serialized_client_construction
 from .jmcomic_logging import install_safe_jmcomic_logging
 from .models import (
     SearchMode,
@@ -26,7 +27,6 @@ REGULAR_SEARCH_RESULT_LIMIT = 1000
 REGULAR_SEARCH_PAGE_LIMIT = (
     REGULAR_SEARCH_RESULT_LIMIT + REGULAR_SEARCH_PAGE_SIZE - 1
 ) // REGULAR_SEARCH_PAGE_SIZE
-_CLIENT_BUILD_LOCK = threading.Lock()
 
 
 class SearchError(Exception):
@@ -91,7 +91,7 @@ def normalize_search_request(request: SearchRequest) -> SearchRequest:
 
 def _build_search_client(option_file: Path):
     install_safe_jmcomic_logging()
-    with _CLIENT_BUILD_LOCK:
+    with serialized_client_construction():
         try:
             if (
                 jmcomic.JmModuleConfig.FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN
@@ -139,7 +139,7 @@ def _build_search_client(option_file: Path):
 
 
 def _invalidate_api_domain_cache() -> None:
-    with _CLIENT_BUILD_LOCK:
+    with serialized_client_construction():
         jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST = None
 
 

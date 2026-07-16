@@ -8,6 +8,7 @@ from pathlib import Path
 import jmcomic
 from PIL import Image, UnidentifiedImageError
 
+from .jmcomic_client import serialized_client_construction
 from .jmcomic_logging import install_safe_jmcomic_logging
 from .pdf import (
     PART_FILE_MARKER,
@@ -94,7 +95,9 @@ class DownloadWorker:
         install_safe_jmcomic_logging()
         try:
             option = self._make_option()
-            album = option.build_jm_client().get_album_detail(self.album_id)
+            with serialized_client_construction():
+                client = option.build_jm_client()
+            album = client.get_album_detail(self.album_id)
             title = album.title if hasattr(album, "title") else album.name
             cover_url = album.cover if hasattr(album, "cover") else None
             total = getattr(album, "page_count", 0) or 0
@@ -115,6 +118,10 @@ class DownloadWorker:
             owner = self
 
             class ProgressDownloader(jmcomic.JmDownloader):
+                def create_client(self):
+                    with serialized_client_construction():
+                        return super().create_client()
+
                 def __init__(self, active_option):
                     super().__init__(active_option)
                     owner._active_downloader = self
