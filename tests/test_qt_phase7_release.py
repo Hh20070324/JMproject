@@ -7,7 +7,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "JM-Downloader-v2.4.0-Windows-x64.zip"
+ARCHIVE_NAME = "JM-Downloader-v2.5.0-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
@@ -34,10 +34,10 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         spec = (PROJECT_ROOT / "JM-Downloader.spec").read_text(encoding="utf-8")
 
         for resource in (formal, debug):
-            self.assertIn("filevers=(2, 4, 0, 0)", resource)
-            self.assertIn("prodvers=(2, 4, 0, 0)", resource)
-            self.assertIn("StringStruct('FileVersion', '2.4.0')", resource)
-            self.assertIn("StringStruct('ProductVersion', '2.4.0')", resource)
+            self.assertIn("filevers=(2, 5, 0, 0)", resource)
+            self.assertIn("prodvers=(2, 5, 0, 0)", resource)
+            self.assertIn("StringStruct('FileVersion', '2.5.0')", resource)
+            self.assertIn("StringStruct('ProductVersion', '2.5.0')", resource)
             self.assertNotIn("2.1.0", resource)
 
         self.assertIn("OriginalFilename', 'JM-Downloader.exe'", formal)
@@ -55,7 +55,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
 
         for document in (readme, guide):
             self.assertIn(ARCHIVE_NAME, document)
-        self.assertIn('$ReleaseVersion = "2.4.0"', build_script)
+        self.assertIn('$ReleaseVersion = "2.5.0"', build_script)
         self.assertIn(
             '"JM-Downloader-v$ReleaseVersion-Windows-x64.zip"',
             build_script,
@@ -66,10 +66,11 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertIn("JM-Downloader-v2.1.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.2.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.3.0-Windows-x64.zip", build_script)
+        self.assertIn("JM-Downloader-v2.4.0-Windows-x64.zip", build_script)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", readme)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", guide)
 
-    def test_runtime_task_state_is_excluded_from_release(self):
+    def test_runtime_state_is_excluded_from_release(self):
         build_script = (PROJECT_ROOT / "scripts" / "build.ps1").read_text(
             encoding="utf-8"
         )
@@ -79,12 +80,21 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             "tasks.json",
             "tasks.json.corrupt-*",
             ".tasks.json.*.tmp",
+            "account.dat",
+            "favorites.dat",
+            ".account.dat.*.tmp",
+            ".favorites.dat.*.tmp",
             "*.jm-part-*",
         ):
             self.assertIn(runtime_name, build_script)
             self.assertIn(runtime_name, gitignore)
         self.assertIn('$_ -match "^JM-Downloader/tasks\\.json$"', build_script)
+        self.assertIn(
+            '$_ -match "^JM-Downloader/(?:account|favorites)\\.dat$"',
+            build_script,
+        )
         self.assertIn('$_ -match "\\.jm-part-[^/]*$"', build_script)
+        self.assertIn("Assert-NoSensitiveTestData", build_script)
 
     def test_qt_lgpl_materials_are_complete_and_referenced(self):
         lgpl = (PROJECT_ROOT / "LICENSES" / "LGPL-3.0-only.txt").read_text(

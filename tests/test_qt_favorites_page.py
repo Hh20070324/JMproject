@@ -22,6 +22,7 @@ from jm_downloader.models import (
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.account_controller import AccountController
 from jm_downloader.qt.pages.favorites_page import FavoritesPage
+from jm_downloader.qt.theme import Theme, load_stylesheet
 from jm_downloader.settings import AppPaths
 from tests.account_fakes import FakeJmAccountClient
 
@@ -307,6 +308,49 @@ class FavoritesPageTests(unittest.TestCase):
         self.assertEqual(len(self.page.favorite_cards), 1)
         self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "99")
         self.assertEqual(self.page.favorites_summary.text(), "共 1 条")
+
+    def test_light_and_dark_themes_paint_the_page_and_results_background(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "Default",
+                    (FavoriteItemSnapshot("1", "One item"),),
+                ),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+        previous_stylesheet = self.app.styleSheet()
+        samples = {}
+        try:
+            for theme in (Theme.LIGHT, Theme.DARK):
+                self.app.setStyleSheet(load_stylesheet(theme))
+                self.app.processEvents()
+                page_image = self.page.grab().toImage()
+                canvas_image = self.page.results_canvas.grab().toImage()
+                samples[theme] = (
+                    page_image.pixelColor(
+                        page_image.width() - 2,
+                        page_image.height() - 2,
+                    ),
+                    canvas_image.pixelColor(
+                        canvas_image.width() - 2,
+                        canvas_image.height() - 2,
+                    ),
+                )
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+            self.app.processEvents()
+
+        for color in samples[Theme.LIGHT]:
+            self.assertGreater(color.lightness(), 200)
+        for color in samples[Theme.DARK]:
+            self.assertLess(color.lightness(), 60)
+        self.assertNotEqual(samples[Theme.LIGHT], samples[Theme.DARK])
 
     def test_sync_stop_and_download_reuse_existing_controllers(self):
         snapshot = FavoritesSnapshot(

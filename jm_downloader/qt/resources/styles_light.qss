@@ -8,6 +8,7 @@ QMainWindow,
 QWidget#windowRoot,
 QStackedWidget#pageStack,
 QWidget#downloadPage,
+QWidget#favoritesPage,
 QWidget#libraryPage,
 QWidget#settingsPage {
     background: #f5f7f6;
@@ -112,6 +113,7 @@ QLineEdit#jmIdSearchInput:disabled {
 
 QScrollArea#resultsScroll,
 QScrollArea#tasksScroll,
+QScrollArea#favoritesResultsScroll,
 QScrollArea#libraryScrollArea {
     background: transparent;
     border: none;
@@ -119,6 +121,7 @@ QScrollArea#libraryScrollArea {
 
 QScrollArea#resultsScroll > QWidget > QWidget,
 QScrollArea#tasksScroll > QWidget > QWidget,
+QScrollArea#favoritesResultsScroll > QWidget > QWidget,
 QScrollArea#libraryScrollArea > QWidget > QWidget {
     background: #f5f7f6;
 }
@@ -652,6 +655,16 @@ QWidget#accountLoadingState,
 QWidget#accountLoginState,
 QWidget#accountSignedInState,
 QWidget#accountLoginForm {
+    background: #f5f7f6;
+}
+
+QStackedWidget#favoritesContentStack,
+QWidget#favoritesIdleState,
+QWidget#favoritesLoadingState,
+QWidget#favoritesEmptyState,
+QWidget#favoritesDataErrorState,
+QWidget#favoritesResultsState,
+QWidget#favoritesResultsCanvas {
     background: #f5f7f6;
 }
 

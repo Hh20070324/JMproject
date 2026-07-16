@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ReleaseVersion = "2.4.0"
+$ReleaseVersion = "2.5.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -17,7 +17,8 @@ $ChecksumFile = "$Archive.sha256"
 $HistoricalArchives = @(
     (Join-Path $ReleaseDir "JM-Downloader-v2.1.0-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.2.0-Windows-x64.zip"),
-    (Join-Path $ReleaseDir "JM-Downloader-v2.3.0-Windows-x64.zip")
+    (Join-Path $ReleaseDir "JM-Downloader-v2.3.0-Windows-x64.zip"),
+    (Join-Path $ReleaseDir "JM-Downloader-v2.4.0-Windows-x64.zip")
 )
 $LicensesDir = Join-Path $ProjectRoot "LICENSES"
 $RequiredLicenseFiles = @(
@@ -83,7 +84,13 @@ function Remove-RuntimeArtifacts
         Remove-BuildDirectory (Join-Path $AppDir $Name)
     }
 
-    foreach ($Name in @("settings.json", "settings.ini", "tasks.json"))
+    foreach ($Name in @(
+        "settings.json",
+        "settings.ini",
+        "tasks.json",
+        "account.dat",
+        "favorites.dat"
+    ))
     {
         Remove-BuildFile (Join-Path $AppDir $Name)
     }
@@ -93,6 +100,10 @@ function Remove-RuntimeArtifacts
             $_.Name -like "settings.json.corrupt-*" -or
             $_.Name -like "tasks.json.corrupt-*" -or
             $_.Name -like ".tasks.json.*.tmp" -or
+            $_.Name -like "account.dat.corrupt-*" -or
+            $_.Name -like "favorites.dat.corrupt-*" -or
+            $_.Name -like ".account.dat.*.tmp" -or
+            $_.Name -like ".favorites.dat.*.tmp" -or
             $_.Name -like "*.jm-part-*"
         }
     foreach ($RuntimeFile in $RuntimeFiles)
@@ -110,7 +121,9 @@ function Assert-NoRuntimeArtifacts
         "PDFs",
         "settings.json",
         "settings.ini",
-        "tasks.json"
+        "tasks.json",
+        "account.dat",
+        "favorites.dat"
     ))
     {
         $Path = Join-Path $AppDir $Name
@@ -125,6 +138,10 @@ function Assert-NoRuntimeArtifacts
             $_.Name -like "settings.json.corrupt-*" -or
             $_.Name -like "tasks.json.corrupt-*" -or
             $_.Name -like ".tasks.json.*.tmp" -or
+            $_.Name -like "account.dat.corrupt-*" -or
+            $_.Name -like "favorites.dat.corrupt-*" -or
+            $_.Name -like ".account.dat.*.tmp" -or
+            $_.Name -like ".favorites.dat.*.tmp" -or
             $_.Name -like "*.jm-part-*"
         } | Select-Object -ExpandProperty FullName
     if ($Artifacts)
@@ -210,6 +227,9 @@ function Assert-ArchiveContents
             $_ -match "^JM-Downloader/tasks\.json$" -or
             $_ -match "^JM-Downloader/tasks\.json\.corrupt-" -or
             $_ -match "^JM-Downloader/\.tasks\.json\..*\.tmp$" -or
+            $_ -match "^JM-Downloader/(?:account|favorites)\.dat$" -or
+            $_ -match "^JM-Downloader/(?:account|favorites)\.dat\.corrupt-" -or
+            $_ -match "^JM-Downloader/\.(?:account|favorites)\.dat\..*\.tmp$" -or
             $_ -match "\.jm-part-[^/]*$"
         }
         if ($RuntimeArtifacts)
@@ -260,6 +280,38 @@ function Assert-NoUnusedRuntime
     {
         $Names = ($Forbidden | Select-Object -ExpandProperty FullName) -join ", "
         throw "发行目录混入未使用的 Tcl/Tk 或软件 OpenGL 运行时：$Names"
+    }
+}
+
+function Assert-NoSensitiveTestData
+{
+    $Markers = @(
+        "test-password",
+        "test-cookie",
+        "real-cookie-sentinel",
+        "password-cookie-url-secret",
+        "security-password-sentinel",
+        "security-cookie-sentinel"
+    )
+    foreach ($File in Get-ChildItem -LiteralPath $AppDir -Recurse -File -Force)
+    {
+        try
+        {
+            $Content = [Text.Encoding]::UTF8.GetString(
+                [IO.File]::ReadAllBytes($File.FullName)
+            )
+        }
+        catch
+        {
+            throw "无法审计发行文件：$($File.FullName)"
+        }
+        foreach ($Marker in $Markers)
+        {
+            if ($Content.Contains($Marker))
+            {
+                throw "发行目录包含测试账号或 Cookie 标记：$($File.FullName)"
+            }
+        }
     }
 }
 
@@ -391,6 +443,7 @@ try
     Assert-NoRuntimeArtifacts
     Assert-NoLegacyRuntime
     Assert-NoUnusedRuntime
+    Assert-NoSensitiveTestData
 
     New-Item -ItemType Directory -Force $ReleaseDir | Out-Null
     Push-Location $DistDir

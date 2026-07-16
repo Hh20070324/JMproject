@@ -1,15 +1,15 @@
-# JM 漫画下载器 v2.4.0
+# JM 漫画下载器 v2.5.0
 
 一个 Windows 原生漫画下载工具。可以按漫画名、作者、标签或精确 JM 号查找漫画，再将结果加入下载队列；程序会下载全部章节图片、显示首张图片预览，并自动生成 PDF。
 
-v2.4.0 增加可恢复下载任务、暂停与继续、安全取消、损坏图片校验和原子文件发布。程序异常退出或下载中关闭窗口后，未完成任务会在下次启动时以暂停状态恢复，不会自动联网。发行版已经包含 Python 与运行依赖，解压即可使用。
+v2.5.0 增加账号登录与只读收藏同步。用户可以手动同步默认及自建收藏夹、离线浏览上次同步内容，并直接把收藏漫画加入现有下载队列。密码不会写入磁盘；保存的会话和收藏缓存使用当前 Windows 用户的 DPAPI 加密，并且只写在程序目录。发行版已经包含 Python 与运行依赖，解压即可使用。
 
 ## 开箱即用版
 
-1. 下载 `JM-Downloader-v2.4.0-Windows-x64.zip` 及同名 `.sha256` 文件。
-2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.4.0-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
+1. 下载 `JM-Downloader-v2.5.0-Windows-x64.zip` 及同名 `.sha256` 文件。
+2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.5.0-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
 3. 解压 ZIP，保持文件夹结构完整，然后双击 `JM-Downloader.exe`。
-4. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。
+4. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。登录和同步后还会按需创建加密的 `account.dat` 与 `favorites.dat`。
 
 发行目录提供两个入口：
 
@@ -54,6 +54,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1
 
 搜索结果按页显示，普通搜索最多展示前 1000 条；网络临时失败时可以重试。当前版本不保存搜索历史，也不提供漫画详情页或章节选择；下载动作始终下载整本漫画。
 
+## 账号与我的收藏
+
+1. 进入「我的收藏」，输入账号和密码后登录。密码只用于当次登录请求，不会保存到设置、日志或账号文件。
+2. 点击「同步」后，程序会依次读取默认收藏夹、自建收藏夹和全部分页。只有全部读取成功才会替换本地缓存；断网、停止或中途失败会保留上次同步内容。
+3. 同步完成后可以按收藏夹切换和翻页。点击卡片的「下载整本」会加入现有下载队列；已有任务会显示「查看任务」。
+4. 程序启动时只恢复本地加密缓存，不会自动连接网站。需要更新收藏时请手动点击「同步」。
+5. 点击「退出登录」会在确认后删除程序目录中的 `account.dat` 和 `favorites.dat`。
+
+当前版本的收藏功能是只读同步，不支持添加、取消、移动收藏或管理远端文件夹。会话 Cookie 和收藏元数据整体使用 Windows DPAPI CurrentUser 加密；同一台电脑、同一 Windows 用户移动整个程序目录后仍可读取，但复制到其他电脑或其他 Windows 用户后通常无法解密。遇到“本地登录信息无法读取”时，可以清除本地账号数据并重新登录；程序不会自动删除原密文。
+
 ## 本地漫画库
 
 「本地漫画库」会扫描当前设置的图片和 PDF 目录，并支持：
@@ -74,12 +84,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1
 - 同时下载任务数，范围为 1 至 8。
 - 单任务图片并发数，范围为 1 至 64。
 - 日志级别。
-- 启动页面和窗口尺寸。
+- 启动页面和窗口尺寸；启动页面可选择搜索与下载、本地漫画库、我的收藏或设置。
 - 明亮或黑暗主题。
 
 主题和窗口尺寸会立即更新；下载并发、输出目录、日志级别和启动页面等设置在下次启动后完整生效。设置保存在程序目录的 `settings.json`。程序目录内的路径会保存为相对路径，外部目录会保存为绝对路径。已经创建的未完成任务始终使用创建时的图片和 PDF 目录；修改设置不会把同一任务拆分到新旧目录。
 
-`option.yml` 保留 JMComic 下载器的底层选项，例如图片后缀。图片并发请在设置页修改，不要通过 `option.yml` 调整。v2.4.0 的请求超时和请求级重试由程序显式设置。
+`option.yml` 保留 JMComic 下载器的底层选项，例如图片后缀。图片并发请在设置页修改，不要通过 `option.yml` 调整。请求超时和请求级重试由程序显式设置。
 
 默认运行时文件如下：
 
@@ -90,6 +100,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\setup.ps1
 | `logs/app.log` | 程序运行日志 |
 | `settings.json` | 桌面应用设置 |
 | `tasks.json` | 未完成和失败任务的恢复记录 |
+| `account.dat` | DPAPI 加密的账号会话；登录后按需创建 |
+| `favorites.dat` | DPAPI 加密的完整收藏缓存；同步后按需创建 |
 | `option.yml` | 下载器底层配置 |
 
 下载中的图片会短暂使用带 `.jm-part-` 标记的临时文件名；只有完整校验通过后才会原子替换为最终图片。开始或继续该任务时会清理陈旧临时文件，这些文件不会进入预览、本地库或 PDF。
@@ -103,6 +115,9 @@ JM-Download&wrap_program/
 │   ├── qt/                  # 原生窗口、页面、控制器和主题资源
 │   ├── tasks.py             # 下载队列与并发控制
 │   ├── task_store.py         # 未完成任务的原子持久化
+│   ├── account.py           # 账号登录与会话生命周期
+│   ├── favorites.py         # 收藏同步与缓存
+│   ├── protected_store.py   # Windows DPAPI 便携加密存储
 │   ├── downloader.py        # JMComic 下载适配
 │   ├── library.py           # 本地漫画库
 │   ├── pdf.py               # PDF 生成
@@ -120,7 +135,9 @@ JM-Download&wrap_program/
 ├── Pictures/                # 默认图片输出，运行时创建
 ├── PDFs/                    # 默认 PDF 输出，运行时创建
 ├── settings.json            # 应用设置，运行时创建
-└── tasks.json               # 任务恢复记录，按需创建
+├── tasks.json               # 任务恢复记录，按需创建
+├── account.dat              # 加密账号会话，按需创建
+└── favorites.dat            # 加密收藏缓存，按需创建
 ```
 
 ## 常见问题
@@ -153,6 +170,14 @@ JM-Download&wrap_program/
 
 每个任务会记住创建时的图片和 PDF 目录，以免修改设置后把一本漫画拆到两个位置。旧目录任务完成后，可以从任务完成行打开原目录；当前本地库仍只扫描设置中的当前目录。
 
+**复制到另一台电脑后为什么需要重新登录？**
+
+`account.dat` 和 `favorites.dat` 由 Windows DPAPI 绑定到创建它们的 Windows 用户。整体复制程序不会暴露密码，但另一台电脑通常无法解密这两个文件。清除本地账号数据并重新登录即可；图片、PDF、普通设置和任务记录不受此限制。
+
+**登录会影响普通搜索和下载吗？**
+
+不会。v2.5.0 的登录会话只用于账号验证和读取收藏，普通搜索及整本下载仍使用原有客户端链路。
+
 ## 构建发行包
 
 准备好项目虚拟环境后运行：
@@ -163,10 +188,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 
 脚本会安装构建依赖、运行完整测试、构建 PyInstaller `onedir` 目录，验证正式版和调试版，并生成：
 
-- `release/JM-Downloader-v2.4.0-Windows-x64.zip`
-- `release/JM-Downloader-v2.4.0-Windows-x64.zip.sha256`
+- `release/JM-Downloader-v2.5.0-Windows-x64.zip`
+- `release/JM-Downloader-v2.5.0-Windows-x64.zip.sha256`
 
-构建不会覆盖保留的 v2.1.0、v2.2.0 和 v2.3.0 历史发行包，也会拒绝把设置、任务恢复记录、日志、下载内容或临时图片打入 ZIP。
+构建不会覆盖保留的 v2.1.0、v2.2.0、v2.3.0 和 v2.4.0 历史发行包，也会拒绝把设置、任务恢复记录、账号会话、收藏缓存、日志、下载内容或临时文件打入 ZIP。
 
 ## 合规与免责声明
 
