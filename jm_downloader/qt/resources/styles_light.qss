@@ -158,12 +158,6 @@ QFrame#settingsRow {
     border-bottom: 1px solid #d7ddd9;
 }
 
-QFrame#themeSegment {
-    background: #eef1ef;
-    border: 1px solid #d7ddd9;
-    border-radius: 6px;
-}
-
 QToolButton#themeButton {
     background: #eef1ef;
     border: 1px solid #cdd5d0;
@@ -572,6 +566,8 @@ QScrollArea#settingsScrollArea > QWidget > QWidget,
 QWidget#settingsCanvas,
 QFrame#settingsSection,
 QWidget#settingsInlineControl,
+QWidget#settingsComboControl,
+QWidget#settingsThemeControl,
 QWidget#settingsStepper {
     background: #f5f7f6;
 }
@@ -610,29 +606,43 @@ QSpinBox#settingsSpinBox:focus {
     padding: 0 9px;
 }
 
+QComboBox#settingsComboBox::drop-down {
+    width: 0;
+    border: none;
+}
+
+QComboBox#settingsComboBox::down-arrow {
+    width: 0;
+    height: 0;
+}
+
 QToolButton#settingsBrowseButton {
     background: #ffffff;
     border: 1px solid #cdd5d0;
     border-radius: 6px;
 }
 
-QToolButton#settingsStepButton {
+QToolButton#settingsStepButton,
+QToolButton#settingsComboButton {
     background: #ffffff;
     border: 1px solid #cdd5d0;
     border-radius: 6px;
     padding: 3px;
 }
 
-QToolButton#settingsStepButton:hover {
+QToolButton#settingsStepButton:hover,
+QToolButton#settingsComboButton:hover {
     background: #eef1ef;
     border-color: #9da9a2;
 }
 
-QToolButton#settingsStepButton:pressed {
+QToolButton#settingsStepButton:pressed,
+QToolButton#settingsComboButton:pressed {
     background: #e2e8e4;
 }
 
-QToolButton#settingsStepButton:disabled {
+QToolButton#settingsStepButton:disabled,
+QToolButton#settingsComboButton:disabled {
     background: #f5f7f6;
     border-color: #e1e6e3;
 }

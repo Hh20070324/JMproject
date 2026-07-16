@@ -8,7 +8,7 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox, QSpinBox
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QSpinBox
 
 from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.pages.settings_page import SettingsPage
@@ -117,6 +117,70 @@ class SettingsPageTests(unittest.TestCase):
         spin.setValue(spin.maximum())
         self.assertTrue(decrease.isEnabled())
         self.assertFalse(increase.isEnabled())
+
+    def test_choice_combos_have_separate_safe_popup_targets(self):
+        controls = (
+            (self.page.log_level_combo, self.page.logLevel_popup_button),
+            (self.page.startup_page_combo, self.page.startupPage_popup_button),
+        )
+
+        for combo, popup_button in controls:
+            self.assertEqual(popup_button.size().toTuple(), (28, 28))
+            self.assertFalse(
+                popup_button.geometry().intersects(combo.geometry())
+            )
+            self.assertFalse(popup_button.icon().isNull())
+            with patch.object(combo, "showPopup") as show_popup:
+                popup_button.click()
+                show_popup.assert_called_once_with()
+
+    def test_theme_buttons_show_distinct_icons_and_text(self):
+        light_button = self.page.theme_button(Theme.LIGHT)
+        dark_button = self.page.theme_button(Theme.DARK)
+        theme_control = light_button.parentWidget()
+        for theme, label in (
+            (Theme.LIGHT, "明亮"),
+            (Theme.DARK, "黑暗"),
+        ):
+            button = self.page.theme_button(theme)
+            self.assertEqual(button.text(), label)
+            self.assertEqual(
+                button.toolButtonStyle(),
+                Qt.ToolButtonStyle.ToolButtonTextBesideIcon,
+            )
+            self.assertFalse(button.icon().isNull())
+            self.assertEqual(button.size().toTuple(), (92, 36))
+        self.assertEqual(theme_control.objectName(), "settingsThemeControl")
+        self.assertFalse(
+            light_button.geometry().intersects(dark_button.geometry())
+        )
+        self.assertEqual(
+            dark_button.geometry().left()
+            - light_button.geometry().right()
+            - 1,
+            8,
+        )
+        self.assertEqual(light_button.geometry().top(), dark_button.geometry().top())
+        self.assertEqual(
+            light_button.geometry().bottom(),
+            dark_button.geometry().bottom(),
+        )
+
+    def test_theme_has_its_own_section_and_row_label(self):
+        section_titles = [
+            label.text()
+            for label in self.page.findChildren(QLabel, "sectionTitle")
+        ]
+        self.assertEqual(
+            section_titles,
+            ["存储位置", "下载性能", "应用", "主题模式"],
+        )
+
+        theme_control = self.page.theme_button(Theme.LIGHT).parentWidget()
+        theme_row = theme_control.parentWidget()
+        row_label = theme_row.findChild(QLabel, "settingsLabel")
+        self.assertIsNotNone(row_label)
+        self.assertEqual(row_label.text(), "明暗切换")
 
     def test_window_size_fields_do_not_show_native_step_buttons(self):
         for spin in (self.page.window_width_spin, self.page.window_height_spin):

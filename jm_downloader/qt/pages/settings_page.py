@@ -56,6 +56,7 @@ class SettingsPage(SectionPage):
         self._create_storage_section(canvas_layout)
         self._create_download_section(canvas_layout)
         self._create_application_section(canvas_layout)
+        self._create_theme_section(canvas_layout)
         canvas_layout.addStretch(1)
         self.settings_scroll.setWidget(self.settings_canvas)
         self.content_layout.addWidget(self.settings_scroll, 1)
@@ -145,8 +146,13 @@ class SettingsPage(SectionPage):
             ("错误", "ERROR"),
         ):
             self.log_level_combo.addItem(label, value)
-        self.log_level_combo.setFixedWidth(150)
-        self._add_row(section, "日志级别", self.log_level_combo)
+        log_level_control = self._combo_control(
+            section,
+            self.log_level_combo,
+            "logLevel",
+            "展开日志级别",
+        )
+        self._add_row(section, "日志级别", log_level_control)
 
         self.startup_page_combo = QComboBox(section)
         self.startup_page_combo.setObjectName("settingsComboBox")
@@ -156,8 +162,13 @@ class SettingsPage(SectionPage):
             ("设置", "settings"),
         ):
             self.startup_page_combo.addItem(label, value)
-        self.startup_page_combo.setFixedWidth(150)
-        self._add_row(section, "启动页面", self.startup_page_combo)
+        startup_page_control = self._combo_control(
+            section,
+            self.startup_page_combo,
+            "startupPage",
+            "展开启动页面",
+        )
+        self._add_row(section, "启动页面", startup_page_control)
 
         size_control = QWidget(section)
         size_control.setObjectName("settingsInlineControl")
@@ -188,11 +199,15 @@ class SettingsPage(SectionPage):
         size_layout.addStretch(1)
         self._add_row(section, "窗口尺寸", size_control)
 
-        theme_segment = QFrame(section)
-        theme_segment.setObjectName("themeSegment")
-        theme_layout = QHBoxLayout(theme_segment)
-        theme_layout.setContentsMargins(3, 3, 3, 3)
-        theme_layout.setSpacing(2)
+    def _create_theme_section(self, layout: QVBoxLayout) -> None:
+        section = self._create_section(layout, "主题模式")
+
+        theme_control = QWidget(section)
+        theme_control.setObjectName("settingsThemeControl")
+        theme_control.setFixedHeight(36)
+        theme_layout = QHBoxLayout(theme_control)
+        theme_layout.setContentsMargins(0, 0, 0, 0)
+        theme_layout.setSpacing(8)
 
         self._theme_group = QButtonGroup(self)
         self._theme_group.setExclusive(True)
@@ -200,13 +215,17 @@ class SettingsPage(SectionPage):
         for index, (theme, text) in enumerate(
             ((Theme.LIGHT, "明亮"), (Theme.DARK, "黑暗"))
         ):
-            button = QToolButton(theme_segment)
+            button = QToolButton(theme_control)
             button.setObjectName("themeButton")
             button.setProperty("theme", theme.value)
             button.setText(text)
             button.setIcon(svg_icon(f"{theme.value}-mode"))
+            button.setToolTip(f"使用{text}主题")
+            button.setToolButtonStyle(
+                Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
             button.setCheckable(True)
-            button.setFixedSize(76, 34)
+            button.setFixedSize(92, 36)
             button.setSizePolicy(
                 QSizePolicy.Policy.Fixed,
                 QSizePolicy.Policy.Fixed,
@@ -219,8 +238,13 @@ class SettingsPage(SectionPage):
                 )
             self._theme_group.addButton(button, index)
             self._theme_buttons[theme] = button
-            theme_layout.addWidget(button)
-        self._add_row(section, "主题模式", theme_segment)
+            theme_layout.addWidget(
+                button,
+                0,
+                Qt.AlignmentFlag.AlignVCenter,
+            )
+        theme_layout.addStretch(1)
+        self._add_row(section, "明暗切换", theme_control)
 
     def _create_action_bar(self) -> None:
         action_bar = QFrame(self.content)
@@ -307,6 +331,37 @@ class SettingsPage(SectionPage):
         button.setFixedSize(36, 36)
         button.clicked.connect(callback)
         layout.addWidget(button)
+        return control
+
+    def _combo_control(
+        self,
+        parent: QWidget,
+        combo: QComboBox,
+        name: str,
+        tooltip: str,
+    ) -> QWidget:
+        control = QWidget(parent)
+        control.setObjectName("settingsComboControl")
+        layout = QHBoxLayout(control)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        combo.setFixedWidth(150)
+        layout.addWidget(combo)
+
+        popup = QToolButton(control)
+        popup.setObjectName("settingsComboButton")
+        popup.setProperty("action", "expand")
+        popup.setToolTip(tooltip)
+        popup.setIcon(svg_icon("arrow-down"))
+        popup.setFixedSize(28, 28)
+        popup.clicked.connect(
+            lambda checked=False, target=combo: target.showPopup()
+        )
+        setattr(self, f"{name}_popup_button", popup)
+
+        layout.addWidget(popup)
+        layout.addStretch(1)
         return control
 
     def _stepper_control(
