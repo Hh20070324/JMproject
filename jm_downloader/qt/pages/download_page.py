@@ -469,6 +469,9 @@ class DownloadPage(SectionPage):
     def activate(self) -> None:
         self._schedule_visible_covers()
 
+    def show_task(self, album_id: str) -> None:
+        self._view_search_task(str(album_id))
+
     def dispose(self) -> None:
         if self._disposed:
             return

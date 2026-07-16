@@ -176,6 +176,7 @@ def _safe_error_payload(error: Exception) -> tuple[str, str]:
 
 class AccountController(QObject):
     snapshot_changed = Signal(object)
+    operation_completed = Signal(str, object)
     operation_failed = Signal(str, str)
     busy_changed = Signal(bool)
 
@@ -282,6 +283,11 @@ class AccountController(QObject):
             return
         self._publish_snapshot(self.service.mark_expired())
 
+    def refresh_snapshot(self) -> None:
+        if self._disposed:
+            return
+        self._publish_snapshot(self.service.snapshot)
+
     @Slot()
     def dispose(self) -> None:
         if self._disposed:
@@ -337,6 +343,11 @@ class AccountController(QObject):
                 self.operation_failed.emit(
                     outcome.error_code,
                     outcome.error_message or AccountError.default_message,
+                )
+            else:
+                self.operation_completed.emit(
+                    outcome.command,
+                    self._snapshot,
                 )
 
     def _publish_snapshot(self, snapshot: AccountSnapshot) -> None:

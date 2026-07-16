@@ -8,11 +8,17 @@ from unittest.mock import Mock, patch
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
 
 from jm_downloader.account import AccountService, AccountStore
-from jm_downloader.models import AccountSnapshot, AccountStatus
+from jm_downloader.models import (
+    AccountSnapshot,
+    AccountStatus,
+    FavoriteFolderSnapshot,
+    FavoriteItemSnapshot,
+    FavoritesSnapshot,
+)
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.account_controller import AccountController
 from jm_downloader.qt.pages.favorites_page import FavoritesPage
@@ -28,6 +34,49 @@ class PageProtector:
         if not ciphertext.startswith(b"page\0"):
             raise ValueError("invalid")
         return ciphertext[len(b"page\0") :][::-1]
+
+
+class FakeFavoritesController(QObject):
+    snapshot_changed = Signal(object)
+    progress_changed = Signal(object)
+    operation_failed = Signal(str, str)
+    busy_changed = Signal(bool, str)
+
+    def __init__(self):
+        super().__init__()
+        self.current_snapshot = None
+        self.is_busy = False
+        self.current_command = ""
+        self.sync = Mock(return_value=1)
+        self.cancel_sync = Mock()
+
+
+class FakeDownloadController(QObject):
+    tasks_reset = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.add_task = Mock(return_value=object())
+
+    @staticmethod
+    def list_tasks():
+        return []
+
+
+class FakeCoverLoader(QObject):
+    cover_ready = Signal(int, str, object)
+    cover_failed = Signal(int, str)
+
+    def __init__(self):
+        super().__init__()
+        self.requests = []
+
+    def request(self, generation, album_id, size):
+        self.requests.append((generation, album_id, size))
+        return True
+
+    def dispose(self):
+        pass
 
 
 class FavoritesPageTests(unittest.TestCase):
@@ -54,7 +103,15 @@ class FavoritesPageTests(unittest.TestCase):
             result_interval_ms=5,
             auto_restore=False,
         )
-        self.page = FavoritesPage(self.controller)
+        self.favorites_controller = FakeFavoritesController()
+        self.download_controller = FakeDownloadController()
+        self.cover_loader = FakeCoverLoader()
+        self.page = FavoritesPage(
+            self.controller,
+            favorites_controller=self.favorites_controller,
+            download_controller=self.download_controller,
+            cover_loader=self.cover_loader,
+        )
         self.page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         self.page.resize(552, 520)
         self.page.show()
@@ -64,6 +121,9 @@ class FavoritesPageTests(unittest.TestCase):
         self.page.close()
         self.controller.dispose()
         self.controller.deleteLater()
+        self.favorites_controller.deleteLater()
+        self.download_controller.deleteLater()
+        self.cover_loader.deleteLater()
         self.app.processEvents()
         self.temp_dir.cleanup()
 
@@ -114,10 +174,10 @@ class FavoritesPageTests(unittest.TestCase):
         )
         self.assertIs(
             self.page.state_stack.currentWidget(),
-            self.page.login_state,
+            self.page.account_state,
         )
-        self.assertEqual(self.page.login_button.text(), "重新登录")
-        self.assertEqual(self.page.username_input.text(), "saved-user")
+        self.assertTrue(self.page.expired_panel.isVisible())
+        self.assertFalse(self.page.sync_button.isEnabled())
 
         self.page._on_snapshot(
             AccountSnapshot(AccountStatus.LOCAL_DATA_UNREADABLE)
@@ -187,6 +247,98 @@ class FavoritesPageTests(unittest.TestCase):
             )
         )
         self.assertEqual(self.page.login_button.height(), 38)
+
+    def test_expired_relogin_password_is_masked_and_cleared(self):
+        self.controller.login = Mock(return_value=1)
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.EXPIRED, "saved-user")
+        )
+        self.page.expired_password_input.setText("private-password")
+
+        self.page.relogin_button.click()
+
+        self.assertEqual(
+            self.page.expired_password_input.echoMode(),
+            QLineEdit.EchoMode.Password,
+        )
+        self.assertEqual(self.page.expired_password_input.text(), "")
+        self.controller.login.assert_called_once_with(
+            "saved-user",
+            "private-password",
+        )
+
+    def test_snapshot_uses_bounded_local_pages_and_existing_cards(self):
+        items = tuple(
+            FavoriteItemSnapshot(str(index), f"Title {index}")
+            for index in range(1, 26)
+        )
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot("0", "Default", items),
+                FavoriteFolderSnapshot(
+                    "9",
+                    "Other",
+                    (FavoriteItemSnapshot("99", "Other item"),),
+                ),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+
+        self.page._on_favorites_snapshot(snapshot)
+        self.app.processEvents()
+
+        self.assertIs(
+            self.page.favorites_stack.currentWidget(),
+            self.page.favorite_results_state,
+        )
+        self.assertEqual(self.page.folder_combo.count(), 2)
+        self.assertEqual(len(self.page.favorite_cards), 20)
+        self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "1")
+        self.page.next_page_button.click()
+        self.app.processEvents()
+        self.assertEqual(len(self.page.favorite_cards), 5)
+        self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "21")
+        self.assertEqual(self.page.page_label.text(), "第 2 / 2 页")
+        self.page.folder_combo.setCurrentIndex(1)
+        self.app.processEvents()
+        self.assertEqual(len(self.page.favorite_cards), 1)
+        self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "99")
+        self.assertEqual(self.page.favorites_summary.text(), "共 1 条")
+
+    def test_sync_stop_and_download_reuse_existing_controllers(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "Default",
+                    (FavoriteItemSnapshot("1449491", "Title"),),
+                ),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+
+        self.page.sync_button.click()
+        self.favorites_controller.sync.assert_called_once_with()
+        self.page._on_favorites_busy_changed(True, "sync")
+        self.assertEqual(self.page.sync_button.text(), "停止")
+        self.page.sync_button.click()
+        self.favorites_controller.cancel_sync.assert_called_once_with()
+
+        self.page._on_favorites_busy_changed(False, "")
+        viewed = []
+        self.page.view_task_requested.connect(viewed.append)
+        self.page.favorite_cards[0].action_button.click()
+        self.download_controller.add_task.assert_called_once_with("1449491")
+        self.assertTrue(self.page.favorite_cards[0].task_present)
+        self.page.favorite_cards[0].action_button.click()
+        self.assertEqual(viewed, ["1449491"])
 
 
 if __name__ == "__main__":

@@ -670,7 +670,8 @@ QLabel#accountErrorLabel {
 }
 
 QLineEdit#accountUsernameInput,
-QLineEdit#accountPasswordInput {
+QLineEdit#accountPasswordInput,
+QLineEdit#favoritesReloginPassword {
     background: #202421;
     border: 1px solid #454c48;
     border-radius: 6px;
@@ -681,18 +682,21 @@ QLineEdit#accountPasswordInput {
 }
 
 QLineEdit#accountUsernameInput:hover,
-QLineEdit#accountPasswordInput:hover {
+QLineEdit#accountPasswordInput:hover,
+QLineEdit#favoritesReloginPassword:hover {
     border-color: #68766f;
 }
 
 QLineEdit#accountUsernameInput:focus,
-QLineEdit#accountPasswordInput:focus {
+QLineEdit#accountPasswordInput:focus,
+QLineEdit#favoritesReloginPassword:focus {
     border: 2px solid #4f9b73;
     padding: 0 11px;
 }
 
 QLineEdit#accountUsernameInput:disabled,
-QLineEdit#accountPasswordInput:disabled {
+QLineEdit#accountPasswordInput:disabled,
+QLineEdit#favoritesReloginPassword:disabled {
     background: #202522;
     color: #7f8983;
 }
@@ -718,7 +722,8 @@ QPushButton#accountPrimaryButton:hover {
 }
 
 QPushButton#accountSecondaryButton,
-QToolButton#accountLogoutButton {
+QToolButton#accountLogoutButton,
+QToolButton#favoritesSyncButton {
     background: #232725;
     border: 1px solid #454c48;
     border-radius: 6px;
@@ -727,17 +732,102 @@ QToolButton#accountLogoutButton {
 }
 
 QPushButton#accountSecondaryButton:hover,
-QToolButton#accountLogoutButton:hover {
+QToolButton#accountLogoutButton:hover,
+QToolButton#favoritesSyncButton:hover {
     background: #313936;
     border-color: #68766f;
 }
 
 QPushButton#accountPrimaryButton:disabled,
 QPushButton#accountSecondaryButton:disabled,
-QToolButton#accountLogoutButton:disabled {
+QToolButton#accountLogoutButton:disabled,
+QToolButton#favoritesSyncButton:disabled {
     background: #202522;
     border-color: #343c38;
     color: #7f8983;
+}
+
+QLabel#favoritesLastSync,
+QLabel#favoritesResultsSummary,
+QLabel#favoritesStateLabel,
+QLabel#favoritesProgressLabel {
+    color: #aeb8b2;
+}
+
+QFrame#favoritesExpiredPanel {
+    background: #332d20;
+    border: 1px solid #6f5e36;
+    border-radius: 6px;
+}
+
+QFrame#favoritesErrorBanner {
+    background: #342323;
+    border: 1px solid #744747;
+    border-radius: 6px;
+}
+
+QLabel#favoritesBannerText {
+    color: #efb2b2;
+}
+
+QFrame#favoritesProgressFrame {
+    background: #1d2c24;
+    border: 1px solid #345b45;
+    border-radius: 6px;
+}
+
+QProgressBar#favoritesProgressBar {
+    background: #343c38;
+    border: 0;
+    border-radius: 3px;
+}
+
+QProgressBar#favoritesProgressBar::chunk {
+    background: #4f9b73;
+    border-radius: 3px;
+}
+
+QComboBox#favoritesFolderCombo {
+    background: #202421;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+    color: #f1f4f2;
+    padding: 0 10px;
+}
+
+QComboBox#favoritesFolderCombo:hover,
+QComboBox#favoritesFolderCombo:focus {
+    border-color: #4f9b73;
+}
+
+QComboBox#favoritesFolderCombo::drop-down {
+    border: 0;
+    width: 28px;
+}
+
+QToolButton#favoritesPageButton {
+    background: #232725;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+}
+
+QToolButton#favoritesPageButton:hover {
+    background: #313936;
+    border-color: #68766f;
+}
+
+QToolButton#favoritesPageButton:disabled {
+    background: #202522;
+    border-color: #343c38;
+}
+
+QLabel#favoritesPageLabel {
+    color: #d8dedb;
+    font-weight: 600;
+}
+
+QFrame#favoritesPagination {
+    border-top: 1px solid #3b423e;
 }
 
 QToolButton#settingsBrowseButton:hover {

@@ -21,6 +21,7 @@ from ..desktop_runtime import WINDOW_TITLE
 from .icons import svg_icon
 from .controllers.account_controller import AccountController
 from .controllers.download_controller import DownloadController
+from .controllers.favorites_controller import FavoritesController
 from .controllers.library_controller import LibraryController
 from .controllers.search_controller import SearchController
 from .controllers.settings_controller import SettingsController
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         settings_controller: SettingsController | None = None,
         search_controller: SearchController | None = None,
         account_controller: AccountController | None = None,
+        favorites_controller: FavoritesController | None = None,
         persist_window_state: bool = True,
     ):
         super().__init__(parent)
@@ -49,6 +51,7 @@ class MainWindow(QMainWindow):
         self.settings_controller = settings_controller
         self.search_controller = search_controller
         self.account_controller = account_controller
+        self.favorites_controller = favorites_controller
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
         self._shutdown_complete = False
@@ -90,7 +93,17 @@ class MainWindow(QMainWindow):
                 self,
                 search_controller=search_controller,
             ),
-            "favorites": FavoritesPage(account_controller, self),
+            "favorites": FavoritesPage(
+                account_controller,
+                self,
+                favorites_controller=favorites_controller,
+                download_controller=download_controller,
+                cover_service=(
+                    search_controller.service
+                    if search_controller is not None
+                    else None
+                ),
+            ),
             "library": LibraryPage(library_controller, self),
             "settings": SettingsPage(
                 theme_manager,
@@ -124,6 +137,9 @@ class MainWindow(QMainWindow):
             self.settings_controller.settings_changed.connect(
                 self._apply_settings
             )
+        self._pages["favorites"].view_task_requested.connect(
+            self._show_download_task
+        )
 
     @property
     def current_page(self) -> str:
@@ -328,6 +344,10 @@ class MainWindow(QMainWindow):
             )
         self.close()
 
+    def _show_download_task(self, album_id: str) -> None:
+        self.select_page("downloads")
+        self._pages["downloads"].show_task(album_id)
+
     def _dispose_search(self) -> None:
         download_page = self._pages.get("downloads")
         dispose_page = getattr(download_page, "dispose", None)
@@ -335,5 +355,11 @@ class MainWindow(QMainWindow):
             dispose_page()
         if self.search_controller is not None:
             self.search_controller.dispose()
+        favorites_page = self._pages.get("favorites")
+        dispose_favorites_page = getattr(favorites_page, "dispose", None)
+        if dispose_favorites_page is not None:
+            dispose_favorites_page()
+        if self.favorites_controller is not None:
+            self.favorites_controller.dispose()
         if self.account_controller is not None:
             self.account_controller.dispose()

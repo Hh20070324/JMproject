@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -180,7 +181,7 @@ class AccountStore:
             raise AccountStorageError("无法删除 account.dat") from None
 
 
-def _build_account_client(
+def build_account_client(
     option_file: Path,
     cookies: Mapping[str, str] | None = None,
 ):
@@ -221,13 +222,14 @@ class AccountService:
         self.account_store = account_store or AccountStore.create(paths)
         self.favorites_store = favorites_store or ProtectedStore.favorites(paths)
         self._client_factory = client_factory or (
-            lambda cookies=None: _build_account_client(
+            lambda cookies=None: build_account_client(
                 self.paths.option_file,
                 cookies,
             )
         )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = threading.RLock()
+        self._protected_data_lock = threading.RLock()
         self._operation_generation = 0
         self._discard_stale_session = False
         self._session: AccountSession | None = None
@@ -301,22 +303,23 @@ class AccountService:
 
         self._ensure_current(operation)
         session = self._adapt_login(client, response)
-        self.account_store.save(session)
-        if not self._is_current(operation):
-            self._rollback_account(self._rollback_session(old_session))
-            raise AccountOperationCancelled()
-
-        if old_session is not None and old_session.uid != session.uid:
-            try:
-                self.favorites_store.delete()
-            except ProtectedStoreError:
+        with self._protected_data_lock:
+            self.account_store.save(session)
+            if not self._is_current(operation):
                 self._rollback_account(self._rollback_session(old_session))
-                raise AccountStorageError(
-                    "无法清除原账号的 favorites.dat"
-                ) from None
-        if not self._is_current(operation):
-            self._rollback_account(self._rollback_session(old_session))
-            raise AccountOperationCancelled()
+                raise AccountOperationCancelled()
+
+            if old_session is not None and old_session.uid != session.uid:
+                try:
+                    self.favorites_store.delete()
+                except ProtectedStoreError:
+                    self._rollback_account(self._rollback_session(old_session))
+                    raise AccountStorageError(
+                        "无法清除原账号的 favorites.dat"
+                    ) from None
+            if not self._is_current(operation):
+                self._rollback_account(self._rollback_session(old_session))
+                raise AccountOperationCancelled()
 
         snapshot = _session_snapshot(session, AccountStatus.SIGNED_IN)
         return self._publish_if_current(operation, session, snapshot)
@@ -324,14 +327,15 @@ class AccountService:
     def logout(self, operation: int) -> AccountSnapshot:
         self._ensure_current(operation)
         failures = []
-        try:
-            self.account_store.delete()
-        except AccountStorageError:
-            failures.append("account.dat")
-        try:
-            self.favorites_store.delete()
-        except ProtectedStoreError:
-            failures.append("favorites.dat")
+        with self._protected_data_lock:
+            try:
+                self.account_store.delete()
+            except AccountStorageError:
+                failures.append("account.dat")
+            try:
+                self.favorites_store.delete()
+            except ProtectedStoreError:
+                failures.append("favorites.dat")
         self._ensure_current(operation)
         if failures:
             snapshot = AccountSnapshot(AccountStatus.LOCAL_DATA_UNREADABLE)
@@ -359,6 +363,33 @@ class AccountService:
                 )
             return self._snapshot
 
+    def confirm_session(self, expected: AccountSession) -> AccountSnapshot:
+        if not isinstance(expected, AccountSession):
+            raise TypeError("expected must be AccountSession")
+        with self._lock:
+            if self._session != expected or self._snapshot.status not in {
+                AccountStatus.SAVED_SESSION,
+                AccountStatus.SIGNED_IN,
+            }:
+                raise AccountOperationCancelled()
+            self._snapshot = _session_snapshot(
+                self._session,
+                AccountStatus.SIGNED_IN,
+            )
+            return self._snapshot
+
+    def expire_session(self, expected: AccountSession) -> AccountSnapshot:
+        if not isinstance(expected, AccountSession):
+            raise TypeError("expected must be AccountSession")
+        with self._lock:
+            if self._session != expected:
+                raise AccountOperationCancelled()
+            self._snapshot = _session_snapshot(
+                self._session,
+                AccountStatus.EXPIRED,
+            )
+            return self._snapshot
+
     def current_session(self) -> AccountSession:
         with self._lock:
             if self._session is None or self._snapshot.status not in {
@@ -367,6 +398,29 @@ class AccountService:
             }:
                 raise AccountLocalDataError()
             return self._session
+
+    def local_session(self) -> AccountSession:
+        with self._lock:
+            if self._session is None or self._snapshot.status not in {
+                AccountStatus.SAVED_SESSION,
+                AccountStatus.SIGNED_IN,
+                AccountStatus.EXPIRED,
+            }:
+                raise AccountLocalDataError()
+            return self._session
+
+    @contextmanager
+    def protected_session_data(self, expected: AccountSession):
+        if not isinstance(expected, AccountSession):
+            raise TypeError("expected must be AccountSession")
+        with self._protected_data_lock:
+            with self._lock:
+                if self._session != expected or self._snapshot.status not in {
+                    AccountStatus.SAVED_SESSION,
+                    AccountStatus.SIGNED_IN,
+                }:
+                    raise AccountOperationCancelled()
+            yield
 
     def _adapt_login(self, client, response) -> AccountSession:
         data = getattr(response, "res_data", None)
@@ -612,5 +666,6 @@ __all__ = [
     "AccountSwitchRequired",
     "AccountUnavailable",
     "AccountValidationError",
+    "build_account_client",
     "validate_login_credentials",
 ]

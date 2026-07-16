@@ -63,6 +63,38 @@ class AccountSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class FavoriteItemSnapshot:
+    album_id: str
+    title: str | None
+    authors: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FavoriteFolderSnapshot:
+    folder_id: str
+    name: str
+    items: tuple[FavoriteItemSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FavoritesSnapshot:
+    synced_at_utc: str | None
+    folders: tuple[FavoriteFolderSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FavoritesSyncProgress:
+    folder_index: int
+    folder_count: int
+    folder_name: str
+    page: int
+    page_count: int
+    received_items: int
+    expected_items: int
+
+
+@dataclass(frozen=True, slots=True)
 class TaskSnapshot:
     id: str
     album_id: str

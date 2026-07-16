@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 from ..desktop_runtime import SingleInstance, configure_logging
 from ..account import AccountService
 from ..downloader import DownloadWorker
+from ..favorites import FavoritesService
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
 from ..search import SearchService
@@ -24,6 +25,7 @@ from .backend_smoke import run_backend_smoke
 from .controllers import (
     AccountController,
     DownloadController,
+    FavoritesController,
     LibraryController,
     SearchController,
     SettingsController,
@@ -140,6 +142,7 @@ def run_qt_app(
     library_controller = None
     search_controller = None
     account_controller = None
+    favorites_controller = None
     task_store = None
     try:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -207,7 +210,12 @@ def run_qt_app(
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
         search_controller = SearchController(SearchService(paths=paths))
-        account_controller = AccountController(AccountService(paths=paths))
+        account_service = AccountService(paths=paths)
+        account_controller = AccountController(account_service)
+        favorites_controller = FavoritesController(
+            FavoritesService(account_service, paths=paths),
+            account_controller,
+        )
         settings_controller = SettingsController(
             settings_store,
             settings_validator=partial(
@@ -222,6 +230,7 @@ def run_qt_app(
             library_controller,
             search_controller=search_controller,
             account_controller=account_controller,
+            favorites_controller=favorites_controller,
             settings_controller=settings_controller,
             persist_window_state=not smoke_test,
         )
@@ -245,6 +254,8 @@ def run_qt_app(
             )
         raise
     finally:
+        if favorites_controller is not None:
+            favorites_controller.dispose()
         if account_controller is not None:
             account_controller.dispose()
         if search_controller is not None:

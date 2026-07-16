@@ -365,7 +365,7 @@ class DefaultAccountClientFactoryTests(unittest.TestCase):
             patch.object(account.jmcomic, "create_option_by_file", return_value=option),
             patch.object(account.jmcomic, "JmApiClient", self.FakeApiClient),
         ):
-            result = account._build_account_client(
+            result = account.build_account_client(
                 Path("option.yml"),
                 {"AVS": "token"},
             )
