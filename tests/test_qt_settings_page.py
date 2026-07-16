@@ -82,6 +82,12 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(self.page.image_concurrency_spin.value(), 24)
         self.assertEqual(self.page.log_level_combo.currentData(), "WARNING")
         self.assertEqual(self.page.startup_page_combo.currentData(), "library")
+        favorites_index = self.page.startup_page_combo.findData("favorites")
+        self.assertGreaterEqual(favorites_index, 0)
+        self.assertEqual(
+            self.page.startup_page_combo.itemText(favorites_index),
+            "我的收藏",
+        )
         self.assertEqual(self.page.window_width_spin.value(), 1280)
         self.assertEqual(self.page.window_height_spin.value(), 800)
         self.assertTrue(self.page.theme_button(Theme.LIGHT).isChecked())

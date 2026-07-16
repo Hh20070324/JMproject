@@ -647,6 +647,102 @@ QToolButton#settingsComboButton:disabled {
     border-color: #e1e6e3;
 }
 
+QWidget#accountStateStack,
+QWidget#accountLoadingState,
+QWidget#accountLoginState,
+QWidget#accountSignedInState,
+QWidget#accountLoginForm {
+    background: #f5f7f6;
+}
+
+QLabel#accountStateTitle,
+QLabel#accountName {
+    color: #1d2320;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QLabel#accountStateDetail,
+QLabel#accountNotice {
+    color: #65706a;
+}
+
+QLabel#accountErrorLabel {
+    color: #a43c3c;
+    font-size: 12px;
+}
+
+QLineEdit#accountUsernameInput,
+QLineEdit#accountPasswordInput {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 0 12px;
+    selection-background-color: #2e7d57;
+    selection-color: #ffffff;
+}
+
+QLineEdit#accountUsernameInput:hover,
+QLineEdit#accountPasswordInput:hover {
+    border-color: #9da9a2;
+}
+
+QLineEdit#accountUsernameInput:focus,
+QLineEdit#accountPasswordInput:focus {
+    border: 2px solid #2e7d57;
+    padding: 0 11px;
+}
+
+QLineEdit#accountUsernameInput:disabled,
+QLineEdit#accountPasswordInput:disabled {
+    background: #eef1ef;
+    color: #8a948e;
+}
+
+QFrame#accountSummary {
+    background: #ffffff;
+    border: 1px solid #d7ddd9;
+    border-radius: 8px;
+}
+
+QPushButton#accountPrimaryButton {
+    background: #2e7d57;
+    border: 1px solid #2e7d57;
+    border-radius: 6px;
+    color: #ffffff;
+    font-weight: 600;
+    padding: 0 16px;
+}
+
+QPushButton#accountPrimaryButton:hover {
+    background: #256b49;
+    border-color: #256b49;
+}
+
+QPushButton#accountSecondaryButton,
+QToolButton#accountLogoutButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 0 10px;
+}
+
+QPushButton#accountSecondaryButton:hover,
+QToolButton#accountLogoutButton:hover {
+    background: #eef1ef;
+    border-color: #9da9a2;
+}
+
+QPushButton#accountPrimaryButton:disabled,
+QPushButton#accountSecondaryButton:disabled,
+QToolButton#accountLogoutButton:disabled {
+    background: #e6ebe8;
+    border-color: #d7ddd9;
+    color: #8a948e;
+}
+
 QToolButton#settingsBrowseButton:hover {
     background: #eef1ef;
     border-color: #9da9a2;

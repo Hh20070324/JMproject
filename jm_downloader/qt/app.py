@@ -12,6 +12,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 from ..desktop_runtime import SingleInstance, configure_logging
+from ..account import AccountService
 from ..downloader import DownloadWorker
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
@@ -21,6 +22,7 @@ from ..task_store import TaskStore, TaskStoreError
 from ..tasks import TaskManager
 from .backend_smoke import run_backend_smoke
 from .controllers import (
+    AccountController,
     DownloadController,
     LibraryController,
     SearchController,
@@ -137,6 +139,7 @@ def run_qt_app(
     download_controller = None
     library_controller = None
     search_controller = None
+    account_controller = None
     task_store = None
     try:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -204,6 +207,7 @@ def run_qt_app(
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
         search_controller = SearchController(SearchService(paths=paths))
+        account_controller = AccountController(AccountService(paths=paths))
         settings_controller = SettingsController(
             settings_store,
             settings_validator=partial(
@@ -217,6 +221,7 @@ def run_qt_app(
             download_controller,
             library_controller,
             search_controller=search_controller,
+            account_controller=account_controller,
             settings_controller=settings_controller,
             persist_window_state=not smoke_test,
         )
@@ -224,9 +229,10 @@ def run_qt_app(
         logger.info("Desktop application started")
 
         if smoke_test:
-            QTimer.singleShot(50, lambda: window.select_page("library"))
-            QTimer.singleShot(100, lambda: window.select_page("settings"))
-            QTimer.singleShot(150, lambda: window.select_page("downloads"))
+            QTimer.singleShot(50, lambda: window.select_page("favorites"))
+            QTimer.singleShot(100, lambda: window.select_page("library"))
+            QTimer.singleShot(150, lambda: window.select_page("settings"))
+            QTimer.singleShot(200, lambda: window.select_page("downloads"))
             QTimer.singleShot(250, window.close)
 
         result = app.exec()
@@ -239,6 +245,8 @@ def run_qt_app(
             )
         raise
     finally:
+        if account_controller is not None:
+            account_controller.dispose()
         if search_controller is not None:
             search_controller.dispose()
         if library_controller is not None:

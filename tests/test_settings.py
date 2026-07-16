@@ -23,6 +23,8 @@ class AppPathsTests(unittest.TestCase):
             self.assertEqual(paths.option_file, root / "option.yml")
             self.assertEqual(paths.settings_file, root / "settings.json")
             self.assertEqual(paths.tasks_file, root / "tasks.json")
+            self.assertEqual(paths.account_file, root / "account.dat")
+            self.assertEqual(paths.favorites_file, root / "favorites.dat")
             self.assertEqual(paths.legacy_settings_file, root / "settings.ini")
             self.assertEqual(paths.logs, root / "logs")
 
@@ -79,6 +81,14 @@ class AppSettingsTests(unittest.TestCase):
     def test_missing_groups_use_defaults(self):
         settings = AppSettings.from_dict({"schema_version": 1})
         self.assertEqual(settings, AppSettings())
+
+    def test_favorites_is_a_supported_startup_page(self):
+        settings = replace(AppSettings(), startup_page="favorites")
+        settings.validate()
+        self.assertEqual(
+            AppSettings.from_dict(settings.to_dict()).startup_page,
+            "favorites",
+        )
 
     def test_rejects_future_schema_without_coercion(self):
         with self.assertRaises(UnsupportedSettingsVersion):

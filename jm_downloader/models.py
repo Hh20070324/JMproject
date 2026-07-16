@@ -21,6 +21,16 @@ class SearchMode(str, Enum):
     EXACT_ID = "exact_id"
 
 
+class AccountStatus(str, Enum):
+    SIGNED_OUT = "signed_out"
+    RESTORING = "restoring"
+    SAVED_SESSION = "saved_session"
+    SIGNING_IN = "signing_in"
+    SIGNED_IN = "signed_in"
+    EXPIRED = "expired"
+    LOCAL_DATA_UNREADABLE = "local_data_unreadable"
+
+
 @dataclass(frozen=True, slots=True)
 class SearchRequest:
     mode: SearchMode
@@ -43,6 +53,13 @@ class SearchPageSnapshot:
     page_count: int
     items: tuple[SearchResultSnapshot, ...]
     truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AccountSnapshot:
+    status: AccountStatus
+    username: str | None = None
+    last_verified_at_utc: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

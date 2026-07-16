@@ -63,6 +63,7 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
             fake_download_controller.shutdown.return_value = True
             fake_library_controller = MagicMock()
             fake_library_controller.shutdown.return_value = True
+            fake_account_controller = MagicMock()
             fake_logger = logging.Logger("phase-five-startup-test")
 
             with (
@@ -98,6 +99,12 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
                     "LibraryController",
                     return_value=fake_library_controller,
                 ),
+                patch.object(qt_app, "AccountService") as account_service_class,
+                patch.object(
+                    qt_app,
+                    "AccountController",
+                    return_value=fake_account_controller,
+                ) as account_controller_class,
                 patch.object(qt_app, "MainWindow") as main_window_class,
                 patch.object(
                     qt_app,
@@ -144,6 +151,11 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
                 library_service_class.call_args_list,
                 [call(expected_paths), call(expected_paths)],
             )
+            self.assertEqual(
+                account_service_class.call_args_list,
+                [call(paths=expected_paths), call(paths=expected_paths)],
+            )
+            self.assertEqual(account_controller_class.call_count, 2)
             self.assertEqual(main_window_class.call_count, 2)
             for window_call in main_window_class.call_args_list:
                 controller = window_call.kwargs["settings_controller"]

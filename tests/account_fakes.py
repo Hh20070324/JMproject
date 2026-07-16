@@ -122,3 +122,8 @@ class FakeJmAccountClient:
             if page >= result.page_count:
                 return
             page += 1
+
+    def get_meta_data(self, name):
+        if name == "cookies":
+            return dict(self.cookies)
+        return None

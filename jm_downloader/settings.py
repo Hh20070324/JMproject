@@ -120,6 +120,7 @@ class AppSettings:
             raise SettingsValidationError("日志级别无效")
         if not isinstance(self.startup_page, str) or self.startup_page not in {
             "downloads",
+            "favorites",
             "library",
             "settings",
         }:
@@ -234,6 +235,14 @@ class AppPaths:
     @property
     def tasks_file(self) -> Path:
         return self.root / "tasks.json"
+
+    @property
+    def account_file(self) -> Path:
+        return self.root / "account.dat"
+
+    @property
+    def favorites_file(self) -> Path:
+        return self.root / "favorites.dat"
 
     @property
     def legacy_settings_file(self) -> Path:

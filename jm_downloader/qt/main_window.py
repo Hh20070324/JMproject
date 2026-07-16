@@ -19,16 +19,17 @@ from PySide6.QtWidgets import (
 
 from ..desktop_runtime import WINDOW_TITLE
 from .icons import svg_icon
+from .controllers.account_controller import AccountController
 from .controllers.download_controller import DownloadController
 from .controllers.library_controller import LibraryController
 from .controllers.search_controller import SearchController
 from .controllers.settings_controller import SettingsController
-from .pages import DownloadPage, LibraryPage, SettingsPage
+from .pages import DownloadPage, FavoritesPage, LibraryPage, SettingsPage
 from .theme import ThemeManager
 
 
 class MainWindow(QMainWindow):
-    PAGE_ORDER = ("downloads", "library", "settings")
+    PAGE_ORDER = ("downloads", "favorites", "library", "settings")
 
     def __init__(
         self,
@@ -38,6 +39,7 @@ class MainWindow(QMainWindow):
         parent=None,
         settings_controller: SettingsController | None = None,
         search_controller: SearchController | None = None,
+        account_controller: AccountController | None = None,
         persist_window_state: bool = True,
     ):
         super().__init__(parent)
@@ -46,6 +48,7 @@ class MainWindow(QMainWindow):
         self.library_controller = library_controller
         self.settings_controller = settings_controller
         self.search_controller = search_controller
+        self.account_controller = account_controller
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
         self._shutdown_complete = False
@@ -87,6 +90,7 @@ class MainWindow(QMainWindow):
                 self,
                 search_controller=search_controller,
             ),
+            "favorites": FavoritesPage(account_controller, self),
             "library": LibraryPage(library_controller, self),
             "settings": SettingsPage(
                 theme_manager,
@@ -171,6 +175,11 @@ class MainWindow(QMainWindow):
                 "downloads",
                 "搜索与下载",
                 svg_icon("search", "#ffffff"),
+            ),
+            (
+                "favorites",
+                "我的收藏",
+                svg_icon("bookmark", "#ffffff"),
             ),
             (
                 "library",
@@ -326,3 +335,5 @@ class MainWindow(QMainWindow):
             dispose_page()
         if self.search_controller is not None:
             self.search_controller.dispose()
+        if self.account_controller is not None:
+            self.account_controller.dispose()

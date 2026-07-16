@@ -158,6 +158,7 @@ class SettingsPage(SectionPage):
         self.startup_page_combo.setObjectName("settingsComboBox")
         for label, value in (
             ("搜索与下载", "downloads"),
+            ("我的收藏", "favorites"),
             ("本地漫画库", "library"),
             ("设置", "settings"),
         ):

@@ -65,7 +65,14 @@ class QtMainWindowTests(unittest.TestCase):
             self.window.stack.widget(index).objectName()
             for index in range(self.window.stack.count())
         ]
-        self.assertEqual(page_ids, ["downloadPage", "libraryPage", "settingsPage"])
+        self.assertEqual(
+            page_ids,
+            ["downloadPage", "favoritesPage", "libraryPage", "settingsPage"],
+        )
+
+        self.window.navigation_button("favorites").click()
+        self.app.processEvents()
+        self.assertEqual(self.window.current_page, "favorites")
 
         self.window.navigation_button("library").click()
         self.app.processEvents()
@@ -183,6 +190,7 @@ class QtMainWindowTests(unittest.TestCase):
         for name in (
             "search",
             "folder",
+            "bookmark",
             "settings",
             "arrow-left",
             "arrow-right",
@@ -192,6 +200,8 @@ class QtMainWindowTests(unittest.TestCase):
             "pause",
             "play",
             "stop",
+            "user-check",
+            "user-delete",
         ):
             with self.subTest(icon=name):
                 path = resource_path(f"icons/{name}.svg")
