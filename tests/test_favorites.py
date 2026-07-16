@@ -5,6 +5,7 @@ import logging
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from jm_downloader.account import AccountService, AccountStore
 from jm_downloader.favorites import (
@@ -25,7 +26,10 @@ from jm_downloader.models import (
     FavoriteFolderSnapshot,
     FavoriteItemSnapshot,
 )
-from jm_downloader.protected_store import ProtectedStore
+from jm_downloader.protected_store import (
+    ProtectedStore,
+    ProtectedStoreWriteError,
+)
 from jm_downloader.settings import AppPaths
 from tests.account_fakes import FakeFavoritePage, FakeJmAccountClient
 
@@ -298,6 +302,91 @@ class FavoritesServiceTests(unittest.TestCase):
         )
         self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
 
+    def test_large_favorite_folder_syncs_all_pages_without_truncation(self):
+        items = tuple(
+            (
+                str(index),
+                {
+                    "name": f"Favorite {index}",
+                    "author": f"Author {index % 7}",
+                    "tags": [f"Tag {index % 11}"],
+                },
+            )
+            for index in range(1, 1_206)
+        )
+        client = FakeJmAccountClient(
+            folders={"0": ("Default", items)},
+            page_size=37,
+        )
+        service = self.service(client)
+
+        snapshot = self.sync(service)
+
+        self.assertEqual(len(snapshot.folders), 1)
+        self.assertEqual(len(snapshot.folders[0].items), 1_205)
+        self.assertEqual(snapshot.folders[0].items[0].album_id, "1")
+        self.assertEqual(snapshot.folders[0].items[-1].album_id, "1205")
+        self.assertEqual(
+            len(
+                [
+                    call
+                    for call in client.calls
+                    if call[0] == "favorite_folder"
+                ]
+            ),
+            33,
+        )
+
+    def test_storage_failure_preserves_old_cache_and_snapshot(self):
+        old_cache = self._sample_cache()
+        self.cache_store.save(old_cache)
+        old_bytes = self.paths.favorites_file.read_bytes()
+        service = self.service(
+            FakeJmAccountClient(folders=self.populated_folders())
+        )
+        old_snapshot = service.restore(service.start_operation())
+
+        with patch.object(
+            self.favorites_protected,
+            "_write_atomic",
+            side_effect=ProtectedStoreWriteError("private disk details"),
+        ):
+            with self.assertRaises(FavoritesStorageError) as raised:
+                self.sync(service)
+
+        self.assertNotIn("private", str(raised.exception))
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
+        self.assertEqual(service.snapshot, old_snapshot)
+        self.assertEqual(
+            self.account_service.snapshot.status,
+            AccountStatus.SIGNED_IN,
+        )
+
+    def test_cache_decryption_failure_preserves_original_ciphertext(self):
+        self.cache_store.save(self._sample_cache())
+        original = self.paths.favorites_file.read_bytes()
+
+        class RejectingProtector(TestProtector):
+            def unprotect(self, ciphertext: bytes) -> bytes:
+                raise ValueError("wrong Windows user")
+
+        unreadable_store = FavoriteCacheStore(
+            ProtectedStore.favorites(self.paths, RejectingProtector())
+        )
+        service = FavoritesService(
+            self.account_service,
+            self.paths,
+            cache_store=unreadable_store,
+            client_factory=lambda _cookies: self.fail("restore went online"),
+            clock=lambda: FIXED_TIME,
+        )
+
+        with self.assertRaises(FavoritesLocalDataError):
+            service.restore(service.start_operation())
+
+        self.assertEqual(self.paths.favorites_file.read_bytes(), original)
+        self.assertIsNone(service.snapshot)
+
     def test_duplicate_page_content_and_changing_totals_are_rejected(self):
         cases = []
 
@@ -353,6 +442,67 @@ class FavoritesServiceTests(unittest.TestCase):
                 with self.assertRaises(FavoritesResponseError):
                     self.sync(service)
                 self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_upstream_shape_changes_fail_closed_and_keep_old_cache(self):
+        old_cache = self._sample_cache()
+        self.cache_store.save(old_cache)
+        old_bytes = self.paths.favorites_file.read_bytes()
+
+        invalid_content = FakeJmAccountClient(
+            folders={"0": ("Default", (("1", {"name": "One"}),))}
+        )
+        original_content = invalid_content.favorite_folder
+
+        def return_mapping_content(*args, **kwargs):
+            page = original_content(*args, **kwargs)
+            return replace(page, content={"unexpected": "mapping"})
+
+        invalid_content.favorite_folder = return_mapping_content
+
+        invalid_count = FakeJmAccountClient(
+            folders={"0": ("Default", (("1", {"name": "One"}),))}
+        )
+        original_count = invalid_count.favorite_folder
+
+        def return_text_page_count(*args, **kwargs):
+            page = original_count(*args, **kwargs)
+            return replace(page, page_count="not-a-number")
+
+        invalid_count.favorite_folder = return_text_page_count
+
+        invalid_metadata = FakeJmAccountClient(
+            folders={
+                "0": (
+                    "Default",
+                    (("1", {"name": "One", "tags": {"bad": "shape"}}),),
+                )
+            }
+        )
+        overlong_title = FakeJmAccountClient(
+            folders={
+                "0": (
+                    "Default",
+                    (("1", {"name": "x" * 4_097}),),
+                )
+            }
+        )
+
+        for label, client in (
+            ("mapping content", invalid_content),
+            ("nonnumeric page count", invalid_count),
+            ("mapping metadata", invalid_metadata),
+            ("overlong title", overlong_title),
+        ):
+            with self.subTest(case=label):
+                service = self.service(client)
+                service.restore(service.start_operation())
+                with self.assertRaises(FavoritesResponseError):
+                    self.sync(service)
+                self.assertEqual(
+                    self.paths.favorites_file.read_bytes(),
+                    old_bytes,
+                )
+                self.assertEqual(service.snapshot, old_cache.to_snapshot())
 
     def test_logout_after_cache_save_does_not_recreate_old_cache(self):
         old_cache = self._sample_cache()

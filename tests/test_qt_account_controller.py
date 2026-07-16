@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 
 if os.name != "nt":
@@ -14,7 +15,10 @@ from PySide6.QtWidgets import QApplication
 
 from jm_downloader.account import AccountService, AccountStore
 from jm_downloader.models import AccountStatus
-from jm_downloader.protected_store import ProtectedStore
+from jm_downloader.protected_store import (
+    ProtectedStore,
+    ProtectedStoreDeleteError,
+)
 from jm_downloader.qt.controllers.account_controller import AccountController
 from jm_downloader.settings import AppPaths
 from tests.account_fakes import FakeJmAccountClient
@@ -219,6 +223,36 @@ class AccountControllerTests(unittest.TestCase):
 
         self.assertFalse(self.paths.account_file.exists())
         self.assertEqual(snapshots[-1].status, AccountStatus.SIGNED_OUT)
+
+    def test_logout_delete_failure_reports_local_data_state(self):
+        controller = self.make_controller()
+        failures = []
+        controller.operation_failed.connect(lambda *args: failures.append(args))
+        controller.login("test-user", "test-password")
+        self.assertTrue(
+            self.wait_until(
+                lambda: controller.current_snapshot.status
+                is AccountStatus.SIGNED_IN
+            )
+        )
+
+        with patch.object(
+            self.favorites_store,
+            "delete",
+            side_effect=ProtectedStoreDeleteError("private disk details"),
+        ):
+            controller.logout()
+            self.assertTrue(
+                self.wait_until(
+                    lambda: controller.current_snapshot.status
+                    is AccountStatus.LOCAL_DATA_UNREADABLE
+                    and bool(failures)
+                )
+            )
+
+        self.assertEqual(failures[-1][0], "storage")
+        self.assertNotIn("private", failures[-1][1])
+        self.assertFalse(self.paths.account_file.exists())
 
     def test_dispose_is_nonblocking_and_suppresses_late_result(self):
         started = threading.Event()

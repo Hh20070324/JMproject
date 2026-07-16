@@ -210,6 +210,36 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertFalse(self.paths.favorites_file.exists())
         self.assertFalse(any(item.synced_at_utc for item in snapshots))
 
+    def test_repeated_sync_click_does_not_queue_a_second_request(self):
+        started = threading.Event()
+        release = threading.Event()
+        original = self.client.favorite_folder
+
+        def slow_first_page(*args, **kwargs):
+            started.set()
+            release.wait(timeout=3)
+            return original(*args, **kwargs)
+
+        self.client.favorite_folder = slow_first_page
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+
+        first = self.controller.sync()
+        self.assertTrue(started.wait(timeout=1))
+        second = self.controller.sync()
+        release.set()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        first_page_calls = [
+            call
+            for call in self.client.calls
+            if call == ("favorite_folder", 1, "mr", "0", "")
+        ]
+        self.assertEqual(len(first_page_calls), 1)
+
     def test_logout_cancels_sync_and_clears_memory_and_files(self):
         self.assertTrue(
             self.wait_until(lambda: self.controller.current_snapshot is not None)
@@ -256,7 +286,14 @@ class FavoritesControllerTests(unittest.TestCase):
         elapsed = time.monotonic() - before
         release.set()
 
+        deadline = time.monotonic() + 2
+        while self.controller._worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
         self.assertLess(elapsed, 0.1)
+        self.assertFalse(self.controller._worker.is_alive())
+        self.assertFalse(self.paths.favorites_file.exists())
+        self.assertIsNone(self.controller.current_snapshot.synced_at_utc)
 
 
 if __name__ == "__main__":

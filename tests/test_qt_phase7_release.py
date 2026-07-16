@@ -245,7 +245,15 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             from PySide6.QtGui import QGuiApplication
             from PySide6.QtWidgets import QApplication
 
-            from jm_downloader.models import TaskSnapshot, TaskStatus
+            from jm_downloader.models import (
+                AccountSnapshot,
+                AccountStatus,
+                FavoriteFolderSnapshot,
+                FavoriteItemSnapshot,
+                FavoritesSnapshot,
+                TaskSnapshot,
+                TaskStatus,
+            )
             from jm_downloader.qt.controllers.settings_controller import SettingsController
             from jm_downloader.qt.main_window import MainWindow
             from jm_downloader.qt.settings_store import SettingsStore
@@ -291,7 +299,32 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                 download_page.tasks_layout.insertWidget(0, task_row)
                 download_page.view_tabs.setCurrentIndex(1)
                 task_row.show()
+                favorites_page = window.page("favorites")
+                favorites_page._on_snapshot(
+                    AccountSnapshot(AccountStatus.SIGNED_IN, "scale-user")
+                )
+                favorites_page._on_favorites_snapshot(
+                    FavoritesSnapshot(
+                        "2026-07-16T16:30:00Z",
+                        (
+                            FavoriteFolderSnapshot(
+                                "0",
+                                "Default",
+                                tuple(
+                                    FavoriteItemSnapshot(
+                                        str(index),
+                                        f"Favorite {index}",
+                                        ("Author",),
+                                        ("Tag",),
+                                    )
+                                    for index in range(1, 26)
+                                ),
+                            ),
+                        ),
+                    )
+                )
                 app.processEvents()
+                assert len(favorites_page.favorite_cards) == 20
                 visible_actions = [
                     task_row.resume_button,
                     task_row.open_images_button,
@@ -338,6 +371,16 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                 assert not page.general_search_input.geometry().intersects(
                     page.jm_id_search_input.geometry()
                 )
+                window.select_page("favorites")
+                favorites_page.next_page_button.click()
+                app.processEvents()
+                assert len(favorites_page.favorite_cards) == 5
+                assert favorites_page.page_label.text() == "第 2 / 2 页"
+                window.select_page("downloads")
+                window.select_page("favorites")
+                app.processEvents()
+                assert len(favorites_page.favorite_cards) == 5
+                assert favorites_page.page_label.text() == "第 2 / 2 页"
                 window.close()
                 app.processEvents()
             """
