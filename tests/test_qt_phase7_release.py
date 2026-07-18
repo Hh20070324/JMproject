@@ -7,7 +7,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "JM-Downloader-v2.5.0-Windows-x64.zip"
+ARCHIVE_NAME = "JM-Downloader-v2.5.1-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
@@ -34,10 +34,10 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         spec = (PROJECT_ROOT / "JM-Downloader.spec").read_text(encoding="utf-8")
 
         for resource in (formal, debug):
-            self.assertIn("filevers=(2, 5, 0, 0)", resource)
-            self.assertIn("prodvers=(2, 5, 0, 0)", resource)
-            self.assertIn("StringStruct('FileVersion', '2.5.0')", resource)
-            self.assertIn("StringStruct('ProductVersion', '2.5.0')", resource)
+            self.assertIn("filevers=(2, 5, 1, 0)", resource)
+            self.assertIn("prodvers=(2, 5, 1, 0)", resource)
+            self.assertIn("StringStruct('FileVersion', '2.5.1')", resource)
+            self.assertIn("StringStruct('ProductVersion', '2.5.1')", resource)
             self.assertNotIn("2.1.0", resource)
 
         self.assertIn("OriginalFilename', 'JM-Downloader.exe'", formal)
@@ -55,7 +55,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
 
         for document in (readme, guide):
             self.assertIn(ARCHIVE_NAME, document)
-        self.assertIn('$ReleaseVersion = "2.5.0"', build_script)
+        self.assertIn('$ReleaseVersion = "2.5.1"', build_script)
         self.assertIn(
             '"JM-Downloader-v$ReleaseVersion-Windows-x64.zip"',
             build_script,
@@ -67,8 +67,14 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertIn("JM-Downloader-v2.2.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.3.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.4.0-Windows-x64.zip", build_script)
+        self.assertIn("JM-Downloader-v2.5.0-Windows-x64.zip", build_script)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", readme)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", guide)
+
+        for document in (readme, guide):
+            self.assertIn("添加到默认收藏", document)
+            self.assertIn("手动同步", document)
+            self.assertIn("不支持取消收藏", document)
 
     def test_runtime_state_is_excluded_from_release(self):
         build_script = (PROJECT_ROOT / "scripts" / "build.ps1").read_text(
