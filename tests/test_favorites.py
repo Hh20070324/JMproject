@@ -4,8 +4,11 @@ from pathlib import Path
 import logging
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+
+import jmcomic
 
 from jm_downloader.account import AccountService, AccountStore
 from jm_downloader.favorites import (
@@ -337,6 +340,104 @@ class FavoritesServiceTests(unittest.TestCase):
             [("add_favorite_album", "777777", "0")],
         )
         self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_transport_and_unknown_response_failures_are_uncertain_once(self):
+        failures = (
+            ConnectionResetError("private-connection-endpoint"),
+            jmcomic.ResponseUnexpectedException(
+                "private-response-body",
+                {"resp": SimpleNamespace(http_code=500)},
+            ),
+            RuntimeError("private-unknown-upstream-state"),
+        )
+        for error in failures:
+            with self.subTest(error_type=type(error).__name__):
+                client = FakeJmAccountClient(
+                    folders=self.populated_folders()
+                )
+                client.retry_times = 7
+                client.favorite_add_error = error
+                service = self.service(client)
+
+                with self.assertLogs("jm-downloader", logging.WARNING) as logs:
+                    with self.assertRaises(FavoritesAddUncertain) as raised:
+                        self.add(service)
+
+                output = "\n".join(logs.output)
+                self.assertEqual(client.retry_times, 0)
+                self.assertEqual(
+                    client.calls,
+                    [("add_favorite_album", "777777", "0")],
+                )
+                self.assertNotIn(str(error), str(raised.exception))
+                self.assertNotIn(str(error), output)
+                self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_response_403_expires_session_without_exposing_response(self):
+        secret = "private-forbidden-response"
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.favorite_add_error = jmcomic.ResponseUnexpectedException(
+            secret,
+            {"resp": SimpleNamespace(status_code=403)},
+        )
+        service = self.service(client)
+
+        with self.assertLogs("jm-downloader", logging.WARNING) as logs:
+            with self.assertRaises(FavoritesSessionExpired) as raised:
+                self.add(service)
+
+        self.assertNotIn(secret, str(raised.exception))
+        self.assertNotIn(secret, "\n".join(logs.output))
+        self.assertEqual(
+            self.account_service.snapshot.status,
+            AccountStatus.EXPIRED,
+        )
+        self.assertEqual(
+            client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
+
+    def test_add_refuses_a_client_that_cannot_disable_retries(self):
+        class RetryLockedClient(FakeJmAccountClient):
+            @property
+            def retry_times(self):
+                return 3
+
+            @retry_times.setter
+            def retry_times(self, _value):
+                pass
+
+        client = RetryLockedClient(folders=self.populated_folders())
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesResponseError) as raised:
+            self.add(service)
+
+        self.assertEqual(str(raised.exception), "收藏客户端不支持安全写入")
+        self.assertEqual(client.calls, [])
+        self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_preserves_the_loaded_snapshot_and_last_sync_timestamp(self):
+        old_cache = self._sample_cache()
+        self.cache_store.save(old_cache)
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        restored = service.restore(service.start_operation())
+        before = self.paths.favorites_file.read_bytes()
+
+        result = self.add(service)
+
+        self.assertEqual(result, "777777")
+        self.assertIs(service.snapshot, restored)
+        self.assertEqual(
+            service.snapshot.synced_at_utc,
+            "2026-07-16T12:00:00Z",
+        )
+        self.assertEqual(self.paths.favorites_file.read_bytes(), before)
+        self.assertEqual(
+            client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
 
     def test_restore_is_offline_and_empty_cache_does_not_create_file(self):
         service = self.service(FakeJmAccountClient())

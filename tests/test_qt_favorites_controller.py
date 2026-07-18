@@ -10,7 +10,7 @@ import unittest
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.account import AccountService, AccountStore
@@ -27,6 +27,8 @@ from jm_downloader.models import (
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.account_controller import AccountController
 from jm_downloader.qt.controllers.favorites_controller import FavoritesController
+from jm_downloader.qt.main_window import MainWindow
+from jm_downloader.qt.theme import ThemeManager
 from jm_downloader.settings import AppPaths
 from tests.account_fakes import FakeJmAccountClient
 
@@ -416,6 +418,46 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.known_favorite_ids, frozenset())
         self.assertFalse(self.controller.can_add_favorites)
 
+    def test_account_switch_discards_an_inflight_add_result(self):
+        remote_written = threading.Event()
+        release = threading.Event()
+        returned = threading.Event()
+        original_add = self.client.add_favorite_album
+
+        def accepted_then_slow(*args, **kwargs):
+            result = original_add(*args, **kwargs)
+            remote_written.set()
+            release.wait(timeout=3)
+            returned.set()
+            return result
+
+        self.client.add_favorite_album = accepted_then_slow
+        successes = []
+        failures = []
+        self.controller.add_succeeded.connect(successes.append)
+        self.controller.add_failed.connect(lambda *args: failures.append(args))
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.controller.add_album("777777")
+        self.assertTrue(remote_written.wait(timeout=1))
+        self.controller._on_account_snapshot(
+            AccountSnapshot(AccountStatus.SIGNING_IN, "another-user")
+        )
+        release.set()
+        self.assertTrue(returned.wait(timeout=1))
+        time.sleep(0.02)
+        self.app.processEvents()
+        self.assertEqual(successes, [])
+        self.assertEqual(failures, [])
+        self.assertEqual(self.controller.known_favorite_ids, frozenset())
+        self.assertFalse(self.controller.can_add_favorites)
+        self.assertFalse(self.paths.favorites_file.exists())
+
     def test_expiry_and_account_switch_clear_session_additions(self):
         self.assertTrue(
             self.wait_until(
@@ -562,6 +604,59 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertFalse(self.controller._worker.is_alive())
         self.assertFalse(self.paths.favorites_file.exists())
         self.assertIsNone(self.controller.current_snapshot.synced_at_utc)
+
+    def test_window_close_during_add_is_nonblocking_and_drops_late_result(self):
+        remote_written = threading.Event()
+        release = threading.Event()
+        original_add = self.client.add_favorite_album
+
+        def accepted_then_slow(*args, **kwargs):
+            result = original_add(*args, **kwargs)
+            remote_written.set()
+            release.wait(timeout=3)
+            return result
+
+        self.client.add_favorite_album = accepted_then_slow
+        successes = []
+        failures = []
+        self.controller.add_succeeded.connect(successes.append)
+        self.controller.add_failed.connect(lambda *args: failures.append(args))
+        window = MainWindow(
+            ThemeManager(),
+            account_controller=self.account_controller,
+            favorites_controller=self.controller,
+            persist_window_state=False,
+        )
+        window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        window.show()
+        self.app.processEvents()
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.controller.add_album("777777")
+        self.assertTrue(remote_written.wait(timeout=1))
+        before = time.monotonic()
+        closed = window.close()
+        elapsed = time.monotonic() - before
+        release.set()
+
+        deadline = time.monotonic() + 2
+        while self.controller._worker.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.app.processEvents()
+
+        self.assertTrue(closed)
+        self.assertLess(elapsed, 0.1)
+        self.assertFalse(self.controller._worker.is_alive())
+        self.assertEqual(successes, [])
+        self.assertEqual(failures, [])
+        self.assertEqual(self.controller.known_favorite_ids, frozenset())
+        self.assertFalse(self.paths.favorites_file.exists())
+        window.deleteLater()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import unittest
 from jm_downloader.account import AccountService, AccountStore
 from jm_downloader.favorites import (
     FavoriteCacheStore,
+    FavoritesAddUncertain,
     FavoritesService,
     FavoritesUnavailable,
 )
@@ -90,6 +91,45 @@ class AccountFavoritesSecurityAcceptanceTests(unittest.TestCase):
                     clock=lambda: FIXED_TIME,
                 )
                 favorites_service.sync(favorites_service.start_operation())
+                favorites_before_add = paths.favorites_file.read_bytes()
+                sync_timestamp = favorites_service.snapshot.synced_at_utc
+
+                favorites_service.add_album(
+                    "350234",
+                    favorites_service.start_operation(),
+                )
+                self.assertEqual(
+                    paths.favorites_file.read_bytes(),
+                    favorites_before_add,
+                )
+                self.assertEqual(
+                    favorites_service.snapshot.synced_at_utc,
+                    sync_timestamp,
+                )
+
+                client.favorite_add_error = ConnectionResetError(endpoint)
+                with self.assertRaises(FavoritesAddUncertain) as add_error:
+                    favorites_service.add_album(
+                        "350235",
+                        favorites_service.start_operation(),
+                    )
+                self.assertNotIn(endpoint, str(add_error.exception))
+                self.assertEqual(
+                    paths.favorites_file.read_bytes(),
+                    favorites_before_add,
+                )
+                self.assertEqual(
+                    [
+                        call
+                        for call in client.calls
+                        if call[0] == "add_favorite_album"
+                    ],
+                    [
+                        ("add_favorite_album", "350234", "0"),
+                        ("add_favorite_album", "350235", "0"),
+                    ],
+                )
+                self.assertEqual(client.retry_times, 0)
 
                 client.favorite_errors[("0", 1)] = TimeoutError(endpoint)
                 with self.assertRaises(FavoritesUnavailable) as raised:
