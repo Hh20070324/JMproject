@@ -7,7 +7,9 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ...favorites import (
     FavoritesAccountMismatch,
+    FavoritesAddUncertain,
     FavoritesError,
+    FavoritesInvalidAlbumId,
     FavoritesLocalDataError,
     FavoritesOperationCancelled,
     FavoritesResponseError,
@@ -35,12 +37,14 @@ class _FavoritesJob:
     generation: int
     operation: int
     command: str
+    album_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _FavoritesOutcome:
     job: _FavoritesJob
     snapshot: FavoritesSnapshot | None = None
+    album_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
 
@@ -148,9 +152,19 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                     job.operation,
                     lambda progress: mailbox.publish_progress(job, progress),
                 )
+            elif job.command == "add":
+                album_id = mailbox.service.add_album(
+                    job.album_id or "",
+                    job.operation,
+                )
+                snapshot = None
             else:
                 raise FavoritesError()
-            outcome = _FavoritesOutcome(job, snapshot=snapshot)
+            outcome = _FavoritesOutcome(
+                job,
+                snapshot=snapshot,
+                album_id=album_id if job.command == "add" else None,
+            )
         except Exception as error:
             code, message = _safe_error_payload(error)
             if code != FavoritesOperationCancelled.code:
@@ -164,7 +178,12 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                 )
             outcome = _FavoritesOutcome(
                 job,
-                snapshot=mailbox.service.snapshot,
+                snapshot=(
+                    None
+                    if job.command == "add"
+                    else mailbox.service.snapshot
+                ),
+                album_id=job.album_id,
                 error_code=code,
                 error_message=message,
             )
@@ -176,6 +195,8 @@ def _safe_error_payload(error: Exception) -> tuple[str, str]:
         FavoritesSessionRequired,
         FavoritesSessionExpired,
         FavoritesAccountMismatch,
+        FavoritesAddUncertain,
+        FavoritesInvalidAlbumId,
         FavoritesLocalDataError,
         FavoritesUnavailable,
         FavoritesResponseError,
@@ -192,6 +213,10 @@ class FavoritesController(QObject):
     progress_changed = Signal(object)
     operation_failed = Signal(str, str)
     busy_changed = Signal(bool, str)
+    add_succeeded = Signal(str)
+    add_failed = Signal(str, str, str)
+    add_availability_changed = Signal(bool)
+    known_favorite_ids_changed = Signal(object)
 
     def __init__(
         self,
@@ -215,7 +240,10 @@ class FavoritesController(QObject):
         self._busy = False
         self._command = ""
         self._disposed = False
-        self._last_account_status = account_controller.current_snapshot.status
+        self._account_snapshot = account_controller.current_snapshot
+        self._known_favorite_ids = _favorite_ids(self._snapshot)
+        self._session_added_ids: set[str] = set()
+        self._add_available = self._calculate_add_available()
 
         self._worker = threading.Thread(
             target=_favorites_worker,
@@ -257,6 +285,14 @@ class FavoritesController(QObject):
         return self._command
 
     @property
+    def can_add_favorites(self) -> bool:
+        return self._add_available
+
+    @property
+    def known_favorite_ids(self) -> frozenset[str]:
+        return self._known_favorite_ids
+
+    @property
     def worker_is_daemon(self) -> bool:
         return self._worker.daemon
 
@@ -267,6 +303,20 @@ class FavoritesController(QObject):
     @Slot()
     def sync(self) -> int | None:
         return self._submit("sync")
+
+    @Slot(str)
+    def add_album(self, album_id: str) -> int | None:
+        album_id = _safe_album_id(album_id)
+        if album_id is None:
+            self.add_failed.emit(
+                "",
+                FavoritesInvalidAlbumId.code,
+                FavoritesInvalidAlbumId.default_message,
+            )
+            return None
+        if not self._add_available or album_id in self._known_favorite_ids:
+            return None
+        return self._submit("add", album_id=album_id)
 
     @Slot()
     def cancel_sync(self) -> None:
@@ -292,13 +342,26 @@ class FavoritesController(QObject):
         self._mailbox.close()
         self._busy = False
         self._command = ""
+        self._session_added_ids.clear()
+        self._known_favorite_ids = frozenset()
+        self._set_add_available(False)
 
-    def _submit(self, command: str) -> int | None:
+    def _submit(
+        self,
+        command: str,
+        *,
+        album_id: str | None = None,
+    ) -> int | None:
         if self._disposed or self._busy:
             return None
         operation = self.service.start_operation()
         self._generation += 1
-        job = _FavoritesJob(self._generation, operation, command)
+        job = _FavoritesJob(
+            self._generation,
+            operation,
+            command,
+            album_id,
+        )
         if not self._mailbox.submit(job):
             return None
         self.progress_changed.emit(None)
@@ -319,32 +382,55 @@ class FavoritesController(QObject):
             self._set_busy(False, "")
             self.progress_changed.emit(None)
             if outcome.snapshot is not None:
-                self._publish_snapshot(outcome.snapshot)
+                self._publish_snapshot(
+                    outcome.snapshot,
+                    rebuild_known=outcome.error_code is None,
+                )
             if outcome.error_code == FavoritesOperationCancelled.code:
                 continue
             if outcome.error_code is not None:
-                self.operation_failed.emit(
-                    outcome.error_code,
-                    outcome.error_message or FavoritesError.default_message,
+                message = (
+                    outcome.error_message or FavoritesError.default_message
                 )
-            if outcome.job.command == "sync":
+                if outcome.job.command == "add":
+                    self.add_failed.emit(
+                        outcome.album_id or "",
+                        outcome.error_code,
+                        message,
+                    )
+                else:
+                    self.operation_failed.emit(outcome.error_code, message)
+            elif outcome.job.command == "add" and outcome.album_id is not None:
+                self._session_added_ids.add(outcome.album_id)
+                self._publish_known_favorite_ids(
+                    self._known_favorite_ids | {outcome.album_id}
+                )
+                self.add_succeeded.emit(outcome.album_id)
+            if outcome.job.command in {"sync", "add"}:
                 self.account_controller.refresh_snapshot()
 
     @Slot(object)
     def _on_account_snapshot(self, snapshot: AccountSnapshot) -> None:
         if self._disposed or not isinstance(snapshot, AccountSnapshot):
             return
-        previous = self._last_account_status
-        self._last_account_status = snapshot.status
+        self._account_snapshot = snapshot
+        self._set_add_available(self._calculate_add_available())
         if snapshot.status in {
             AccountStatus.SIGNED_OUT,
             AccountStatus.RESTORING,
             AccountStatus.LOCAL_DATA_UNREADABLE,
         }:
-            self._cancel_for_account_change(clear=True)
+            self._cancel_for_account_change(
+                clear=True,
+                clear_runtime_additions=True,
+            )
             return
         if snapshot.status is AccountStatus.SIGNING_IN:
-            self._cancel_for_account_change(clear=False)
+            self._cancel_for_account_change(
+                clear=False,
+                clear_runtime_additions=True,
+                clear_known=True,
+            )
             return
         if snapshot.status in {
             AccountStatus.SAVED_SESSION,
@@ -354,7 +440,10 @@ class FavoritesController(QObject):
                 self.restore()
             return
         if snapshot.status is AccountStatus.EXPIRED:
-            self._cancel_for_account_change(clear=False)
+            self._cancel_for_account_change(
+                clear=False,
+                clear_runtime_additions=True,
+            )
             if self._snapshot is None and not self._busy:
                 self.restore()
 
@@ -376,22 +465,53 @@ class FavoritesController(QObject):
                 self._cancel_for_account_change(clear=False)
             self.restore()
         elif command == "logout":
-            self._cancel_for_account_change(clear=True)
+            self._cancel_for_account_change(
+                clear=True,
+                clear_runtime_additions=True,
+            )
 
-    def _cancel_for_account_change(self, *, clear: bool) -> None:
+    def _cancel_for_account_change(
+        self,
+        *,
+        clear: bool,
+        clear_runtime_additions: bool = False,
+        clear_known: bool = False,
+    ) -> None:
         self.service.cancel_operations()
         self._generation += 1
         self._mailbox.invalidate(self._generation)
         self.progress_changed.emit(None)
         self._set_busy(False, "")
+        if clear_runtime_additions:
+            self._session_added_ids.clear()
         if clear:
             self.service.clear_memory()
             self._snapshot = None
             self.snapshot_changed.emit(None)
+            clear_known = True
+        if clear_known:
+            self._publish_known_favorite_ids(frozenset())
+        elif clear_runtime_additions:
+            self._publish_known_favorite_ids(_favorite_ids(self._snapshot))
 
-    def _publish_snapshot(self, snapshot: FavoritesSnapshot) -> None:
+    def _publish_snapshot(
+        self,
+        snapshot: FavoritesSnapshot,
+        *,
+        rebuild_known: bool = True,
+    ) -> None:
         self._snapshot = snapshot
         self.snapshot_changed.emit(snapshot)
+        if rebuild_known:
+            self._session_added_ids.clear()
+            self._publish_known_favorite_ids(_favorite_ids(snapshot))
+
+    def _publish_known_favorite_ids(self, album_ids) -> None:
+        album_ids = frozenset(album_ids)
+        if album_ids == self._known_favorite_ids:
+            return
+        self._known_favorite_ids = album_ids
+        self.known_favorite_ids_changed.emit(album_ids)
 
     def _set_busy(self, busy: bool, command: str) -> None:
         busy = bool(busy)
@@ -401,6 +521,48 @@ class FavoritesController(QObject):
         self._busy = busy
         self._command = command
         self.busy_changed.emit(busy, command)
+        self._set_add_available(self._calculate_add_available())
+
+    def _calculate_add_available(self) -> bool:
+        return (
+            not self._disposed
+            and not self._busy
+            and self._account_snapshot.status
+            in {AccountStatus.SAVED_SESSION, AccountStatus.SIGNED_IN}
+        )
+
+    def _set_add_available(self, available: bool) -> None:
+        available = bool(available)
+        if available == self._add_available:
+            return
+        self._add_available = available
+        self.add_availability_changed.emit(available)
+
+
+def _favorite_ids(snapshot: FavoritesSnapshot | None) -> frozenset[str]:
+    if snapshot is None:
+        return frozenset()
+    return frozenset(
+        item.album_id
+        for folder in snapshot.folders
+        for item in folder.items
+    )
+
+
+def _safe_album_id(value: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    album_id = value.strip()
+    if album_id[:2].lower() == "jm":
+        album_id = album_id[2:].strip()
+    if (
+        not album_id
+        or len(album_id) > 32
+        or not album_id.isascii()
+        or not album_id.isdigit()
+    ):
+        return None
+    return str(int(album_id))
 
 
 __all__ = ["FavoritesController", "DEFAULT_RESULT_INTERVAL_MS"]

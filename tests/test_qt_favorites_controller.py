@@ -14,8 +14,16 @@ from PySide6.QtCore import QThread
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.account import AccountService, AccountStore
-from jm_downloader.favorites import FavoriteCacheStore, FavoritesService
-from jm_downloader.models import AccountStatus, FavoritesSyncProgress
+from jm_downloader.favorites import (
+    FavoriteCacheStore,
+    FavoritesService,
+    FavoritesSessionExpired,
+)
+from jm_downloader.models import (
+    AccountSnapshot,
+    AccountStatus,
+    FavoritesSyncProgress,
+)
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.account_controller import AccountController
 from jm_downloader.qt.controllers.favorites_controller import FavoritesController
@@ -172,6 +180,266 @@ class FavoritesControllerTests(unittest.TestCase):
         )
         self.assertIn(AccountStatus.SIGNED_IN, account_states)
         self.assertTrue(self.paths.favorites_file.is_file())
+
+    def test_sync_rebuilds_an_immutable_known_favorite_id_set(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        deliveries = []
+        self.controller.known_favorite_ids_changed.connect(deliveries.append)
+
+        self.controller.sync()
+
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.known_favorite_ids
+                == frozenset({"1", "2", "3", "4"})
+            )
+        )
+        self.assertIsInstance(deliveries[-1], frozenset)
+
+    def test_add_is_background_dedicated_and_does_not_write_the_cache(self):
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+        successes = []
+        failures = []
+        generic_failures = []
+        availability = []
+        delivery_threads = []
+        self.controller.add_succeeded.connect(
+            lambda album_id: (
+                successes.append(album_id),
+                delivery_threads.append(QThread.currentThread()),
+            )
+        )
+        self.controller.add_failed.connect(lambda *args: failures.append(args))
+        self.controller.operation_failed.connect(
+            lambda *args: generic_failures.append(args)
+        )
+        self.controller.add_availability_changed.connect(availability.append)
+
+        generation = self.controller.add_album(" JM 0777777 ")
+
+        self.assertIsNotNone(generation)
+        self.assertFalse(self.controller.can_add_favorites)
+        self.assertEqual(self.controller.current_command, "add")
+        self.assertTrue(self.wait_until(lambda: successes == ["777777"]))
+        self.assertEqual(failures, [])
+        self.assertEqual(generic_failures, [])
+        self.assertEqual(
+            self.client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
+        self.assertIn("777777", self.controller.known_favorite_ids)
+        self.assertIs(delivery_threads[-1], self.app.thread())
+        self.assertEqual(availability, [False, True])
+        self.assertTrue(self.controller.can_add_favorites)
+        self.assertEqual(
+            self.account_controller.current_snapshot.status,
+            AccountStatus.SIGNED_IN,
+        )
+        self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_and_sync_are_serial_and_repeated_add_is_rejected(self):
+        started = threading.Event()
+        release = threading.Event()
+        original_add = self.client.add_favorite_album
+
+        def slow_add(*args, **kwargs):
+            started.set()
+            release.wait(timeout=3)
+            return original_add(*args, **kwargs)
+
+        self.client.add_favorite_album = slow_add
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        first = self.controller.add_album("777777")
+        self.assertTrue(started.wait(timeout=1))
+        repeated = self.controller.add_album("777777")
+        sync_while_adding = self.controller.sync()
+        release.set()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(repeated)
+        self.assertIsNone(sync_while_adding)
+        self.assertEqual(
+            [
+                call
+                for call in self.client.calls
+                if call[0] == "add_favorite_album"
+            ],
+            [("add_favorite_album", "777777", "0")],
+        )
+        self.assertIsNone(self.controller.add_album("777777"))
+
+    def test_sync_busy_rejects_an_add_request(self):
+        started = threading.Event()
+        release = threading.Event()
+        original = self.client.favorite_folder
+
+        def slow_page(*args, **kwargs):
+            started.set()
+            release.wait(timeout=3)
+            return original(*args, **kwargs)
+
+        self.client.favorite_folder = slow_page
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+
+        self.controller.sync()
+        self.assertTrue(started.wait(timeout=1))
+        add_while_syncing = self.controller.add_album("777777")
+        release.set()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+
+        self.assertIsNone(add_while_syncing)
+        self.assertFalse(
+            any(call[0] == "add_favorite_album" for call in self.client.calls)
+        )
+
+    def test_add_failure_uses_only_the_dedicated_safe_signal(self):
+        secret = "private-upstream-response-and-url"
+        self.client.favorite_add_error = TimeoutError(secret)
+        failures = []
+        generic_failures = []
+        successes = []
+        self.controller.add_failed.connect(lambda *args: failures.append(args))
+        self.controller.operation_failed.connect(
+            lambda *args: generic_failures.append(args)
+        )
+        self.controller.add_succeeded.connect(successes.append)
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.controller.add_album("777777")
+
+        self.assertTrue(self.wait_until(lambda: bool(failures)))
+        self.assertEqual(
+            failures,
+            [("777777", "add_uncertain", "收藏结果无法确认，请手动同步")],
+        )
+        self.assertNotIn(secret, repr(failures))
+        self.assertEqual(generic_failures, [])
+        self.assertEqual(successes, [])
+        self.assertNotIn("777777", self.controller.known_favorite_ids)
+        self.assertTrue(self.controller.can_add_favorites)
+
+    def test_expired_add_updates_the_account_and_disables_future_adds(self):
+        self.client.favorite_add_error = PermissionError("private response")
+        failures = []
+        generic_failures = []
+        self.controller.add_failed.connect(lambda *args: failures.append(args))
+        self.controller.operation_failed.connect(
+            lambda *args: generic_failures.append(args)
+        )
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.controller.add_album("777777")
+
+        self.assertTrue(
+            self.wait_until(
+                lambda: bool(failures)
+                and self.account_controller.current_snapshot.status
+                is AccountStatus.EXPIRED
+            )
+        )
+        self.assertEqual(
+            failures,
+            [
+                (
+                    "777777",
+                    FavoritesSessionExpired.code,
+                    FavoritesSessionExpired.default_message,
+                )
+            ],
+        )
+        self.assertEqual(generic_failures, [])
+        self.assertFalse(self.controller.can_add_favorites)
+        self.assertIsNone(self.controller.add_album("888888"))
+
+    def test_account_change_discards_a_late_add_and_clears_runtime_ids(self):
+        remote_written = threading.Event()
+        release = threading.Event()
+        original_add = self.client.add_favorite_album
+
+        def accepted_then_slow(*args, **kwargs):
+            result = original_add(*args, **kwargs)
+            remote_written.set()
+            release.wait(timeout=3)
+            return result
+
+        self.client.add_favorite_album = accepted_then_slow
+        successes = []
+        self.controller.add_succeeded.connect(successes.append)
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.controller.add_album("777777")
+        self.assertTrue(remote_written.wait(timeout=1))
+        self.account_controller.logout()
+        release.set()
+
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.account_controller.current_snapshot.status
+                is AccountStatus.SIGNED_OUT
+                and not self.account_controller.is_busy
+                and not self.controller.is_busy
+            )
+        )
+        self.app.processEvents()
+        self.assertEqual(successes, [])
+        self.assertEqual(self.controller.known_favorite_ids, frozenset())
+        self.assertFalse(self.controller.can_add_favorites)
+
+    def test_expiry_and_account_switch_clear_session_additions(self):
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+        self.controller.add_album("777777")
+        self.assertTrue(
+            self.wait_until(
+                lambda: "777777" in self.controller.known_favorite_ids
+            )
+        )
+
+        self.account_controller.mark_expired()
+        self.app.processEvents()
+
+        self.assertEqual(self.controller.known_favorite_ids, frozenset())
+        self.assertFalse(self.controller.can_add_favorites)
+
+        self.controller._on_account_snapshot(
+            AccountSnapshot(AccountStatus.SIGNING_IN, "another-user")
+        )
+        self.assertEqual(self.controller.known_favorite_ids, frozenset())
 
     def test_stop_is_cooperative_nonblocking_and_discards_late_result(self):
         started = threading.Event()
