@@ -21,6 +21,11 @@ class FakeFavoritePage:
     page_count: int
 
 
+@dataclass(frozen=True)
+class FakeFavoriteAddResponse:
+    status: str = "ok"
+
+
 class FakeJmAccountClient:
     """Offline fake limited to the JMComic account/favorites contract."""
 
@@ -57,6 +62,8 @@ class FakeJmAccountClient:
         self.calls: list[tuple[object, ...]] = []
         self.login_error: Exception | None = None
         self.favorite_errors: dict[tuple[str, int], Exception] = {}
+        self.favorite_add_error: Exception | None = None
+        self.favorite_add_response = FakeFavoriteAddResponse()
 
     def login(self, username, password):
         self.calls.append(("login", username))
@@ -122,6 +129,23 @@ class FakeJmAccountClient:
             if page >= result.page_count:
                 return
             page += 1
+
+    def add_favorite_album(self, album_id, folder_id="0"):
+        album_id = str(album_id)
+        folder_id = str(folder_id)
+        self.calls.append(("add_favorite_album", album_id, folder_id))
+        if folder_id != "0":
+            raise ValueError("fake only supports the default favorite folder")
+        if self.favorite_add_error is not None:
+            raise self.favorite_add_error
+
+        folder_name, items = self.folders["0"]
+        if all(str(item_id) != album_id for item_id, _ in items):
+            self.folders["0"] = (
+                folder_name,
+                items + ((album_id, {"name": None}),),
+            )
+        return self.favorite_add_response
 
     def get_meta_data(self, name):
         if name == "cookies":
