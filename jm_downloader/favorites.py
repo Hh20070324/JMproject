@@ -37,6 +37,7 @@ LOGGER = logging.getLogger("jm-downloader")
 FAVORITES_PAYLOAD_SCHEMA_VERSION = 1
 DEFAULT_FOLDER_ID = "0"
 DEFAULT_FOLDER_NAME = "默认收藏"
+MAX_ALBUM_ID_LENGTH = 32
 MAX_FOLDER_COUNT = 1_000
 MAX_FOLDER_ID_LENGTH = 32
 MAX_FOLDER_NAME_LENGTH = 256
@@ -69,6 +70,16 @@ class FavoritesSessionExpired(FavoritesError):
 class FavoritesUnavailable(FavoritesError):
     code = "unavailable"
     default_message = "网络暂不可用，已保留上次同步内容"
+
+
+class FavoritesAddUncertain(FavoritesError):
+    code = "add_uncertain"
+    default_message = "收藏结果无法确认，请手动同步"
+
+
+class FavoritesInvalidAlbumId(FavoritesError):
+    code = "invalid_album_id"
+    default_message = "JM 号格式不正确"
 
 
 class FavoritesResponseError(FavoritesError):
@@ -309,6 +320,47 @@ class FavoritesService:
                     raise FavoritesOperationCancelled() from None
         except (FavoritesOperationCancelled, AccountOperationCancelled):
             raise FavoritesOperationCancelled() from None
+
+    def add_album(self, album_id: str, operation: int) -> str:
+        album_id = _normalize_add_album_id(album_id)
+        session = self._require_session()
+        self._ensure_current_session(operation, session)
+
+        try:
+            client = self._client_factory(session.cookie_dict())
+            _disable_mutation_retries(client)
+            self._ensure_current_session(operation, session)
+        except FavoritesError:
+            raise
+        except Exception as error:
+            mapped = _map_sync_error(error)
+            LOGGER.warning(
+                "Favorite add setup failed: category=%s error_type=%s",
+                mapped.code,
+                type(error).__name__,
+            )
+            self._handle_sync_error(mapped, session)
+            raise mapped from None
+
+        try:
+            client.add_favorite_album(album_id)
+        except Exception as error:
+            mapped = _map_add_error(error)
+            LOGGER.warning(
+                "Favorite add failed: category=%s error_type=%s",
+                mapped.code,
+                type(error).__name__,
+            )
+            self._handle_sync_error(mapped, session)
+            raise mapped from None
+
+        self._ensure_current_session(operation, session)
+        try:
+            self.account_service.confirm_session(session)
+        except AccountOperationCancelled:
+            raise FavoritesOperationCancelled() from None
+        self._ensure_current_session(operation, session)
+        return album_id
 
     def _fetch_all(
         self,
@@ -818,6 +870,41 @@ def _format_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _normalize_add_album_id(value: str) -> str:
+    if not isinstance(value, str):
+        raise FavoritesInvalidAlbumId()
+    try:
+        album_id = normalize_album_id(value)
+    except (InvalidAlbumId, TypeError, ValueError):
+        raise FavoritesInvalidAlbumId() from None
+    if len(album_id) > MAX_ALBUM_ID_LENGTH:
+        raise FavoritesInvalidAlbumId()
+    return str(int(album_id))
+
+
+def _disable_mutation_retries(client) -> None:
+    try:
+        client.retry_times = 0
+        if client.retry_times != 0:
+            raise ValueError("request retries remained enabled")
+    except Exception:
+        raise FavoritesResponseError(
+            "收藏客户端不支持安全写入"
+        ) from None
+
+
+def _map_add_error(error: Exception) -> FavoritesError:
+    if isinstance(error, FavoritesError):
+        return error
+    if isinstance(error, PermissionError):
+        return FavoritesSessionExpired()
+    if isinstance(error, jmcomic.ResponseUnexpectedException):
+        status = _response_status(error)
+        if status in {401, 403}:
+            return FavoritesSessionExpired()
+    return FavoritesAddUncertain()
+
+
 def _map_sync_error(error: Exception) -> FavoritesError:
     if isinstance(error, FavoritesError):
         return error
@@ -870,8 +957,10 @@ def _response_status(error: Exception) -> int | None:
 __all__ = [
     "FavoriteCacheStore",
     "FavoritesAccountMismatch",
+    "FavoritesAddUncertain",
     "FavoritesCache",
     "FavoritesError",
+    "FavoritesInvalidAlbumId",
     "FavoritesLocalDataError",
     "FavoritesOperationCancelled",
     "FavoritesResponseError",

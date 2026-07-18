@@ -11,7 +11,9 @@ from jm_downloader.account import AccountService, AccountStore
 from jm_downloader.favorites import (
     FavoriteCacheStore,
     FavoritesAccountMismatch,
+    FavoritesAddUncertain,
     FavoritesCache,
+    FavoritesInvalidAlbumId,
     FavoritesLocalDataError,
     FavoritesOperationCancelled,
     FavoritesResponseError,
@@ -128,6 +130,10 @@ class FavoritesServiceTests(unittest.TestCase):
         operation = service.start_operation()
         return service.sync(operation, progress_callback)
 
+    def add(self, service, album_id="777777"):
+        operation = service.start_operation()
+        return service.add_album(album_id, operation)
+
     def test_complete_sync_reads_default_custom_and_all_pages(self):
         client = FakeJmAccountClient(
             folders=self.populated_folders(),
@@ -174,6 +180,163 @@ class FavoritesServiceTests(unittest.TestCase):
             b"1449491",
         ):
             self.assertNotIn(secret, raw)
+
+    def test_add_normalizes_id_disables_retries_and_does_not_touch_cache(self):
+        old_cache = self._sample_cache()
+        self.cache_store.save(old_cache)
+        old_bytes = self.paths.favorites_file.read_bytes()
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.retry_times = 3
+        service = self.service(client)
+
+        result = self.add(service, " JM 0777777 ")
+
+        self.assertEqual(result, "777777")
+        self.assertEqual(client.retry_times, 0)
+        self.assertEqual(
+            client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
+        self.assertEqual(
+            service.factory_calls,
+            [{"session": "test-cookie", "AVS": "test-avs"}],
+        )
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
+        self.assertIsNone(service.snapshot)
+
+    def test_add_never_reads_or_writes_the_favorites_cache(self):
+        class RejectingCacheStore:
+            def __getattribute__(self, name):
+                if name.startswith("__"):
+                    return object.__getattribute__(self, name)
+                raise AssertionError(f"cache access is forbidden: {name}")
+
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = FavoritesService(
+            self.account_service,
+            self.paths,
+            cache_store=RejectingCacheStore(),
+            client_factory=lambda _cookies: client,
+            clock=lambda: FIXED_TIME,
+        )
+
+        self.assertEqual(self.add(service), "777777")
+        self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_rejects_invalid_ids_before_client_creation(self):
+        client = FakeJmAccountClient()
+        service = self.service(client)
+
+        for value in ("", "JM ", "12A", "1" * 33, None):
+            with self.subTest(value=value):
+                with self.assertRaises(FavoritesInvalidAlbumId):
+                    self.add(service, value)
+
+        self.assertEqual(service.factory_calls, [])
+        self.assertEqual(client.calls, [])
+        self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_requires_a_current_session(self):
+        self.account_service.logout(self.account_service.prepare_logout())
+        client = FakeJmAccountClient()
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesSessionRequired):
+            self.add(service)
+
+        self.assertEqual(service.factory_calls, [])
+        self.assertEqual(client.calls, [])
+
+    def test_add_confirms_a_restored_session_without_writing_cache(self):
+        restored_account = AccountService(
+            self.paths,
+            account_store=self.account_store,
+            favorites_store=self.favorites_protected,
+            client_factory=lambda _cookies: self.fail("restore went online"),
+            clock=lambda: FIXED_TIME,
+        )
+        restored_account.restore(restored_account.start_operation())
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = FavoritesService(
+            restored_account,
+            self.paths,
+            cache_store=self.cache_store,
+            client_factory=lambda _cookies: client,
+            clock=lambda: FIXED_TIME,
+        )
+
+        service.add_album("777777", service.start_operation())
+
+        self.assertEqual(
+            restored_account.snapshot.status,
+            AccountStatus.SIGNED_IN,
+        )
+        self.assertFalse(self.paths.favorites_file.exists())
+
+    def test_add_network_failure_is_uncertain_safe_and_not_retried(self):
+        old_cache = self._sample_cache()
+        self.cache_store.save(old_cache)
+        old_bytes = self.paths.favorites_file.read_bytes()
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.retry_times = 5
+        secret = "private-response-and-endpoint"
+        client.favorite_add_error = TimeoutError(secret)
+        service = self.service(client)
+
+        with self.assertLogs("jm-downloader", logging.WARNING) as logs:
+            with self.assertRaises(FavoritesAddUncertain) as raised:
+                self.add(service)
+
+        self.assertEqual(client.retry_times, 0)
+        self.assertEqual(
+            client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
+        self.assertNotIn(secret, str(raised.exception))
+        self.assertNotIn(secret, "\n".join(logs.output))
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
+        self.assertEqual(
+            self.account_service.snapshot.status,
+            AccountStatus.SIGNED_IN,
+        )
+
+    def test_add_expired_session_is_marked_without_touching_cache(self):
+        old_cache = self._sample_cache()
+        self.cache_store.save(old_cache)
+        old_bytes = self.paths.favorites_file.read_bytes()
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.favorite_add_error = PermissionError("private response")
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesSessionExpired):
+            self.add(service)
+
+        self.assertEqual(
+            self.account_service.snapshot.status,
+            AccountStatus.EXPIRED,
+        )
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
+
+    def test_add_discards_a_result_after_the_operation_is_cancelled(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        original = client.add_favorite_album
+
+        def cancel_after_remote_write(*args, **kwargs):
+            result = original(*args, **kwargs)
+            service.cancel_operations()
+            return result
+
+        client.add_favorite_album = cancel_after_remote_write
+
+        with self.assertRaises(FavoritesOperationCancelled):
+            self.add(service)
+
+        self.assertEqual(
+            client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
+        self.assertFalse(self.paths.favorites_file.exists())
 
     def test_restore_is_offline_and_empty_cache_does_not_create_file(self):
         service = self.service(FakeJmAccountClient())
