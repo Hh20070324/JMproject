@@ -207,6 +207,54 @@ class FavoritesServiceTests(unittest.TestCase):
         self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
         self.assertIsNone(service.snapshot)
 
+    def test_add_service_dispatches_only_the_post_workaround(self):
+        response = object()
+
+        class PostOnlyClient:
+            API_FAVORITE = "/favorite"
+            retry_times = 3
+            domain_retry_strategy = None
+
+            def __init__(self):
+                self.calls = []
+
+            def req_api(self, *args, **kwargs):
+                self.calls.append(("req_api", args, kwargs))
+                return response
+
+            def require_resp_status_ok(self, value):
+                self.calls.append(("require_resp_status_ok", value))
+
+        client = PostOnlyClient()
+        service = self.service(client)
+
+        self.assertEqual(self.add(service), "777777")
+
+        self.assertEqual(client.retry_times, 0)
+        self.assertEqual(
+            client.calls,
+            [
+                (
+                    "req_api",
+                    ("/favorite",),
+                    {"get": False, "data": {"aid": "777777"}},
+                ),
+                ("require_resp_status_ok", response),
+            ],
+        )
+
+    def test_add_refuses_domain_retry_strategy_before_remote_write(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.domain_retry_strategy = object()
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesResponseError) as raised:
+            self.add(service)
+
+        self.assertEqual(str(raised.exception), "收藏客户端不支持安全写入")
+        self.assertEqual(client.calls, [])
+        self.assertFalse(self.paths.favorites_file.exists())
+
     def test_add_never_reads_or_writes_the_favorites_cache(self):
         class RejectingCacheStore:
             def __getattribute__(self, name):

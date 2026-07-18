@@ -29,6 +29,8 @@ class FakeFavoriteAddResponse:
 class FakeJmAccountClient:
     """Offline fake limited to the JMComic account/favorites contract."""
 
+    API_FAVORITE = "/favorite"
+
     def __init__(
         self,
         *,
@@ -49,6 +51,7 @@ class FakeJmAccountClient:
         self.login_cookies = dict(cookies or {"session": "test-cookie"})
         self.cookies: dict[str, str] = {}
         self.page_size = page_size
+        self.domain_retry_strategy = None
         self.folders = (
             folders
             if folders is not None
@@ -146,6 +149,23 @@ class FakeJmAccountClient:
                 items + ((album_id, {"name": None}),),
             )
         return self.favorite_add_response
+
+    def req_api(self, url, get=True, require_success=True, **kwargs):
+        if (
+            url != self.API_FAVORITE
+            or get is not False
+            or require_success is not True
+            or set(kwargs) != {"data"}
+            or not isinstance(kwargs["data"], dict)
+            or set(kwargs["data"]) != {"aid"}
+        ):
+            raise ValueError("unexpected fake favorite mutation request")
+        return self.add_favorite_album(kwargs["data"]["aid"])
+
+    @staticmethod
+    def require_resp_status_ok(response):
+        if response.status != "ok":
+            raise ValueError("fake favorite mutation rejected")
 
     def get_meta_data(self, name):
         if name == "cookies":

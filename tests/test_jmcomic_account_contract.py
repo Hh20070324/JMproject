@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import jmcomic
 
+from jm_downloader.favorites import _invoke_add_favorite
 from tests.account_fakes import FakeJmAccountClient
 
 
@@ -200,6 +201,38 @@ class JmcomicAccountContractTests(unittest.TestCase):
 
         self.assertIs(raised.exception, upstream_error)
         self.assertIs(client.validated, response)
+
+    def test_favorite_mutation_workaround_dispatches_one_post(self):
+        response = object()
+
+        class ContractClient:
+            API_FAVORITE = "/favorite"
+
+            def __init__(self):
+                self.calls = []
+
+            def req_api(self, *args, **kwargs):
+                self.calls.append(("req_api", args, kwargs))
+                return response
+
+            def require_resp_status_ok(self, value):
+                self.calls.append(("require_resp_status_ok", value))
+
+        client = ContractClient()
+
+        _invoke_add_favorite(client, "1449491")
+
+        self.assertEqual(
+            client.calls,
+            [
+                (
+                    "req_api",
+                    ("/favorite",),
+                    {"get": False, "data": {"aid": "1449491"}},
+                ),
+                ("require_resp_status_ok", response),
+            ],
+        )
 
     def test_zero_request_retries_stops_after_the_first_failure(self):
         upstream_error = TimeoutError("single-attempt-sentinel")

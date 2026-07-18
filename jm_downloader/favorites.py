@@ -343,7 +343,7 @@ class FavoritesService:
             raise mapped from None
 
         try:
-            client.add_favorite_album(album_id)
+            _invoke_add_favorite(client, album_id)
         except Exception as error:
             mapped = _map_add_error(error)
             LOGGER.warning(
@@ -887,10 +887,21 @@ def _disable_mutation_retries(client) -> None:
         client.retry_times = 0
         if client.retry_times != 0:
             raise ValueError("request retries remained enabled")
+        if getattr(client, "domain_retry_strategy", None) is not None:
+            raise ValueError("domain retry strategy remained enabled")
     except Exception:
         raise FavoritesResponseError(
             "收藏客户端不支持安全写入"
         ) from None
+
+
+def _invoke_add_favorite(client, album_id: str) -> None:
+    response = client.req_api(
+        client.API_FAVORITE,
+        get=False,
+        data={"aid": album_id},
+    )
+    client.require_resp_status_ok(response)
 
 
 def _map_add_error(error: Exception) -> FavoritesError:
