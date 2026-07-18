@@ -11,6 +11,7 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.models import SearchResultSnapshot
+from jm_downloader.qt.theme import Theme, load_stylesheet
 from jm_downloader.qt.widgets.search_result_card import SearchResultCard
 
 
@@ -58,6 +59,8 @@ class SearchResultCardTests(unittest.TestCase):
         self.assertEqual(self.card.author_label.height(), 20)
         self.assertEqual(self.card.album_id_label.height(), 20)
         self.assertEqual(self.card.tags_label.height(), 20)
+        self.assertFalse(self.card.favorite_visible)
+        self.assertTrue(self.card.favorite_button.isHidden())
 
     def test_long_chinese_and_english_text_is_elided_with_full_tooltips(self):
         title = "这是一个非常长的中文漫画标题" * 8
@@ -177,6 +180,73 @@ class SearchResultCardTests(unittest.TestCase):
         self.card.set_task_present(False)
         self.card.action_button.click()
         self.assertEqual(downloads, ["1449491", "1449491"])
+
+    def test_favorite_action_is_explicit_stable_and_emits_only_when_available(self):
+        requested = []
+        self.card.favorite_requested.connect(requested.append)
+
+        self.card.set_favorite_visible(True)
+        self.card.set_favorite_state(available=False)
+        self.app.processEvents()
+
+        self.assertFalse(self.card.favorite_button.isHidden())
+        self.assertEqual(self.card.favorite_button.size().width(), 32)
+        self.assertEqual(self.card.favorite_button.size().height(), 32)
+        self.assertFalse(self.card.favorite_button.isEnabled())
+        self.card.favorite_button.click()
+        self.assertEqual(requested, [])
+
+        self.card.set_favorite_state(available=True)
+        self.app.processEvents()
+        self.assertTrue(self.card.favorite_button.isEnabled())
+        gap = (
+            self.card.action_button.geometry().left()
+            - self.card.favorite_button.geometry().right()
+            - 1
+        )
+        self.assertEqual(gap, 8)
+        self.assertFalse(
+            self.card.favorite_button.geometry().intersects(
+                self.card.action_button.geometry()
+            )
+        )
+        self.card.favorite_button.click()
+        self.assertEqual(requested, ["1449491"])
+
+        self.card.set_favorite_state(available=True, busy=True)
+        self.assertTrue(self.card.favorite_busy)
+        self.assertFalse(self.card.favorite_button.isEnabled())
+        self.assertEqual(
+            self.card.favorite_button.toolTip(),
+            "正在添加到默认收藏",
+        )
+
+        self.card.set_favorite_state(available=True, favorited=True)
+        self.assertTrue(self.card.favorited)
+        self.assertTrue(self.card.favorite_button.isChecked())
+        self.assertFalse(self.card.favorite_button.isEnabled())
+        self.assertEqual(self.card.favorite_button.toolTip(), "已收藏")
+        self.assertEqual(self.card.size().height(), SearchResultCard.HEIGHT)
+
+    def test_checked_favorite_remains_visible_in_light_and_dark_themes(self):
+        self.card.set_favorite_visible(True)
+        self.card.set_favorite_state(available=True, favorited=True)
+        previous_stylesheet = self.app.styleSheet()
+        samples = {}
+        try:
+            for theme in (Theme.LIGHT, Theme.DARK):
+                self.app.setStyleSheet(load_stylesheet(theme))
+                self.app.processEvents()
+                image = self.card.favorite_button.grab().toImage()
+                samples[theme] = image.pixelColor(4, 4)
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+            self.app.processEvents()
+
+        self.assertGreater(samples[Theme.LIGHT].lightness(), 180)
+        self.assertLess(samples[Theme.DARK].lightness(), 90)
+        self.assertNotEqual(samples[Theme.LIGHT], samples[Theme.DARK])
+        self.assertTrue(self.card.favorite_button.isChecked())
 
 
 if __name__ == "__main__":

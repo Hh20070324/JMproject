@@ -1007,8 +1007,60 @@ QFrame#searchPageErrorBanner {
     border-radius: 5px;
 }
 
+QFrame#favoriteFeedbackBanner {
+    background: #e5f2eb;
+    border: 1px solid #b8d8c7;
+    border-radius: 5px;
+}
+
+QFrame#favoriteFeedbackBanner[error="true"] {
+    background: #fae8e8;
+    border-color: #efc7c7;
+}
+
+QLabel#favoriteFeedbackLabel {
+    color: #256b49;
+    font-size: 12px;
+}
+
+QFrame#favoriteFeedbackBanner[error="true"] QLabel#favoriteFeedbackLabel {
+    color: #a43c3c;
+}
+
 QFrame#searchPagination {
     border-top: 1px solid #d7ddd9;
+}
+
+QToolButton#searchFavoriteButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+}
+
+QToolButton#searchFavoriteButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}
+
+QToolButton#searchFavoriteButton:pressed,
+QToolButton#searchFavoriteButton[busy="true"] {
+    background: #dfe9e3;
+    border-color: #8fb9a3;
+}
+
+QToolButton#searchFavoriteButton:checked,
+QToolButton#searchFavoriteButton:checked:disabled {
+    background: #dcefe5;
+    border-color: #2e7d57;
+}
+
+QToolButton#searchFavoriteButton:disabled {
+    background: #eef1ef;
+    border-color: #d7ddd9;
+}
+
+QToolButton#searchFavoriteButton:focus {
+    border: 2px solid #2e7d57;
 }
 
 QPushButton#searchResultActionButton {

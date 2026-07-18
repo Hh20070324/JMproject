@@ -183,6 +183,76 @@ class FakeDownloadController(QObject):
         del timeout
 
 
+class FakeFavoritesController(QObject):
+    snapshot_changed = Signal(object)
+    progress_changed = Signal(object)
+    operation_failed = Signal(str, str)
+    busy_changed = Signal(bool, str)
+    add_succeeded = Signal(str)
+    add_failed = Signal(str, str, str)
+    add_availability_changed = Signal(bool)
+    known_favorite_ids_changed = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.current_snapshot = None
+        self.is_busy = False
+        self.current_command = ""
+        self.can_add_favorites = False
+        self.known_favorite_ids = frozenset()
+        self.add_calls = []
+        self.sync_count = 0
+
+    def add_album(self, album_id):
+        if (
+            not self.can_add_favorites
+            or self.is_busy
+            or album_id in self.known_favorite_ids
+        ):
+            return None
+        self.add_calls.append(album_id)
+        self.is_busy = True
+        self.current_command = "add"
+        self.can_add_favorites = False
+        self.add_availability_changed.emit(False)
+        self.busy_changed.emit(True, "add")
+        return len(self.add_calls)
+
+    def set_available(self, available):
+        self.can_add_favorites = bool(available) and not self.is_busy
+        self.add_availability_changed.emit(self.can_add_favorites)
+
+    def succeed(self, album_id):
+        self.is_busy = False
+        self.current_command = ""
+        self.can_add_favorites = True
+        self.busy_changed.emit(False, "")
+        self.add_availability_changed.emit(True)
+        self.known_favorite_ids = self.known_favorite_ids | {album_id}
+        self.known_favorite_ids_changed.emit(self.known_favorite_ids)
+        self.add_succeeded.emit(album_id)
+
+    def fail(self, album_id, code="add_uncertain", message="结果无法确认"):
+        self.is_busy = False
+        self.current_command = ""
+        self.can_add_favorites = True
+        self.busy_changed.emit(False, "")
+        self.add_availability_changed.emit(True)
+        self.add_failed.emit(album_id, code, message)
+
+    def sync(self):
+        self.sync_count += 1
+        return self.sync_count
+
+    @staticmethod
+    def cancel_sync():
+        return None
+
+    @staticmethod
+    def dispose():
+        return None
+
+
 def make_task_snapshot(task_id="task-1", album_id="1"):
     return TaskSnapshot(
         id=task_id,
@@ -236,6 +306,7 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.search_controller = FakeSearchController()
         self.cover_loader = FakeCoverLoader()
         self.download_controller = FakeDownloadController()
+        self.favorites_controller = FakeFavoritesController()
         self.theme_manager = ThemeManager()
         self.theme_manager.apply()
         self.cover_patch = patch(
@@ -247,6 +318,7 @@ class DownloadSearchPageTests(unittest.TestCase):
             self.theme_manager,
             self.download_controller,
             search_controller=self.search_controller,
+            favorites_controller=self.favorites_controller,
             persist_window_state=False,
         )
         self.window.setAttribute(
@@ -266,6 +338,7 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.cover_loader.deleteLater()
         self.search_controller.deleteLater()
         self.download_controller.deleteLater()
+        self.favorites_controller.deleteLater()
         self._pump()
 
     def _pump(self, rounds=4):
@@ -645,6 +718,102 @@ class DownloadSearchPageTests(unittest.TestCase):
             self.download_controller.added,
             ["1449491", "1449491"],
         )
+
+    def test_favorite_button_tracks_login_busy_success_and_duplicate_cards(self):
+        request = SearchRequest(SearchMode.GENERAL, "重复结果")
+        item = SearchResultSnapshot(
+            album_id="1449491",
+            title="测试漫画",
+            authors=("作者",),
+            tags=("标签",),
+        )
+        snapshot = SearchPageSnapshot(request, 2, 1, (item, item))
+        self._search_and_deliver(snapshot)
+        buttons = [card.favorite_button for card in self.page.comic_cards]
+
+        self.assertTrue(all(not button.isHidden() for button in buttons))
+        self.assertTrue(all(not button.isEnabled() for button in buttons))
+        self.assertTrue(
+            all(card.action_button.isEnabled() for card in self.page.comic_cards)
+        )
+
+        self.favorites_controller.set_available(True)
+        self._pump()
+        self.assertTrue(all(button.isEnabled() for button in buttons))
+
+        buttons[0].click()
+        self._pump()
+        self.assertEqual(self.favorites_controller.add_calls, ["1449491"])
+        self.assertTrue(all(not button.isEnabled() for button in buttons))
+        self.assertTrue(
+            all(card.favorite_busy for card in self.page.comic_cards)
+        )
+        self.assertTrue(
+            all(card.action_button.isEnabled() for card in self.page.comic_cards)
+        )
+
+        self.favorites_controller.succeed("1449491")
+        self._pump()
+        self.assertTrue(all(card.favorited for card in self.page.comic_cards))
+        self.assertTrue(all(button.isChecked() for button in buttons))
+        self.assertTrue(all(not button.isEnabled() for button in buttons))
+        self.assertFalse(self.page.favorite_feedback_banner.isHidden())
+        self.assertEqual(
+            self.page.favorite_feedback_label.text(),
+            "已添加到默认收藏，请在我的收藏中手动同步",
+        )
+        self.assertEqual(self.favorites_controller.sync_count, 0)
+
+        buttons[1].click()
+        self.assertEqual(self.favorites_controller.add_calls, ["1449491"])
+
+        self.search_controller.search(SearchMode.TAG, "下一次搜索")
+        self._pump()
+        self.assertTrue(self.page.favorite_feedback_banner.isHidden())
+
+    def test_favorite_failure_is_non_modal_and_restores_the_button(self):
+        request = SearchRequest(SearchMode.EXACT_ID, "350234")
+        snapshot = make_search_page(request, count=1, first_id=350234)
+        self._search_and_deliver(snapshot)
+        card = self.page.comic_cards[0]
+        self.favorites_controller.set_available(True)
+        self._pump()
+
+        with patch(
+            "jm_downloader.qt.pages.download_page.QMessageBox.warning"
+        ) as warning:
+            card.favorite_button.click()
+            self.favorites_controller.fail(
+                "350234",
+                message="收藏结果无法确认，请手动同步",
+            )
+            self._pump()
+
+        warning.assert_not_called()
+        self.assertFalse(card.favorited)
+        self.assertFalse(card.favorite_busy)
+        self.assertTrue(card.favorite_button.isEnabled())
+        self.assertFalse(self.page.favorite_feedback_banner.isHidden())
+        self.assertTrue(self.page.favorite_feedback_banner.property("error"))
+        self.assertEqual(
+            self.page.favorite_feedback_label.text(),
+            "收藏结果无法确认，请手动同步",
+        )
+        self.assertEqual(self.favorites_controller.sync_count, 0)
+
+    def test_known_favorite_state_survives_new_results(self):
+        self.favorites_controller.known_favorite_ids = frozenset({"7"})
+        self.favorites_controller.set_available(True)
+        request = SearchRequest(SearchMode.AUTHOR, "作者")
+        self._search_and_deliver(
+            make_search_page(request, count=2, first_id=7)
+        )
+
+        first, second = self.page.comic_cards
+        self.assertTrue(first.favorited)
+        self.assertFalse(first.favorite_button.isEnabled())
+        self.assertFalse(second.favorited)
+        self.assertTrue(second.favorite_button.isEnabled())
 
     def test_dispose_stops_cover_loader_once(self):
         self.page.dispose()

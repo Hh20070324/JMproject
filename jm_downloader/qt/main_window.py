@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
                 download_controller,
                 self,
                 search_controller=search_controller,
+                favorites_controller=favorites_controller,
             ),
             "favorites": FavoritesPage(
                 account_controller,

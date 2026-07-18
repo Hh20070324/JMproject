@@ -183,6 +183,8 @@ class QtMainWindowTests(unittest.TestCase):
             self.assertIn("QToolButton#navButton", stylesheet)
             self.assertIn("QFrame#comicCard", stylesheet)
             self.assertIn("QToolButton#searchModeButton", stylesheet)
+            self.assertIn("QToolButton#searchFavoriteButton", stylesheet)
+            self.assertIn("QFrame#favoriteFeedbackBanner", stylesheet)
             self.assertIn("QPushButton#searchResultActionButton", stylesheet)
             self.assertIn("QToolButton#themeButton", stylesheet)
 

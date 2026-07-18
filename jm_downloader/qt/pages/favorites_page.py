@@ -655,7 +655,14 @@ class FavoritesPage(SectionPage):
         self._render_controls()
 
     def _render_controls(self) -> None:
-        account_enabled = self.controller is not None and not self._busy
+        add_in_progress = (
+            self._favorites_busy and self._favorites_command == "add"
+        )
+        account_enabled = (
+            self.controller is not None
+            and not self._busy
+            and not add_in_progress
+        )
         self.username_input.setEnabled(account_enabled)
         self.password_input.setEnabled(account_enabled)
         self.login_button.setEnabled(account_enabled)

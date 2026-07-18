@@ -4,9 +4,11 @@ from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QResizeEvent, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QFrame,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -114,6 +116,7 @@ class SearchResultCard(QFrame):
 
     download_requested = Signal(str)
     view_task_requested = Signal(str)
+    favorite_requested = Signal(str)
 
     def __init__(self, snapshot: SearchResultSnapshot, parent=None):
         super().__init__(parent)
@@ -121,6 +124,10 @@ class SearchResultCard(QFrame):
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.snapshot = snapshot
         self._task_present = False
+        self._favorite_visible = False
+        self._favorite_available = False
+        self._favorite_busy = False
+        self._favorited = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -166,16 +173,34 @@ class SearchResultCard(QFrame):
         info_layout.addWidget(self.tags_label)
         info_layout.addStretch(1)
 
-        self.action_button = QPushButton(info)
+        action_row = QWidget(info)
+        action_row.setObjectName("searchResultActions")
+        action_row.setFixedHeight(32)
+        action_layout = QHBoxLayout(action_row)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(8)
+
+        self.favorite_button = QToolButton(action_row)
+        self.favorite_button.setObjectName("searchFavoriteButton")
+        self.favorite_button.setCheckable(True)
+        self.favorite_button.setFixedSize(32, 32)
+        self.favorite_button.setIcon(svg_icon("bookmark"))
+        self.favorite_button.setToolTip("添加到默认收藏")
+        self.favorite_button.clicked.connect(self._emit_favorite)
+        action_layout.addWidget(self.favorite_button)
+
+        self.action_button = QPushButton(action_row)
         self.action_button.setObjectName("searchResultActionButton")
         self.action_button.setFixedHeight(32)
         self.action_button.clicked.connect(self._emit_action)
-        info_layout.addWidget(self.action_button)
+        action_layout.addWidget(self.action_button, 1)
+        info_layout.addWidget(action_row)
         layout.addWidget(info, 1)
 
         self.clear_cover()
         self.update_snapshot(snapshot)
         self.set_task_present(False)
+        self.set_favorite_visible(False)
 
     @property
     def task_present(self) -> bool:
@@ -207,6 +232,35 @@ class SearchResultCard(QFrame):
             icon = svg_icon("download")
         self.action_button.setIcon(icon)
 
+    @property
+    def favorite_visible(self) -> bool:
+        return self._favorite_visible
+
+    @property
+    def favorite_busy(self) -> bool:
+        return self._favorite_busy
+
+    @property
+    def favorited(self) -> bool:
+        return self._favorited
+
+    def set_favorite_visible(self, visible: bool) -> None:
+        self._favorite_visible = bool(visible)
+        self.favorite_button.setVisible(self._favorite_visible)
+        self._render_favorite_state()
+
+    def set_favorite_state(
+        self,
+        *,
+        available: bool,
+        busy: bool = False,
+        favorited: bool = False,
+    ) -> None:
+        self._favorite_available = bool(available)
+        self._favorite_busy = bool(busy)
+        self._favorited = bool(favorited)
+        self._render_favorite_state()
+
     def set_cover(self, image: QImage) -> None:
         if image.isNull():
             self.clear_cover()
@@ -228,6 +282,29 @@ class SearchResultCard(QFrame):
             self.view_task_requested.emit(self.snapshot.album_id)
         else:
             self.download_requested.emit(self.snapshot.album_id)
+
+    def _emit_favorite(self) -> None:
+        if self.favorite_button.isEnabled() and not self._favorited:
+            self.favorite_requested.emit(self.snapshot.album_id)
+
+    def _render_favorite_state(self) -> None:
+        self.favorite_button.setChecked(self._favorited)
+        self.favorite_button.setProperty("busy", self._favorite_busy)
+        self.favorite_button.setEnabled(
+            self._favorite_visible
+            and self._favorite_available
+            and not self._favorite_busy
+            and not self._favorited
+        )
+        if self._favorited:
+            tooltip = "已收藏"
+        elif self._favorite_busy:
+            tooltip = "正在添加到默认收藏"
+        else:
+            tooltip = "添加到默认收藏"
+        self.favorite_button.setToolTip(tooltip)
+        self.favorite_button.style().unpolish(self.favorite_button)
+        self.favorite_button.style().polish(self.favorite_button)
 
 
 __all__ = ["SearchResultCard"]

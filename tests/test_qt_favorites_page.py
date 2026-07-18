@@ -289,6 +289,9 @@ class FavoritesPageTests(unittest.TestCase):
         )
 
         self.page._on_favorites_snapshot(snapshot)
+        self.assertTrue(
+            self.page.favorite_cards[0].favorite_button.isHidden()
+        )
         self.app.processEvents()
 
         self.assertIs(
@@ -383,6 +386,23 @@ class FavoritesPageTests(unittest.TestCase):
         self.assertTrue(self.page.favorite_cards[0].task_present)
         self.page.favorite_cards[0].action_button.click()
         self.assertEqual(viewed, ["1449491"])
+
+    def test_add_in_progress_blocks_logout_and_new_sync_commands(self):
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.assertTrue(self.page.logout_button.isEnabled())
+        self.assertTrue(self.page.sync_button.isEnabled())
+
+        self.page._on_favorites_busy_changed(True, "add")
+
+        self.assertFalse(self.page.logout_button.isEnabled())
+        self.assertFalse(self.page.sync_button.isEnabled())
+        self.assertEqual(self.page.sync_button.text(), "同步")
+
+        self.page._on_favorites_busy_changed(False, "")
+        self.assertTrue(self.page.logout_button.isEnabled())
+        self.assertTrue(self.page.sync_button.isEnabled())
 
 
 if __name__ == "__main__":

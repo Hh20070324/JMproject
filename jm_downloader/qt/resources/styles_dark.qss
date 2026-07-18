@@ -1004,8 +1004,60 @@ QFrame#searchPageErrorBanner {
     border-radius: 5px;
 }
 
+QFrame#favoriteFeedbackBanner {
+    background: #20382d;
+    border: 1px solid #356b50;
+    border-radius: 5px;
+}
+
+QFrame#favoriteFeedbackBanner[error="true"] {
+    background: #402727;
+    border-color: #684141;
+}
+
+QLabel#favoriteFeedbackLabel {
+    color: #79cfa3;
+    font-size: 12px;
+}
+
+QFrame#favoriteFeedbackBanner[error="true"] QLabel#favoriteFeedbackLabel {
+    color: #e68b8b;
+}
+
 QFrame#searchPagination {
     border-top: 1px solid #3b423e;
+}
+
+QToolButton#searchFavoriteButton {
+    background: #232725;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+}
+
+QToolButton#searchFavoriteButton:hover {
+    background: #343a36;
+    border-color: #69736d;
+}
+
+QToolButton#searchFavoriteButton:pressed,
+QToolButton#searchFavoriteButton[busy="true"] {
+    background: #31443a;
+    border-color: #4f8f6e;
+}
+
+QToolButton#searchFavoriteButton:checked,
+QToolButton#searchFavoriteButton:checked:disabled {
+    background: #244a37;
+    border-color: #58b989;
+}
+
+QToolButton#searchFavoriteButton:disabled {
+    background: #202422;
+    border-color: #343a36;
+}
+
+QToolButton#searchFavoriteButton:focus {
+    border: 2px solid #79cfa3;
 }
 
 QPushButton#searchResultActionButton {

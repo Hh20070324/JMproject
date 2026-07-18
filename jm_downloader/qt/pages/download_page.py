@@ -30,6 +30,7 @@ from .base import SectionPage
 
 if TYPE_CHECKING:
     from ..controllers.download_controller import DownloadController
+    from ..controllers.favorites_controller import FavoritesController
     from ..controllers.search_controller import SearchController
 
 
@@ -51,11 +52,13 @@ class DownloadPage(SectionPage):
         parent=None,
         *,
         search_controller: "SearchController | None" = None,
+        favorites_controller: "FavoritesController | None" = None,
         cover_loader: SearchCoverLoader | None = None,
     ):
         super().__init__("搜索与下载", "downloadPage", parent)
         self._controller = controller
         self._search_controller = search_controller
+        self._favorites_controller = favorites_controller
         self._search_mode = SearchMode.GENERAL
         self._search_generation = 0
         self._search_snapshot: SearchPageSnapshot | None = None
@@ -68,6 +71,8 @@ class DownloadPage(SectionPage):
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
+        self._favorite_pending_album_id: str | None = None
+        self._favorite_feedback_generation = 0
         self.comic_cards: tuple[SearchResultCard, ...] = ()
         self._column_count = 0
 
@@ -113,6 +118,8 @@ class DownloadPage(SectionPage):
 
         if self._search_controller is not None:
             self._connect_search_controller()
+        if self._favorites_controller is not None:
+            self._connect_favorites_controller()
         if self._controller is not None:
             self._controller.tasks_reset.connect(self._set_tasks)
             self._controller.command_failed.connect(self._show_command_error)
@@ -278,6 +285,22 @@ class DownloadPage(SectionPage):
         banner_layout.addWidget(self.page_retry_button)
         self.page_error_banner.hide()
         result_state_layout.addWidget(self.page_error_banner)
+
+        self.favorite_feedback_banner = QFrame(result_state)
+        self.favorite_feedback_banner.setObjectName("favoriteFeedbackBanner")
+        feedback_layout = QHBoxLayout(self.favorite_feedback_banner)
+        feedback_layout.setContentsMargins(10, 7, 10, 7)
+        feedback_layout.setSpacing(0)
+        self.favorite_feedback_label = QLabel(self.favorite_feedback_banner)
+        self.favorite_feedback_label.setObjectName("favoriteFeedbackLabel")
+        self.favorite_feedback_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.favorite_feedback_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
+        feedback_layout.addWidget(self.favorite_feedback_label, 1)
+        self.favorite_feedback_banner.hide()
+        result_state_layout.addWidget(self.favorite_feedback_banner)
 
         self.results_scroll = QScrollArea(result_state)
         self.results_scroll.setObjectName("resultsScroll")
@@ -447,6 +470,18 @@ class DownloadPage(SectionPage):
         controller.validation_failed.connect(self._on_search_validation_failed)
         controller.busy_changed.connect(self._on_search_busy_changed)
 
+    def _connect_favorites_controller(self) -> None:
+        controller = self._favorites_controller
+        controller.add_succeeded.connect(self._on_favorite_added)
+        controller.add_failed.connect(self._on_favorite_add_failed)
+        controller.add_availability_changed.connect(
+            self._on_favorite_availability_changed
+        )
+        controller.known_favorite_ids_changed.connect(
+            self._on_known_favorite_ids_changed
+        )
+        controller.busy_changed.connect(self._on_favorites_busy_changed)
+
     @property
     def column_count(self) -> int:
         return self._column_count
@@ -521,6 +556,7 @@ class DownloadPage(SectionPage):
         request: SearchRequest,
     ) -> None:
         self._search_generation = generation
+        self._clear_favorite_feedback()
         self._set_summary_error(False)
         self.page_error_banner.hide()
         current = self._search_snapshot
@@ -699,6 +735,10 @@ class DownloadPage(SectionPage):
             )
             card.download_requested.connect(self._download_search_result)
             card.view_task_requested.connect(self._view_search_task)
+            if self._favorites_controller is not None:
+                card.set_favorite_visible(True)
+                card.favorite_requested.connect(self._add_search_favorite)
+                self._render_card_favorite_state(card)
             cards.append(card)
             self._cards_by_album.setdefault(item.album_id, []).append(card)
         self.comic_cards = tuple(cards)
@@ -709,6 +749,112 @@ class DownloadPage(SectionPage):
         enabled = self._controller is not None and not self._search_busy
         for card in self.comic_cards:
             card.action_button.setEnabled(enabled)
+
+    def _add_search_favorite(self, album_id: str) -> None:
+        if self._favorites_controller is None:
+            return
+        self._clear_favorite_feedback()
+        generation = self._favorites_controller.add_album(album_id)
+        if generation is None:
+            self._refresh_favorite_cards()
+            return
+        self._favorite_pending_album_id = album_id
+        self._refresh_favorite_cards()
+
+    def _on_favorite_added(self, album_id: str) -> None:
+        if self._disposed:
+            return
+        if self._favorite_pending_album_id == album_id:
+            self._favorite_pending_album_id = None
+        self._refresh_favorite_cards()
+        self._show_favorite_feedback(
+            "已添加到默认收藏，请在我的收藏中手动同步",
+            error=False,
+        )
+
+    def _on_favorite_add_failed(
+        self,
+        album_id: str,
+        _code: str,
+        message: str,
+    ) -> None:
+        if self._disposed:
+            return
+        if not album_id or self._favorite_pending_album_id == album_id:
+            self._favorite_pending_album_id = None
+        self._refresh_favorite_cards()
+        self._show_favorite_feedback(message, error=True)
+
+    def _on_favorite_availability_changed(self, _available: bool) -> None:
+        self._refresh_favorite_cards()
+
+    def _on_known_favorite_ids_changed(self, _album_ids) -> None:
+        self._refresh_favorite_cards()
+
+    def _on_favorites_busy_changed(self, busy: bool, _command: str) -> None:
+        if not busy:
+            QTimer.singleShot(0, self._clear_stale_favorite_pending)
+        self._refresh_favorite_cards()
+
+    def _clear_stale_favorite_pending(self) -> None:
+        if (
+            self._favorites_controller is None
+            or self._favorites_controller.is_busy
+        ):
+            return
+        self._favorite_pending_album_id = None
+        self._refresh_favorite_cards()
+
+    def _refresh_favorite_cards(self) -> None:
+        if self._disposed:
+            return
+        for card in self.comic_cards:
+            self._render_card_favorite_state(card)
+
+    def _render_card_favorite_state(self, card: SearchResultCard) -> None:
+        controller = self._favorites_controller
+        if controller is None:
+            card.set_favorite_visible(False)
+            return
+        album_id = card.snapshot.album_id
+        card.set_favorite_state(
+            available=controller.can_add_favorites,
+            busy=(
+                controller.is_busy
+                and controller.current_command == "add"
+                and self._favorite_pending_album_id == album_id
+            ),
+            favorited=album_id in controller.known_favorite_ids,
+        )
+
+    def _show_favorite_feedback(self, message: str, *, error: bool) -> None:
+        self._favorite_feedback_generation += 1
+        generation = self._favorite_feedback_generation
+        self.favorite_feedback_label.setText(message)
+        self.favorite_feedback_banner.setProperty("error", bool(error))
+        self.favorite_feedback_banner.style().unpolish(
+            self.favorite_feedback_banner
+        )
+        self.favorite_feedback_banner.style().polish(
+            self.favorite_feedback_banner
+        )
+        self.favorite_feedback_banner.show()
+        QTimer.singleShot(
+            5000,
+            lambda expected=generation: self._expire_favorite_feedback(
+                expected
+            ),
+        )
+
+    def _clear_favorite_feedback(self) -> None:
+        self._favorite_feedback_generation += 1
+        if hasattr(self, "favorite_feedback_banner"):
+            self.favorite_feedback_banner.hide()
+
+    def _expire_favorite_feedback(self, expected: int) -> None:
+        if self._disposed or expected != self._favorite_feedback_generation:
+            return
+        self.favorite_feedback_banner.hide()
 
     def _reflow_cards(self) -> None:
         if not hasattr(self, "results_scroll"):
