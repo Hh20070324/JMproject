@@ -10,7 +10,7 @@ import unittest
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.models import (
@@ -142,6 +142,44 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(select_all.checkState(), Qt.CheckState.Unchecked)
         self.assertEqual(self.dialog.selected_chapter_ids(), ())
+
+    def test_select_all_single_click_toggles_all_then_none_from_partial(self):
+        select_all = self.dialog.select_all_checkbox
+        boxes = tuple(self.dialog.chapter_checkboxes)
+
+        self.assertEqual(
+            select_all.checkState(),
+            Qt.CheckState.PartiallyChecked,
+        )
+        select_all.click()
+        self.app.processEvents()
+        self.assertTrue(all(box.isChecked() for box in boxes))
+        self.assertEqual(select_all.checkState(), Qt.CheckState.Checked)
+
+        select_all.click()
+        self.app.processEvents()
+        self.assertTrue(all(not box.isChecked() for box in boxes))
+        self.assertEqual(select_all.checkState(), Qt.CheckState.Unchecked)
+
+        select_all.click()
+        self.app.processEvents()
+        self.assertTrue(all(box.isChecked() for box in boxes))
+        self.assertEqual(select_all.checkState(), Qt.CheckState.Checked)
+
+    def test_chapter_hover_state_tracks_enter_and_leave_in_both_directions(self):
+        first, second, third = self.dialog.chapter_checkboxes
+
+        for source, target in ((second, first), (second, third)):
+            QApplication.sendEvent(source, QEvent(QEvent.Type.Enter))
+            QApplication.sendEvent(source, QEvent(QEvent.Type.Leave))
+            QApplication.sendEvent(target, QEvent(QEvent.Type.Enter))
+            self.app.processEvents()
+
+            self.assertFalse(source.property("hovered"))
+            self.assertTrue(target.property("hovered"))
+
+            QApplication.sendEvent(target, QEvent(QEvent.Type.Leave))
+            self.assertFalse(target.property("hovered"))
 
     def test_confirm_is_disabled_until_at_least_one_chapter_is_selected(self):
         first, second, _third = self.dialog.chapter_checkboxes

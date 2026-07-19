@@ -75,6 +75,10 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             self.assertIn("添加到默认收藏", document)
             self.assertIn("手动同步", document)
             self.assertIn("不支持取消收藏", document)
+            self.assertIn("章节选择", document)
+            self.assertIn("固定章节", document)
+            self.assertIn("全部章节图片", document)
+            self.assertNotIn("不提供漫画详情页或章节选择", document)
 
     def test_runtime_state_is_excluded_from_release(self):
         build_script = (PROJECT_ROOT / "scripts" / "build.ps1").read_text(

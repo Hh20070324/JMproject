@@ -1,6 +1,7 @@
 import os
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 
 if os.name != "nt":
@@ -43,9 +44,13 @@ class FakeChapterController(QObject):
         self.requests = []
         self.primed = []
         self._next_request_id = 0
+        self._inflight = {}
 
     def request(self, album_id):
+        if album_id in self._inflight:
+            return self._inflight[album_id]
         self._next_request_id += 1
+        self._inflight[album_id] = self._next_request_id
         self.requests.append((self._next_request_id, album_id))
         return self._next_request_id
 
@@ -53,7 +58,12 @@ class FakeChapterController(QObject):
         self.primed.append(value)
 
     def resolve(self, request_id, value):
+        self._inflight.pop(value.album_id, None)
         self.catalog_ready.emit(request_id, value)
+
+    def reject(self, request_id, album_id, message="网络暂不可用，请稍后重试"):
+        self._inflight.pop(album_id, None)
+        self.catalog_failed.emit(request_id, "unavailable", message)
 
 
 class FakeDownloadController(QObject):
@@ -259,6 +269,75 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
         self.assertTrue(page.download_input.isEnabled())
         self.assertTrue(page.download_button.isEnabled())
         self.assertEqual(page.download_button.text(), "开始下载")
+
+    def test_failed_lookup_restores_direct_input_without_creating_task(self):
+        page = self.make_download_page()
+        page.download_input.setText("JM789")
+
+        page.download_button.click()
+        self.assertFalse(page.download_input.isEnabled())
+        self.assertEqual(page.download_button.text(), "读取章节…")
+
+        with patch(
+            "jm_downloader.qt.pages.download_page.QMessageBox.warning"
+        ) as warning:
+            self.chapter_controller.reject(1, "789")
+            self.app.processEvents()
+
+        self.assertEqual(self.download_controller.added, [])
+        self.assertEqual(page.download_input.text(), "JM789")
+        self.assertIsNone(page._direct_chapter_album_id)
+        self.assertTrue(page.download_input.isEnabled())
+        self.assertTrue(page.download_button.isEnabled())
+        self.assertEqual(page.download_button.text(), "开始下载")
+        warning.assert_called_once()
+
+    def test_same_album_inflight_from_card_and_input_creates_one_task(self):
+        page = self.make_download_page()
+        request = SearchRequest(SearchMode.GENERAL, "title")
+        page._search_generation = 1
+        page._on_search_results(
+            1,
+            SearchPageSnapshot(
+                request,
+                1,
+                1,
+                (SearchResultSnapshot("123", "Title"),),
+            ),
+            False,
+        )
+
+        page.comic_cards[0].action_button.click()
+        page.download_input.setText("JM123")
+        page.download_button.click()
+
+        self.assertEqual(self.chapter_controller.requests, [(1, "123")])
+        value = catalog("123", 1)
+        self.chapter_controller.resolve(1, value)
+        self.app.processEvents()
+
+        self.assertEqual(
+            self.download_controller.added,
+            [("123", (value.chapters[0].photo_id,))],
+        )
+        self.assertEqual(page.download_input.text(), "")
+        self.assertTrue(page.comic_cards[0].task_present)
+
+    def test_mismatched_catalog_is_rejected_without_creating_task(self):
+        page = self.make_download_page()
+        page.download_input.setText("123")
+        page.download_button.click()
+
+        with patch(
+            "jm_downloader.qt.pages.download_page.QMessageBox.warning"
+        ) as warning:
+            self.chapter_controller.catalog_ready.emit(1, catalog("456", 1))
+            self.app.processEvents()
+
+        self.assertEqual(self.download_controller.added, [])
+        self.assertEqual(page.download_input.text(), "123")
+        self.assertTrue(page.download_input.isEnabled())
+        warning.assert_called_once()
 
 
 if __name__ == "__main__":

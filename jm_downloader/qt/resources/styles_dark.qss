@@ -1124,7 +1124,8 @@ QCheckBox#chapterItemCheck {
     padding: 0 8px;
 }
 
-QCheckBox#chapterItemCheck:hover {
+QCheckBox#chapterItemCheck:hover,
+QCheckBox#chapterItemCheck[hovered="true"] {
     background: #303532;
 }
 

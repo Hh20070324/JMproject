@@ -31,6 +31,9 @@ class ElidedChapterCheckBox(QCheckBox):
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
         self._full_text = str(text)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
+        self.setProperty("hovered", False)
         self.setToolTip(_safe_tooltip_html(self._full_text))
         self.setMinimumWidth(0)
         self.setSizePolicy(
@@ -55,6 +58,22 @@ class ElidedChapterCheckBox(QCheckBox):
         ):
             self._update_elision()
 
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        self._set_hovered(True)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self._set_hovered(False)
+
+    def _set_hovered(self, hovered: bool) -> None:
+        if self.property("hovered") is hovered:
+            return
+        self.setProperty("hovered", hovered)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
     def _update_elision(self) -> None:
         available = max(
             0,
@@ -70,6 +89,18 @@ class ElidedChapterCheckBox(QCheckBox):
                 available,
             )
         )
+
+
+class SelectAllCheckBox(QCheckBox):
+    """Display partial selection, but toggle all/none in one user action."""
+
+    def nextCheckState(self) -> None:
+        target = (
+            Qt.CheckState.Unchecked
+            if self.checkState() is Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        self.setCheckState(target)
 
 
 class ChapterSelectionDialog(QDialog):
@@ -110,7 +141,7 @@ class ChapterSelectionDialog(QDialog):
         toolbar_layout.setContentsMargins(10, 0, 10, 0)
         toolbar_layout.setSpacing(8)
 
-        self.select_all_checkbox = QCheckBox("全选", toolbar)
+        self.select_all_checkbox = SelectAllCheckBox("全选", toolbar)
         self.select_all_checkbox.setObjectName("chapterSelectAll")
         self.select_all_checkbox.setTristate(True)
         self.select_all_checkbox.checkStateChanged.connect(
@@ -216,4 +247,8 @@ class ChapterSelectionDialog(QDialog):
         self.confirm_button.setEnabled(selected_count > 0)
 
 
-__all__ = ["ChapterSelectionDialog", "ElidedChapterCheckBox"]
+__all__ = [
+    "ChapterSelectionDialog",
+    "ElidedChapterCheckBox",
+    "SelectAllCheckBox",
+]
