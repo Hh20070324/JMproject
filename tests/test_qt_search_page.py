@@ -709,7 +709,7 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.download_controller.remove_album("1449491")
         self._pump()
         self.assertFalse(card.task_present)
-        self.assertEqual(card.action_button.text(), "下载整本")
+        self.assertEqual(card.action_button.text(), "下载")
 
         self.page.view_tabs.setCurrentIndex(0)
         card.action_button.click()

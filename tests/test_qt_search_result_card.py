@@ -163,7 +163,7 @@ class SearchResultCardTests(unittest.TestCase):
         self.card.view_task_requested.connect(viewed.append)
 
         self.assertFalse(self.card.task_present)
-        self.assertEqual(self.card.action_button.text(), "下载整本")
+        self.assertEqual(self.card.action_button.text(), "下载")
         self.assertFalse(self.card.action_button.icon().isNull())
         self.card.action_button.click()
         self.assertEqual(downloads, ["1449491"])

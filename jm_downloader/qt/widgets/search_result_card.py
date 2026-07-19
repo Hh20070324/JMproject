@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import SearchResultSnapshot
+from ...models import ChapterCatalogSnapshot, SearchResultSnapshot
 from ..icons import svg_icon
 
 
@@ -124,6 +124,8 @@ class SearchResultCard(QFrame):
         self.setFixedSize(self.WIDTH, self.HEIGHT)
         self.snapshot = snapshot
         self._task_present = False
+        self._chapter_catalog: ChapterCatalogSnapshot | None = None
+        self._chapter_loading = False
         self._favorite_visible = False
         self._favorite_available = False
         self._favorite_busy = False
@@ -208,6 +210,8 @@ class SearchResultCard(QFrame):
 
     def update_snapshot(self, snapshot: SearchResultSnapshot) -> None:
         self.snapshot = snapshot
+        self._chapter_catalog = snapshot.chapter_catalog
+        self._chapter_loading = False
         album_id = snapshot.album_id
         self.title_label.set_full_text(snapshot.title or f"JM {album_id}")
         self.author_label.set_full_text(
@@ -219,18 +223,59 @@ class SearchResultCard(QFrame):
         self.tags_label.set_full_text(
             f"标签：{' · '.join(snapshot.tags)}" if snapshot.tags else ""
         )
+        self._render_action_state()
 
     def set_task_present(self, present: bool) -> None:
         self._task_present = bool(present)
+        self._render_action_state()
+
+    def set_chapter_state(
+        self,
+        catalog: ChapterCatalogSnapshot | None = None,
+        *,
+        loading: bool = False,
+    ) -> None:
+        if catalog is not None and not isinstance(
+            catalog,
+            ChapterCatalogSnapshot,
+        ):
+            raise TypeError("catalog must be ChapterCatalogSnapshot or None")
+        self._chapter_catalog = catalog
+        self._chapter_loading = bool(loading)
+        self._render_action_state()
+
+    def _render_action_state(self) -> None:
         if self._task_present:
             self.action_button.setText("查看任务")
             self.action_button.setToolTip("查看此漫画的下载任务")
             icon = svg_icon("arrow-right")
-        else:
-            self.action_button.setText("下载整本")
-            self.action_button.setToolTip("将此漫画加入下载任务")
+            enabled = True
+        elif self._chapter_loading:
+            self.action_button.setText("读取章节…")
+            self.action_button.setToolTip("正在读取章节目录")
             icon = svg_icon("download")
+            enabled = False
+        else:
+            chapter_count = (
+                len(self._chapter_catalog.chapters)
+                if self._chapter_catalog is not None
+                else 0
+            )
+            if chapter_count == 1:
+                text = "下载整本"
+                tooltip = "将此漫画加入下载任务"
+            elif chapter_count > 1:
+                text = "章节选择"
+                tooltip = "选择要下载的章节"
+            else:
+                text = "下载"
+                tooltip = "读取章节后加入下载任务"
+            self.action_button.setText(text)
+            self.action_button.setToolTip(tooltip)
+            icon = svg_icon("download")
+            enabled = True
         self.action_button.setIcon(icon)
+        self.action_button.setEnabled(enabled)
 
     @property
     def favorite_visible(self) -> bool:

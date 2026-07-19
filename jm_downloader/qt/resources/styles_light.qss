@@ -1086,3 +1086,83 @@ QPushButton#searchResultActionButton:disabled {
     border-color: #d0d8d3;
     color: #8a948e;
 }
+
+QDialog#chapterSelectionDialog {
+    background: #f5f7f6;
+}
+
+QLabel#chapterDialogTitle {
+    color: #1d2320;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+QLabel#chapterDialogMetadata,
+QLabel#chapterSelectionSummary {
+    color: #65706a;
+}
+
+QFrame#chapterDialogToolbar {
+    background: #eef1ef;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+    min-height: 38px;
+}
+
+QScrollArea#chapterSelectionScroll {
+    background: #ffffff;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+}
+
+QScrollArea#chapterSelectionScroll > QWidget > QWidget,
+QWidget#chapterSelectionContent {
+    background: #ffffff;
+}
+
+QCheckBox#chapterItemCheck {
+    background: transparent;
+    border-radius: 4px;
+    min-height: 34px;
+    padding: 0 8px;
+}
+
+QCheckBox#chapterItemCheck:hover {
+    background: #eef1ef;
+}
+
+QPushButton#chapterCancelButton,
+QPushButton#chapterConfirmButton {
+    border-radius: 6px;
+    min-width: 96px;
+    padding: 0 14px;
+}
+
+QPushButton#chapterCancelButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    color: #46504a;
+}
+
+QPushButton#chapterCancelButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}
+
+QPushButton#chapterConfirmButton {
+    background: #2e7d57;
+    border: 1px solid #2e7d57;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+QPushButton#chapterConfirmButton:hover {
+    background: #256b49;
+    border-color: #256b49;
+}
+
+QPushButton#chapterConfirmButton:disabled {
+    background: #dfe5e1;
+    border-color: #d0d8d3;
+    color: #8a948e;
+}

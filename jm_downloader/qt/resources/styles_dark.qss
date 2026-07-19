@@ -1083,3 +1083,83 @@ QPushButton#searchResultActionButton:disabled {
     border-color: #3b423e;
     color: #777f7a;
 }
+
+QDialog#chapterSelectionDialog {
+    background: #171a18;
+}
+
+QLabel#chapterDialogTitle {
+    color: #edf2ef;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+QLabel#chapterDialogMetadata,
+QLabel#chapterSelectionSummary {
+    color: #a8b0ab;
+}
+
+QFrame#chapterDialogToolbar {
+    background: #202422;
+    border: 1px solid #3b423e;
+    border-radius: 6px;
+    min-height: 38px;
+}
+
+QScrollArea#chapterSelectionScroll {
+    background: #232725;
+    border: 1px solid #3b423e;
+    border-radius: 6px;
+}
+
+QScrollArea#chapterSelectionScroll > QWidget > QWidget,
+QWidget#chapterSelectionContent {
+    background: #232725;
+}
+
+QCheckBox#chapterItemCheck {
+    background: transparent;
+    border-radius: 4px;
+    min-height: 34px;
+    padding: 0 8px;
+}
+
+QCheckBox#chapterItemCheck:hover {
+    background: #303532;
+}
+
+QPushButton#chapterCancelButton,
+QPushButton#chapterConfirmButton {
+    border-radius: 6px;
+    min-width: 96px;
+    padding: 0 14px;
+}
+
+QPushButton#chapterCancelButton {
+    background: #232725;
+    border: 1px solid #454c48;
+    color: #cbd2ce;
+}
+
+QPushButton#chapterCancelButton:hover {
+    background: #343a36;
+    border-color: #69736d;
+}
+
+QPushButton#chapterConfirmButton {
+    background: #58b989;
+    border: 1px solid #58b989;
+    color: #101512;
+    font-weight: 600;
+}
+
+QPushButton#chapterConfirmButton:hover {
+    background: #6bc697;
+    border-color: #6bc697;
+}
+
+QPushButton#chapterConfirmButton:disabled {
+    background: #2a2f2c;
+    border-color: #3b423e;
+    color: #777f7a;
+}
