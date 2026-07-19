@@ -82,6 +82,21 @@ class DownloadControllerTests(unittest.TestCase):
         self.assertEqual(events[-1][0], snapshot)
         self.assertTrue(ControlledWorker.instances[0].started)
 
+    def test_add_passes_fixed_chapter_selection_to_the_task(self):
+        snapshot = self.controller.add_task(
+            "123456",
+            selected_chapter_ids=("12345601", "12345603"),
+        )
+
+        self.assertEqual(
+            snapshot.selected_chapter_ids,
+            ("12345601", "12345603"),
+        )
+        self.assertEqual(
+            ControlledWorker.instances[0].callbacks["selected_chapter_ids"],
+            ("12345601", "12345603"),
+        )
+
     def test_invalid_command_emits_failure(self):
         errors = []
         self.controller.command_failed.connect(

@@ -62,9 +62,20 @@ class DownloadController(QObject):
         return self.manager.list_tasks()
 
     @Slot(str)
-    def add_task(self, album_id: str) -> TaskSnapshot | None:
+    @Slot(str, object)
+    def add_task(
+        self,
+        album_id: str,
+        selected_chapter_ids=None,
+    ) -> TaskSnapshot | None:
         try:
-            created = self.manager.add(album_id)
+            if selected_chapter_ids is None:
+                created = self.manager.add(album_id)
+            else:
+                created = self.manager.add(
+                    album_id,
+                    selected_chapter_ids=selected_chapter_ids,
+                )
             snapshot = self.manager.get_task(created.id)
         except TaskError as error:
             self.command_failed.emit("add", str(error))

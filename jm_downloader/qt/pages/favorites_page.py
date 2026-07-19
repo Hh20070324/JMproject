@@ -23,11 +23,13 @@ from PySide6.QtWidgets import (
 from ...models import (
     AccountSnapshot,
     AccountStatus,
+    ChapterCatalogSnapshot,
     FavoriteFolderSnapshot,
     FavoritesSnapshot,
     FavoritesSyncProgress,
     SearchResultSnapshot,
 )
+from ..chapter_download_flow import ChapterDownloadFlow
 from ..controllers.account_controller import AccountController
 from ..icons import arrow_icon, svg_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
@@ -36,6 +38,7 @@ from .base import SectionPage
 
 if TYPE_CHECKING:
     from ..controllers.download_controller import DownloadController
+    from ..controllers.chapter_catalog_controller import ChapterCatalogController
     from ..controllers.favorites_controller import FavoritesController
 
 
@@ -54,6 +57,7 @@ class FavoritesPage(SectionPage):
         download_controller: "DownloadController | None" = None,
         cover_service=None,
         cover_loader: SearchCoverLoader | None = None,
+        chapter_catalog_controller: "ChapterCatalogController | None" = None,
     ):
         super().__init__("我的收藏", "favoritesPage", parent)
         self.controller = controller
@@ -83,6 +87,7 @@ class FavoritesPage(SectionPage):
         self._local_page = 1
         self._tasks_by_album = set()
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
+        self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
         self._cover_generation = 0
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
@@ -137,6 +142,21 @@ class FavoritesPage(SectionPage):
         if download_controller is not None:
             download_controller.tasks_reset.connect(self._set_tasks)
             self._set_tasks(download_controller.list_tasks())
+        self._chapter_flow = ChapterDownloadFlow(
+            download_controller,
+            chapter_catalog_controller,
+            self,
+        )
+        self._chapter_flow.loading_changed.connect(
+            self._on_chapter_loading_changed
+        )
+        self._chapter_flow.catalog_resolved.connect(
+            self._on_chapter_catalog_resolved
+        )
+        self._chapter_flow.task_created.connect(
+            self._on_chapter_task_created
+        )
+        self._chapter_flow.failed.connect(self._on_chapter_flow_failed)
         self._render()
         QTimer.singleShot(0, self._reflow_cards)
 
@@ -469,6 +489,7 @@ class FavoritesPage(SectionPage):
         if self._disposed:
             return
         self._disposed = True
+        self._chapter_flow.dispose()
         if self._owns_cover_loader and self._cover_loader is not None:
             self._cover_loader.dispose()
 
@@ -826,7 +847,10 @@ class FavoritesPage(SectionPage):
                 self.results_canvas,
             )
             card.set_task_present(item.album_id in self._tasks_by_album)
-            card.action_button.setEnabled(self.download_controller is not None)
+            cached_catalog = self._chapter_catalogs.get(item.album_id)
+            if cached_catalog is not None:
+                card.set_chapter_state(cached_catalog)
+            card.set_action_available(self.download_controller is not None)
             card.download_requested.connect(self._download_favorite)
             card.view_task_requested.connect(self.view_task_requested)
             cards.append(card)
@@ -915,11 +939,39 @@ class FavoritesPage(SectionPage):
     def _download_favorite(self, album_id: str) -> None:
         if self.download_controller is None:
             return
-        snapshot = self.download_controller.add_task(album_id)
-        if snapshot is None:
-            return
+        self._chapter_flow.start(
+            album_id,
+            self._chapter_catalogs.get(album_id),
+        )
+
+    @Slot(str, bool)
+    def _on_chapter_loading_changed(
+        self,
+        album_id: str,
+        loading: bool,
+    ) -> None:
+        catalog = self._chapter_catalogs.get(album_id)
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_chapter_state(catalog, loading=loading)
+
+    @Slot(str, object)
+    def _on_chapter_catalog_resolved(
+        self,
+        album_id: str,
+        catalog: ChapterCatalogSnapshot,
+    ) -> None:
+        self._chapter_catalogs[album_id] = catalog
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_chapter_state(catalog)
+
+    @Slot(str, object)
+    def _on_chapter_task_created(self, album_id: str, _snapshot) -> None:
         for card in self._cards_by_album.get(album_id, ()):
             card.set_task_present(True)
+
+    @Slot(str, str)
+    def _on_chapter_flow_failed(self, _album_id: str, message: str) -> None:
+        QMessageBox.warning(self, "无法读取章节", message)
 
     @Slot(object)
     def _set_tasks(self, snapshots) -> None:

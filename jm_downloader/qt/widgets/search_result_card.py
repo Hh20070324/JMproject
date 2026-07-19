@@ -126,6 +126,7 @@ class SearchResultCard(QFrame):
         self._task_present = False
         self._chapter_catalog: ChapterCatalogSnapshot | None = None
         self._chapter_loading = False
+        self._action_available = True
         self._favorite_visible = False
         self._favorite_available = False
         self._favorite_busy = False
@@ -244,12 +245,16 @@ class SearchResultCard(QFrame):
         self._chapter_loading = bool(loading)
         self._render_action_state()
 
+    def set_action_available(self, available: bool) -> None:
+        self._action_available = bool(available)
+        self._render_action_state()
+
     def _render_action_state(self) -> None:
         if self._task_present:
             self.action_button.setText("查看任务")
             self.action_button.setToolTip("查看此漫画的下载任务")
             icon = svg_icon("arrow-right")
-            enabled = True
+            enabled = self._action_available
         elif self._chapter_loading:
             self.action_button.setText("读取章节…")
             self.action_button.setToolTip("正在读取章节目录")
@@ -273,7 +278,7 @@ class SearchResultCard(QFrame):
             self.action_button.setText(text)
             self.action_button.setToolTip(tooltip)
             icon = svg_icon("download")
-            enabled = True
+            enabled = self._action_available
         self.action_button.setIcon(icon)
         self.action_button.setEnabled(enabled)
 

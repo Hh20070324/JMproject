@@ -138,7 +138,7 @@ class DownloadPageTests(unittest.TestCase):
         page.download_input.returnPressed.emit()
         self.app.processEvents()
 
-        self.assertEqual(self.controller.added, ["JM123456"])
+        self.assertEqual(self.controller.added, ["123456"])
         self.assertEqual(page.download_input.text(), "")
         self.assertEqual(page.view_tabs.currentIndex(), 1)
         self.assertIn("task-1", page._task_rows)
@@ -228,7 +228,10 @@ class DownloadPageTests(unittest.TestCase):
         class FakeMessageBox:
             Icon = QMessageBox.Icon
             ButtonRole = QMessageBox.ButtonRole
+            StandardButton = QMessageBox.StandardButton
             selection = ""
+            warning_answer = QMessageBox.StandardButton.No
+            warning_calls = []
 
             def __init__(self, _parent):
                 self.buttons = {}
@@ -262,6 +265,11 @@ class DownloadPageTests(unittest.TestCase):
             def clickedButton(self):
                 return self.buttons.get(self.selection)
 
+            @classmethod
+            def warning(cls, *args):
+                cls.warning_calls.append(args)
+                return cls.warning_answer
+
         with patch(
             "jm_downloader.qt.pages.download_page.QMessageBox",
             FakeMessageBox,
@@ -269,6 +277,9 @@ class DownloadPageTests(unittest.TestCase):
             FakeMessageBox.selection = "仅移除任务"
             page._confirm_cancel(paused.id)
             FakeMessageBox.selection = "移除并删除文件"
+            FakeMessageBox.warning_answer = QMessageBox.StandardButton.No
+            page._confirm_cancel(paused.id)
+            FakeMessageBox.warning_answer = QMessageBox.StandardButton.Yes
             page._confirm_cancel(paused.id)
             FakeMessageBox.selection = "返回"
             page._confirm_cancel(paused.id)
@@ -277,6 +288,10 @@ class DownloadPageTests(unittest.TestCase):
             self.controller.cancelled,
             [(paused.id, False), (paused.id, True)],
         )
+        warning_text = FakeMessageBox.warning_calls[-1][2]
+        self.assertIn("全部章节图片", warning_text)
+        self.assertIn("PDF", warning_text)
+        self.assertIn("本次任务开始前", warning_text)
 
     def test_completed_task_is_scheduled_for_removal_after_five_seconds(self):
         page = self.window.page("downloads")

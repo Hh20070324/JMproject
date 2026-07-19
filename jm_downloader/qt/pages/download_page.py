@@ -20,7 +20,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import SearchMode, SearchPageSnapshot, SearchRequest, TaskStatus
+from ...models import (
+    ChapterCatalogSnapshot,
+    SearchMode,
+    SearchPageSnapshot,
+    SearchRequest,
+    TaskStatus,
+)
+from ...tasks import InvalidAlbumId, normalize_album_id
+from ..chapter_download_flow import ChapterDownloadFlow
 from ..icons import arrow_icon, search_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
 from ..widgets.search_result_card import SearchResultCard
@@ -30,6 +38,7 @@ from .base import SectionPage
 
 if TYPE_CHECKING:
     from ..controllers.download_controller import DownloadController
+    from ..controllers.chapter_catalog_controller import ChapterCatalogController
     from ..controllers.favorites_controller import FavoritesController
     from ..controllers.search_controller import SearchController
 
@@ -54,6 +63,7 @@ class DownloadPage(SectionPage):
         search_controller: "SearchController | None" = None,
         favorites_controller: "FavoritesController | None" = None,
         cover_loader: SearchCoverLoader | None = None,
+        chapter_catalog_controller: "ChapterCatalogController | None" = None,
     ):
         super().__init__("搜索与下载", "downloadPage", parent)
         self._controller = controller
@@ -69,6 +79,8 @@ class DownloadPage(SectionPage):
         self._preview_requests = {}
         self._completion_scheduled = set()
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
+        self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
+        self._direct_chapter_album_id: str | None = None
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
         self._favorite_pending_album_id: str | None = None
@@ -115,6 +127,23 @@ class DownloadPage(SectionPage):
         self._create_results_view()
         self._create_tasks_view()
         self.view_tabs.setCurrentIndex(0)
+
+        self._chapter_flow = ChapterDownloadFlow(
+            controller,
+            chapter_catalog_controller,
+            self,
+        )
+        self._chapter_flow.loading_changed.connect(
+            self._on_chapter_loading_changed
+        )
+        self._chapter_flow.catalog_resolved.connect(
+            self._on_chapter_catalog_resolved
+        )
+        self._chapter_flow.task_created.connect(
+            self._on_chapter_task_created
+        )
+        self._chapter_flow.task_skipped.connect(self._on_chapter_task_skipped)
+        self._chapter_flow.failed.connect(self._on_chapter_flow_failed)
 
         if self._search_controller is not None:
             self._connect_search_controller()
@@ -511,6 +540,7 @@ class DownloadPage(SectionPage):
         if self._disposed:
             return
         self._disposed = True
+        self._chapter_flow.dispose()
         if self._cover_loader is not None:
             self._cover_loader.dispose()
 
@@ -728,9 +758,14 @@ class DownloadPage(SectionPage):
         self._cards_by_album = {}
         self._cover_attempted.clear()
         for item in snapshot.items:
+            if item.chapter_catalog is not None:
+                self._chapter_catalogs[item.album_id] = item.chapter_catalog
             card = SearchResultCard(item, self.results_canvas)
+            cached_catalog = self._chapter_catalogs.get(item.album_id)
+            if cached_catalog is not None:
+                card.set_chapter_state(cached_catalog)
             card.set_task_present(item.album_id in self._tasks_by_album)
-            card.action_button.setEnabled(
+            card.set_action_available(
                 self._controller is not None and not self._search_busy
             )
             card.download_requested.connect(self._download_search_result)
@@ -748,7 +783,7 @@ class DownloadPage(SectionPage):
     def _refresh_card_actions(self) -> None:
         enabled = self._controller is not None and not self._search_busy
         for card in self.comic_cards:
-            card.action_button.setEnabled(enabled)
+            card.set_action_available(enabled)
 
     def _add_search_favorite(self, album_id: str) -> None:
         if self._favorites_controller is None:
@@ -939,11 +974,10 @@ class DownloadPage(SectionPage):
     def _download_search_result(self, album_id: str) -> None:
         if self._controller is None:
             return
-        snapshot = self._controller.add_task(album_id)
-        if snapshot is None:
-            return
-        for card in self._cards_by_album.get(album_id, ()):
-            card.set_task_present(True)
+        self._chapter_flow.start(
+            album_id,
+            self._chapter_catalogs.get(album_id),
+        )
 
     def _view_search_task(self, album_id: str) -> None:
         self.view_tabs.setCurrentIndex(1)
@@ -960,12 +994,70 @@ class DownloadPage(SectionPage):
     def _add_download_task(self) -> None:
         if self._controller is None:
             return
-        snapshot = self._controller.add_task(self.download_input.text())
-        if snapshot is None:
+        try:
+            album_id = str(int(normalize_album_id(self.download_input.text())))
+        except (InvalidAlbumId, TypeError, ValueError) as error:
+            QMessageBox.warning(self, "无法开始下载", str(error))
             self.download_input.setFocus()
             return
-        self.download_input.clear()
-        self.view_tabs.setCurrentIndex(1)
+        self._direct_chapter_album_id = album_id
+        self._chapter_flow.start(
+            album_id,
+            self._chapter_catalogs.get(album_id),
+        )
+
+    def _on_chapter_loading_changed(
+        self,
+        album_id: str,
+        loading: bool,
+    ) -> None:
+        catalog = self._chapter_catalogs.get(album_id)
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_chapter_state(catalog, loading=loading)
+        if self._direct_chapter_album_id == album_id:
+            self.download_input.setEnabled(not loading)
+            self.download_button.setEnabled(not loading)
+            self.download_button.setText(
+                "读取章节…" if loading else "开始下载"
+            )
+
+    def _on_chapter_catalog_resolved(
+        self,
+        album_id: str,
+        catalog: ChapterCatalogSnapshot,
+    ) -> None:
+        self._chapter_catalogs[album_id] = catalog
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_chapter_state(catalog)
+
+    def _on_chapter_task_created(self, album_id: str, _snapshot) -> None:
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_task_present(True)
+        if self._direct_chapter_album_id == album_id:
+            self._direct_chapter_album_id = None
+            self.download_input.clear()
+            self.download_input.setEnabled(True)
+            self.download_button.setEnabled(True)
+            self.download_button.setText("开始下载")
+            self.view_tabs.setCurrentIndex(1)
+
+    def _on_chapter_task_skipped(self, album_id: str) -> None:
+        if self._direct_chapter_album_id != album_id:
+            return
+        self._direct_chapter_album_id = None
+        self.download_input.setEnabled(True)
+        self.download_button.setEnabled(True)
+        self.download_button.setText("开始下载")
+        self.download_input.setFocus()
+
+    def _on_chapter_flow_failed(self, album_id: str, message: str) -> None:
+        if self._direct_chapter_album_id == album_id:
+            self._direct_chapter_album_id = None
+            self.download_input.setEnabled(True)
+            self.download_button.setEnabled(True)
+            self.download_button.setText("开始下载")
+            self.download_input.setFocus()
+        QMessageBox.warning(self, "无法读取章节", message)
 
     def _set_tasks(self, snapshots) -> None:
         snapshots = list(snapshots)
@@ -1077,7 +1169,20 @@ class DownloadPage(SectionPage):
         if clicked is keep_button:
             self._controller.cancel_task(task_id, False)
         elif clicked is delete_button:
-            self._controller.cancel_task(task_id, True)
+            answer = QMessageBox.warning(
+                self,
+                "确认删除全部本地文件",
+                (
+                    f"这会删除 JM {row.snapshot.album_id} 已下载的全部章节图片"
+                    "和该漫画的 PDF，包括本次任务开始前已存在的章节。\n\n"
+                    "此操作无法撤销，确定继续吗？"
+                ),
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._controller.cancel_task(task_id, True)
 
     def _expire_completed_task(self, task_id: str) -> None:
         self._completion_scheduled.discard(task_id)

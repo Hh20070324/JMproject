@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from ..desktop_runtime import WINDOW_TITLE
 from .icons import svg_icon
 from .controllers.account_controller import AccountController
+from .controllers.chapter_catalog_controller import ChapterCatalogController
 from .controllers.download_controller import DownloadController
 from .controllers.favorites_controller import FavoritesController
 from .controllers.library_controller import LibraryController
@@ -42,6 +43,7 @@ class MainWindow(QMainWindow):
         search_controller: SearchController | None = None,
         account_controller: AccountController | None = None,
         favorites_controller: FavoritesController | None = None,
+        chapter_catalog_controller: ChapterCatalogController | None = None,
         persist_window_state: bool = True,
     ):
         super().__init__(parent)
@@ -52,6 +54,7 @@ class MainWindow(QMainWindow):
         self.search_controller = search_controller
         self.account_controller = account_controller
         self.favorites_controller = favorites_controller
+        self.chapter_catalog_controller = chapter_catalog_controller
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
         self._shutdown_complete = False
@@ -93,6 +96,7 @@ class MainWindow(QMainWindow):
                 self,
                 search_controller=search_controller,
                 favorites_controller=favorites_controller,
+                chapter_catalog_controller=chapter_catalog_controller,
             ),
             "favorites": FavoritesPage(
                 account_controller,
@@ -104,6 +108,7 @@ class MainWindow(QMainWindow):
                     if search_controller is not None
                     else None
                 ),
+                chapter_catalog_controller=chapter_catalog_controller,
             ),
             "library": LibraryPage(library_controller, self),
             "settings": SettingsPage(
@@ -356,6 +361,8 @@ class MainWindow(QMainWindow):
             dispose_page()
         if self.search_controller is not None:
             self.search_controller.dispose()
+        if self.chapter_catalog_controller is not None:
+            self.chapter_catalog_controller.dispose()
         favorites_page = self._pages.get("favorites")
         dispose_favorites_page = getattr(favorites_page, "dispose", None)
         if dispose_favorites_page is not None:

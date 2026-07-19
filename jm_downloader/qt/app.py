@@ -24,6 +24,7 @@ from ..tasks import TaskManager
 from .backend_smoke import run_backend_smoke
 from .controllers import (
     AccountController,
+    ChapterCatalogController,
     DownloadController,
     FavoritesController,
     LibraryController,
@@ -141,6 +142,7 @@ def run_qt_app(
     download_controller = None
     library_controller = None
     search_controller = None
+    chapter_catalog_controller = None
     account_controller = None
     favorites_controller = None
     task_store = None
@@ -209,7 +211,9 @@ def run_qt_app(
         library = LibraryService(paths)
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
-        search_controller = SearchController(SearchService(paths=paths))
+        search_service = SearchService(paths=paths)
+        search_controller = SearchController(search_service)
+        chapter_catalog_controller = ChapterCatalogController(search_service)
         account_service = AccountService(paths=paths)
         account_controller = AccountController(account_service)
         favorites_controller = FavoritesController(
@@ -229,6 +233,7 @@ def run_qt_app(
             download_controller,
             library_controller,
             search_controller=search_controller,
+            chapter_catalog_controller=chapter_catalog_controller,
             account_controller=account_controller,
             favorites_controller=favorites_controller,
             settings_controller=settings_controller,
@@ -254,6 +259,8 @@ def run_qt_app(
             )
         raise
     finally:
+        if chapter_catalog_controller is not None:
+            chapter_catalog_controller.dispose()
         if favorites_controller is not None:
             favorites_controller.dispose()
         if account_controller is not None:
