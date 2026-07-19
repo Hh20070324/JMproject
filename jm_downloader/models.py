@@ -39,11 +39,26 @@ class SearchRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ChapterSnapshot:
+    photo_id: str
+    index: int
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterCatalogSnapshot:
+    album_id: str
+    title: str | None
+    chapters: tuple[ChapterSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SearchResultSnapshot:
     album_id: str
     title: str | None
     authors: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
+    chapter_catalog: ChapterCatalogSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +123,7 @@ class TaskSnapshot:
     pdf_path: Path | None
     error: str | None
     cover_url: str | None
+    selected_chapter_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

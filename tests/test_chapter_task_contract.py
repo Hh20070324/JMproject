@@ -13,7 +13,7 @@ from jm_downloader.task_store import (
     TaskStore,
     UnsupportedTaskStoreVersion,
 )
-from jm_downloader.tasks import TaskManager
+from jm_downloader.tasks import InvalidChapterSelection, TaskManager
 
 
 class CapturingWorker:
@@ -78,6 +78,68 @@ class ChapterTaskContractTests(unittest.TestCase):
             )
         finally:
             manager.shutdown(timeout=2)
+
+    def test_selection_is_canonical_deduplicated_and_nonempty(self):
+        manager = TaskManager(
+            paths=self.paths,
+            max_concurrent=1,
+            worker_factory=CapturingWorker,
+        )
+        try:
+            created = manager.add(
+                "123",
+                selected_chapter_ids=("00301", "301", "303"),
+            )
+            self.assertEqual(created.selected_chapter_ids, ("301", "303"))
+            self.assertEqual(
+                CapturingWorker.instances[0].selected_chapter_ids,
+                ("301", "303"),
+            )
+
+            for invalid in ((), "301", ("invalid",)):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises(InvalidChapterSelection):
+                        manager.add(
+                            "456",
+                            selected_chapter_ids=invalid,
+                        )
+        finally:
+            manager.shutdown(timeout=2)
+
+    def test_explicit_selection_survives_process_restart_and_resume(self):
+        manager = TaskManager(
+            paths=self.paths,
+            max_concurrent=1,
+            worker_factory=CapturingWorker,
+        )
+        created = manager.add(
+            "123",
+            selected_chapter_ids=("301", "303"),
+        )
+        worker = CapturingWorker.instances[0]
+        manager.pause(created.id)
+        worker.callbacks["on_stopped"]("123")
+        self.assertTrue(manager.shutdown(timeout=2))
+
+        CapturingWorker.instances.clear()
+        restored = TaskManager(
+            paths=self.paths,
+            max_concurrent=1,
+            worker_factory=CapturingWorker,
+        )
+        try:
+            snapshot = restored.list_tasks()[0]
+            self.assertEqual(
+                snapshot.selected_chapter_ids,
+                ("301", "303"),
+            )
+            restored.resume(snapshot.id)
+            self.assertEqual(
+                CapturingWorker.instances[0].selected_chapter_ids,
+                ("301", "303"),
+            )
+        finally:
+            restored.shutdown(timeout=2)
 
     def test_schema_v2_round_trip_preserves_selected_chapter_ids(self):
         self.assertEqual(TASK_STORE_SCHEMA_VERSION, 2)

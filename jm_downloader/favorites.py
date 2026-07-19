@@ -77,6 +77,14 @@ class FavoritesAddUncertain(FavoritesError):
     default_message = "收藏结果无法确认，请手动同步"
 
 
+class FavoritesToggleRemoved(FavoritesError):
+    code = "removed_instead_of_added"
+    default_message = (
+        "检测到该漫画已在远端收藏，本次操作已将其移除；"
+        "请手动同步收藏夹"
+    )
+
+
 class FavoritesInvalidAlbumId(FavoritesError):
     code = "invalid_album_id"
     default_message = "JM 号格式不正确"
@@ -343,7 +351,7 @@ class FavoritesService:
             raise mapped from None
 
         try:
-            _invoke_add_favorite(client, album_id)
+            mutation_type = _invoke_add_favorite(client, album_id)
         except Exception as error:
             mapped = _map_add_error(error)
             LOGGER.warning(
@@ -360,6 +368,8 @@ class FavoritesService:
         except AccountOperationCancelled:
             raise FavoritesOperationCancelled() from None
         self._ensure_current_session(operation, session)
+        if mutation_type == "remove":
+            raise FavoritesToggleRemoved()
         return album_id
 
     def _fetch_all(
@@ -895,13 +905,28 @@ def _disable_mutation_retries(client) -> None:
         ) from None
 
 
-def _invoke_add_favorite(client, album_id: str) -> None:
+def _invoke_add_favorite(client, album_id: str) -> str:
     response = client.req_api(
         client.API_FAVORITE,
         get=False,
         data={"aid": album_id},
     )
     client.require_resp_status_ok(response)
+    try:
+        model_data = response.model_data
+        mutation_type = (
+            model_data.get("type")
+            if isinstance(model_data, Mapping)
+            else getattr(model_data, "type")
+        )
+        if not isinstance(mutation_type, str):
+            raise TypeError("favorite mutation type is not text")
+        mutation_type = mutation_type.strip().casefold()
+    except Exception:
+        raise FavoritesAddUncertain() from None
+    if mutation_type not in {"add", "remove"}:
+        raise FavoritesAddUncertain()
+    return mutation_type
 
 
 def _map_add_error(error: Exception) -> FavoritesError:
@@ -979,5 +1004,6 @@ __all__ = [
     "FavoritesSessionExpired",
     "FavoritesSessionRequired",
     "FavoritesStorageError",
+    "FavoritesToggleRemoved",
     "FavoritesUnavailable",
 ]

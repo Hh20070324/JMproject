@@ -203,7 +203,7 @@ class JmcomicAccountContractTests(unittest.TestCase):
         self.assertIs(client.validated, response)
 
     def test_favorite_mutation_workaround_dispatches_one_post(self):
-        response = object()
+        response = SimpleNamespace(model_data={"type": "Add"})
 
         class ContractClient:
             API_FAVORITE = "/favorite"
@@ -220,8 +220,9 @@ class JmcomicAccountContractTests(unittest.TestCase):
 
         client = ContractClient()
 
-        _invoke_add_favorite(client, "1449491")
+        mutation_type = _invoke_add_favorite(client, "1449491")
 
+        self.assertEqual(mutation_type, "add")
         self.assertEqual(
             client.calls,
             [

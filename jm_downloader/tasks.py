@@ -32,6 +32,10 @@ class InvalidAlbumId(TaskError):
     pass
 
 
+class InvalidChapterSelection(TaskError):
+    pass
+
+
 def normalize_album_id(value: str) -> str:
     album_id = str(value).strip()
     if album_id[:2].lower() == "jm":
@@ -41,6 +45,40 @@ def normalize_album_id(value: str) -> str:
     if not album_id.isascii() or not album_id.isdigit():
         raise InvalidAlbumId("车号只能包含数字")
     return album_id
+
+
+def normalize_selected_chapter_ids(
+    values,
+) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+        values,
+        (tuple, list),
+    ):
+        raise InvalidChapterSelection("章节选择无效")
+
+    result = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, str):
+            raise InvalidChapterSelection("章节编号无效")
+        value = value.strip()
+        if (
+            not value
+            or len(value) > 32
+            or not value.isascii()
+            or not value.isdigit()
+        ):
+            raise InvalidChapterSelection("章节编号无效")
+        value = str(int(value))
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    if not result:
+        raise InvalidChapterSelection("请至少选择一个章节")
+    return tuple(result)
 
 
 @dataclass(slots=True)
@@ -88,7 +126,7 @@ class TaskManager:
         stored_tasks = self.task_store.load()
         self._persistence_started = bool(stored_tasks) or self.paths.tasks_file.exists()
         self._tasks = [self._restore_task(task) for task in stored_tasks]
-        if any(
+        if getattr(self.task_store, "needs_migration", False) or any(
             task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED)
             for task in stored_tasks
         ):
@@ -102,8 +140,16 @@ class TaskManager:
         with self._lock:
             return self._snapshot_locked(self._find_locked(task_id))
 
-    def add(self, album_id: str) -> TaskSnapshot:
+    def add(
+        self,
+        album_id: str,
+        *,
+        selected_chapter_ids=None,
+    ) -> TaskSnapshot:
         album_id = normalize_album_id(album_id)
+        selected_chapter_ids = normalize_selected_chapter_ids(
+            selected_chapter_ids
+        )
         with self._lock:
             if self._stopping:
                 raise InvalidTaskState("任务管理器正在关闭")
@@ -132,6 +178,7 @@ class TaskManager:
                 "run_generation": 0,
                 "_cancel_deferred": False,
                 "_paths": self.paths,
+                "selected_chapter_ids": selected_chapter_ids,
             }
             self._tasks.append(task)
             created = self._snapshot_locked(task)
@@ -516,6 +563,7 @@ class TaskManager:
                 task_id = task["id"]
                 album_id = task["album_id"]
                 task_paths = task["_paths"]
+                selected_chapter_ids = task.get("selected_chapter_ids")
                 task["run_generation"] += 1
                 generation = task["run_generation"]
 
@@ -525,6 +573,7 @@ class TaskManager:
                 worker = self.worker_factory(
                     album_id,
                     paths=task_paths,
+                    selected_chapter_ids=selected_chapter_ids,
                     **callbacks,
                 )
             except Exception as error:
@@ -601,6 +650,7 @@ class TaskManager:
             pdf_path=Path(pdf) if pdf else None,
             error=task.get("error"),
             cover_url=task.get("cover_url"),
+            selected_chapter_ids=task.get("selected_chapter_ids"),
         )
 
     def _restore_task(self, stored: StoredTask) -> dict:
@@ -625,6 +675,7 @@ class TaskManager:
             "run_generation": 0,
             "_cancel_deferred": False,
             "_paths": stored.to_paths(self.paths.root),
+            "selected_chapter_ids": stored.selected_chapter_ids,
         }
 
     def _queue_persist(self) -> None:

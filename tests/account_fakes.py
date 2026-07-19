@@ -24,6 +24,11 @@ class FakeFavoritePage:
 @dataclass(frozen=True)
 class FakeFavoriteAddResponse:
     status: str = "ok"
+    type: str = "Add"
+
+    @property
+    def model_data(self):
+        return self
 
 
 class FakeJmAccountClient:
@@ -143,10 +148,22 @@ class FakeJmAccountClient:
             raise self.favorite_add_error
 
         folder_name, items = self.folders["0"]
-        if all(str(item_id) != album_id for item_id, _ in items):
+        mutation_type = self.favorite_add_response.type.casefold()
+        if mutation_type == "add" and all(
+            str(item_id) != album_id for item_id, _ in items
+        ):
             self.folders["0"] = (
                 folder_name,
                 items + ((album_id, {"name": None}),),
+            )
+        elif mutation_type == "remove":
+            self.folders["0"] = (
+                folder_name,
+                tuple(
+                    item
+                    for item in items
+                    if str(item[0]) != album_id
+                ),
             )
         return self.favorite_add_response
 

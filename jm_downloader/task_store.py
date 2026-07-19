@@ -19,7 +19,7 @@ from .settings import (
 )
 
 
-TASK_STORE_SCHEMA_VERSION = 1
+TASK_STORE_SCHEMA_VERSION = 2
 PERSISTED_TASK_STATUSES = {
     TaskStatus.PENDING,
     TaskStatus.FETCHING,
@@ -59,6 +59,7 @@ class StoredTask:
     error: str | None
     pictures_directory: str
     pdf_directory: str
+    selected_chapter_ids: tuple[str, ...] | None = None
 
     def validate(self) -> None:
         if (
@@ -83,6 +84,7 @@ class StoredTask:
         self._validate_text("章节摘要", self.chapter)
         self._validate_text("页数摘要", self.page)
         self._validate_optional_text("任务错误", self.error)
+        self._validate_selected_chapter_ids()
         try:
             validate_portable_directory("任务图片目录", self.pictures_directory)
             validate_portable_directory("任务 PDF 目录", self.pdf_directory)
@@ -100,6 +102,11 @@ class StoredTask:
             "chapter": self.chapter,
             "page": self.page,
             "error": self.error,
+            "selected_chapter_ids": (
+                list(self.selected_chapter_ids)
+                if self.selected_chapter_ids is not None
+                else None
+            ),
             "paths": {
                 "pictures": self.pictures_directory,
                 "pdfs": self.pdf_directory,
@@ -122,7 +129,12 @@ class StoredTask:
         )
 
     @classmethod
-    def from_dict(cls, data: Mapping) -> "StoredTask":
+    def from_dict(
+        cls,
+        data: Mapping,
+        *,
+        legacy_schema: bool = False,
+    ) -> "StoredTask":
         if not isinstance(data, Mapping):
             raise TaskStoreValidationError("任务记录必须是对象")
         paths = data.get("paths")
@@ -143,6 +155,11 @@ class StoredTask:
             error=data.get("error"),
             pictures_directory=paths.get("pictures"),
             pdf_directory=paths.get("pdfs"),
+            selected_chapter_ids=(
+                None
+                if legacy_schema
+                else cls._decode_selected_chapter_ids(data)
+            ),
         )
         task.validate()
         return task
@@ -171,7 +188,39 @@ class StoredTask:
                 portable_root,
                 paths.pdfs,
             ),
+            selected_chapter_ids=task.get("selected_chapter_ids"),
         )
+
+    def _validate_selected_chapter_ids(self) -> None:
+        values = self.selected_chapter_ids
+        if values is None:
+            return
+        if not isinstance(values, tuple) or not values:
+            raise TaskStoreValidationError("已选章节必须是非空数组")
+        if len(values) != len(set(values)):
+            raise TaskStoreValidationError("已选章节不能重复")
+        for value in values:
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 32
+                or not value.isascii()
+                or not value.isdigit()
+            ):
+                raise TaskStoreValidationError("已选章节编号无效")
+
+    @staticmethod
+    def _decode_selected_chapter_ids(
+        data: Mapping,
+    ) -> tuple[str, ...] | None:
+        if "selected_chapter_ids" not in data:
+            raise TaskStoreValidationError("任务记录缺少章节选择")
+        values = data.get("selected_chapter_ids")
+        if values is None:
+            return None
+        if not isinstance(values, list):
+            raise TaskStoreValidationError("已选章节必须是数组")
+        return tuple(values)
 
     @staticmethod
     def _validate_text(label: str, value: str) -> None:
@@ -189,6 +238,7 @@ class TaskStore:
         self.paths = paths
         self.last_recovery_backup: Path | None = None
         self.last_error: TaskStoreError | None = None
+        self.needs_migration = False
         self._condition = threading.Condition()
         self._generation = 0
         self._completed_generation = 0
@@ -199,6 +249,7 @@ class TaskStore:
 
     def load(self) -> list[StoredTask]:
         self.last_recovery_backup = None
+        self.needs_migration = False
         task_path = self.paths.tasks_file
         self._cleanup_stale_temporaries()
         if not task_path.is_file():
@@ -208,7 +259,9 @@ class TaskStore:
         except OSError as error:
             raise TaskStoreError(f"无法读取任务记录：{error}") from error
         try:
-            return self._decode(raw)
+            tasks, version = self._decode(raw)
+            self.needs_migration = version < TASK_STORE_SCHEMA_VERSION
+            return tasks
         except UnsupportedTaskStoreVersion:
             raise
         except (UnicodeError, json.JSONDecodeError, TaskStoreValidationError) as error:
@@ -339,7 +392,7 @@ class TaskStore:
                 continue
 
     @staticmethod
-    def _decode(raw: bytes) -> list[StoredTask]:
+    def _decode(raw: bytes) -> tuple[list[StoredTask], int]:
         data = json.loads(raw.decode("utf-8"))
         if not isinstance(data, Mapping):
             raise TaskStoreValidationError("任务记录根节点必须是对象")
@@ -351,16 +404,19 @@ class TaskStore:
                 f"任务记录版本 {version} 高于程序支持的版本 "
                 f"{TASK_STORE_SCHEMA_VERSION}"
             )
-        if version != TASK_STORE_SCHEMA_VERSION:
+        if version not in {1, TASK_STORE_SCHEMA_VERSION}:
             raise TaskStoreValidationError("不支持的任务记录版本")
         values = data.get("tasks")
         if not isinstance(values, list):
             raise TaskStoreValidationError("任务列表必须是数组")
-        tasks = [StoredTask.from_dict(value) for value in values]
+        tasks = [
+            StoredTask.from_dict(value, legacy_schema=version == 1)
+            for value in values
+        ]
         ids = [task.id for task in tasks]
         if len(ids) != len(set(ids)):
             raise TaskStoreValidationError("任务 ID 不能重复")
-        return tasks
+        return tasks, version
 
     @staticmethod
     def _encode(tasks: Iterable[StoredTask]) -> bytes:

@@ -17,6 +17,7 @@ from ...favorites import (
     FavoritesSessionExpired,
     FavoritesSessionRequired,
     FavoritesStorageError,
+    FavoritesToggleRemoved,
     FavoritesUnavailable,
 )
 from ...models import (
@@ -195,6 +196,7 @@ def _safe_error_payload(error: Exception) -> tuple[str, str]:
         FavoritesSessionRequired,
         FavoritesSessionExpired,
         FavoritesAccountMismatch,
+        FavoritesToggleRemoved,
         FavoritesAddUncertain,
         FavoritesInvalidAlbumId,
         FavoritesLocalDataError,

@@ -40,6 +40,10 @@ class ManagedPathError(DownloadIntegrityError):
     pass
 
 
+class SelectedChapterUnavailable(DownloadIntegrityError):
+    pass
+
+
 class PdfPackagingError(Exception):
     pass
 
@@ -60,6 +64,7 @@ class DownloadWorker:
         on_stopped=None,
         paths: AppPaths = DEFAULT_PATHS,
         image_concurrency: int = 16,
+        selected_chapter_ids: tuple[str, ...] | None = None,
     ):
         self.album_id = str(album_id)
         self.on_progress = on_progress or (lambda *args: None)
@@ -70,6 +75,9 @@ class DownloadWorker:
         self.on_stopped = on_stopped or (lambda *args: None)
         self.paths = paths
         self.image_concurrency = max(1, int(image_concurrency))
+        self.selected_chapter_ids = self._normalize_selected_chapter_ids(
+            selected_chapter_ids
+        )
         self._stop_flag = threading.Event()
         self._thread = None
         self._total_photos = 0
@@ -125,6 +133,35 @@ class DownloadWorker:
                 def __init__(self, active_option):
                     super().__init__(active_option)
                     owner._active_downloader = self
+
+                def do_filter(self, detail):
+                    values = super().do_filter(detail)
+                    if owner.selected_chapter_ids is None:
+                        return values
+                    is_album = getattr(detail, "is_album", None)
+                    if not callable(is_album) or not is_album():
+                        return values
+
+                    photos = tuple(values)
+                    selected = set(owner.selected_chapter_ids)
+                    filtered = tuple(
+                        photo
+                        for photo in photos
+                        if owner._photo_id(photo) in selected
+                    )
+                    found = {owner._photo_id(photo) for photo in filtered}
+                    if found != selected or len(filtered) != len(found):
+                        raise SelectedChapterUnavailable()
+
+                    total = 0
+                    for photo in filtered:
+                        if owner._stop_flag.is_set():
+                            raise DownloadStopped()
+                        self.client.check_photo(photo)
+                        total += len(photo)
+                    owner._total_photos = total
+                    owner._album_total_known = total > 0
+                    return filtered
 
                 def before_album(self, album):
                     super().before_album(album)
@@ -340,6 +377,50 @@ class DownloadWorker:
             current = parent
         return resolved
 
+    @staticmethod
+    def _normalize_selected_chapter_ids(
+        values,
+    ) -> tuple[str, ...] | None:
+        if values is None:
+            return None
+        if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+            values,
+            (tuple, list),
+        ):
+            raise ValueError("selected_chapter_ids must be a sequence")
+        result = []
+        seen = set()
+        for value in values:
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value) > 32
+                or not value.isascii()
+                or not value.isdigit()
+            ):
+                raise ValueError("selected chapter id is invalid")
+            value = str(int(value))
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        if not result:
+            raise ValueError("selected_chapter_ids must not be empty")
+        return tuple(result)
+
+    @staticmethod
+    def _photo_id(photo) -> str | None:
+        value = getattr(photo, "photo_id", None)
+        if value is None:
+            value = getattr(photo, "id", None)
+        try:
+            value = str(value).strip()
+        except Exception:
+            return None
+        if not value.isascii() or not value.isdigit():
+            return None
+        return str(int(value))
+
     def _cleanup_stale_parts(self, album_dir: Path) -> None:
         album_root = album_dir.resolve()
         if is_linked_directory(album_root):
@@ -391,6 +472,8 @@ class DownloadWorker:
 
     @staticmethod
     def _public_error_message(error: Exception) -> str:
+        if isinstance(error, SelectedChapterUnavailable):
+            return "所选章节已发生变化，请移除任务后重新选择"
         if isinstance(error, ManagedPathError):
             return "下载路径未通过安全检查，请检查目录设置"
         if isinstance(error, (ImageValidationError, DownloadIntegrityError)):

@@ -24,6 +24,7 @@ from jm_downloader.favorites import (
     FavoritesSessionExpired,
     FavoritesSessionRequired,
     FavoritesStorageError,
+    FavoritesToggleRemoved,
     FavoritesUnavailable,
 )
 from jm_downloader.models import (
@@ -208,7 +209,7 @@ class FavoritesServiceTests(unittest.TestCase):
         self.assertIsNone(service.snapshot)
 
     def test_add_service_dispatches_only_the_post_workaround(self):
-        response = object()
+        response = SimpleNamespace(model_data={"type": "Add"})
 
         class PostOnlyClient:
             API_FAVORITE = "/favorite"
@@ -242,6 +243,31 @@ class FavoritesServiceTests(unittest.TestCase):
                 ("require_resp_status_ok", response),
             ],
         )
+
+    def test_add_rejects_a_successful_remove_toggle_as_not_added(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.favorite_add_response = client.favorite_add_response.__class__(
+            type="Remove"
+        )
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesToggleRemoved) as raised:
+            self.add(service)
+
+        self.assertEqual(
+            str(raised.exception),
+            "检测到该漫画已在远端收藏，本次操作已将其移除；"
+            "请手动同步收藏夹",
+        )
+        self.assertEqual(
+            client.calls,
+            [("add_favorite_album", "777777", "0")],
+        )
+        self.assertEqual(
+            self.account_service.snapshot.status,
+            AccountStatus.SIGNED_IN,
+        )
+        self.assertFalse(self.paths.favorites_file.exists())
 
     def test_add_refuses_domain_retry_strategy_before_remote_write(self):
         client = FakeJmAccountClient(folders=self.populated_folders())

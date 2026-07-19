@@ -9,6 +9,8 @@ from curl_cffi.requests.exceptions import RequestException
 from .jmcomic_client import serialized_client_construction
 from .jmcomic_logging import install_safe_jmcomic_logging
 from .models import (
+    ChapterCatalogSnapshot,
+    ChapterSnapshot,
     SearchMode,
     SearchPageSnapshot,
     SearchRequest,
@@ -189,7 +191,11 @@ class SearchService:
                 self._raise_backend_error(error, "search")
 
             try:
-                item = _snapshot_album(album, expected_id=normalized.query)
+                item = _snapshot_album(
+                    album,
+                    expected_id=normalized.query,
+                    include_chapter_catalog=True,
+                )
                 return SearchPageSnapshot(normalized, 1, 1, (item,))
             except SearchError:
                 raise
@@ -264,6 +270,33 @@ class SearchService:
             raise
         except Exception as error:
             self._raise_response_error(error, "cover")
+
+    def fetch_chapters(self, album_id: str) -> ChapterCatalogSnapshot:
+        try:
+            normalized_id = _normalize_search_album_id(album_id)
+        except InvalidAlbumId as error:
+            raise SearchValidationError(str(error)) from None
+
+        client = self._get_client_for_operation("chapters")
+        try:
+            album = client.get_album_detail(normalized_id)
+        except SearchError as error:
+            error = _safe_error_copy(error)
+            self._discard_client_for_error(error)
+            raise error from None
+        except Exception as error:
+            self._discard_client_for_error(_map_backend_error(error))
+            self._raise_backend_error(error, "chapters")
+
+        try:
+            return _snapshot_chapter_catalog(
+                album,
+                expected_id=normalized_id,
+            )
+        except SearchError:
+            raise
+        except Exception as error:
+            self._raise_response_error(error, "chapters")
 
     def _get_client_for_operation(self, operation: str):
         client = getattr(self._thread_state, "client", None)
@@ -409,7 +442,12 @@ def _snapshot_regular_item(raw_item) -> SearchResultSnapshot | None:
     return SearchResultSnapshot(album_id, title, authors, tags)
 
 
-def _snapshot_album(album, expected_id: str | None = None) -> SearchResultSnapshot:
+def _snapshot_album(
+    album,
+    expected_id: str | None = None,
+    *,
+    include_chapter_catalog: bool = False,
+) -> SearchResultSnapshot:
     if album is None:
         raise SearchResponseError()
 
@@ -427,7 +465,73 @@ def _snapshot_album(album, expected_id: str | None = None) -> SearchResultSnapsh
     )
     authors = _safe_text_tuple(getattr(album, "authors", None))
     tags = _safe_text_tuple(getattr(album, "tags", None))
-    return SearchResultSnapshot(album_id, title, authors, tags)
+    chapter_catalog = None
+    if include_chapter_catalog and hasattr(album, "episode_list"):
+        chapter_catalog = _snapshot_chapter_catalog(
+            album,
+            expected_id=album_id,
+        )
+    return SearchResultSnapshot(
+        album_id,
+        title,
+        authors,
+        tags,
+        chapter_catalog,
+    )
+
+
+def _snapshot_chapter_catalog(
+    album,
+    expected_id: str | None = None,
+) -> ChapterCatalogSnapshot:
+    if album is None:
+        raise SearchResponseError()
+
+    try:
+        album_id = _normalize_search_album_id(
+            getattr(album, "album_id", None)
+        )
+    except InvalidAlbumId:
+        raise SearchResponseError() from None
+    if expected_id is not None and album_id != expected_id:
+        raise SearchResponseError()
+
+    raw_episodes = getattr(album, "episode_list", None)
+    if (
+        raw_episodes is None
+        or isinstance(raw_episodes, (str, bytes, bytearray, Mapping))
+    ):
+        raise SearchResponseError()
+    try:
+        episode_list = list(raw_episodes)
+    except (TypeError, ValueError):
+        raise SearchResponseError() from None
+    if not episode_list:
+        raise SearchResponseError()
+
+    chapters = []
+    seen_ids = set()
+    seen_indexes = set()
+    for raw_episode in episode_list:
+        if not isinstance(raw_episode, (tuple, list)) or len(raw_episode) < 3:
+            raise SearchResponseError()
+        try:
+            photo_id = _normalize_search_album_id(raw_episode[0])
+        except InvalidAlbumId:
+            raise SearchResponseError() from None
+        index = _positive_int(raw_episode[1])
+        if photo_id in seen_ids or index in seen_indexes:
+            raise SearchResponseError()
+        seen_ids.add(photo_id)
+        seen_indexes.add(index)
+        title = _safe_text(raw_episode[2]) or f"第 {index} 章"
+        chapters.append(ChapterSnapshot(photo_id, index, title))
+
+    chapters.sort(key=lambda chapter: chapter.index)
+    title = _safe_text(getattr(album, "title", None)) or _safe_text(
+        getattr(album, "name", None)
+    )
+    return ChapterCatalogSnapshot(album_id, title, tuple(chapters))
 
 
 def _safe_text(value) -> str | None:
@@ -473,6 +577,13 @@ def _nonnegative_int(value) -> int:
     else:
         raise SearchResponseError()
     if result < 0:
+        raise SearchResponseError()
+    return result
+
+
+def _positive_int(value) -> int:
+    result = _nonnegative_int(value)
+    if result < 1:
         raise SearchResponseError()
     return result
 

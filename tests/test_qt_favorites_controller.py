@@ -30,7 +30,7 @@ from jm_downloader.qt.controllers.favorites_controller import FavoritesControlle
 from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.theme import ThemeManager
 from jm_downloader.settings import AppPaths
-from tests.account_fakes import FakeJmAccountClient
+from tests.account_fakes import FakeFavoriteAddResponse, FakeJmAccountClient
 
 
 FIXED_TIME = datetime(2026, 7, 16, 15, 30, tzinfo=timezone.utc)
@@ -337,6 +337,39 @@ class FavoritesControllerTests(unittest.TestCase):
         )
         self.assertNotIn(secret, repr(failures))
         self.assertEqual(generic_failures, [])
+        self.assertEqual(successes, [])
+        self.assertNotIn("777777", self.controller.known_favorite_ids)
+        self.assertTrue(self.controller.can_add_favorites)
+
+    def test_remove_toggle_is_reported_without_marking_card_favorited(self):
+        self.client.favorite_add_response = FakeFavoriteAddResponse(
+            type="Remove"
+        )
+        failures = []
+        successes = []
+        self.controller.add_failed.connect(lambda *args: failures.append(args))
+        self.controller.add_succeeded.connect(successes.append)
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.controller.add_album("777777")
+
+        self.assertTrue(self.wait_until(lambda: bool(failures)))
+        self.assertEqual(
+            failures,
+            [
+                (
+                    "777777",
+                    "removed_instead_of_added",
+                    "检测到该漫画已在远端收藏，本次操作已将其移除；"
+                    "请手动同步收藏夹",
+                )
+            ],
+        )
         self.assertEqual(successes, [])
         self.assertNotIn("777777", self.controller.known_favorite_ids)
         self.assertTrue(self.controller.can_add_favorites)
