@@ -119,6 +119,13 @@ class FavoritesControllerTests(unittest.TestCase):
     def tearDown(self):
         self.controller.dispose()
         self.account_controller.dispose()
+        for worker in (
+            self.controller._worker,
+            self.controller._filter_worker,
+            *self.account_controller._workers,
+        ):
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
         self.controller.deleteLater()
         self.account_controller.deleteLater()
         self.app.processEvents()
@@ -569,6 +576,46 @@ class FavoritesControllerTests(unittest.TestCase):
         )
         self.assertIsNone(self.controller.add_album("777777"))
 
+    def test_folder_mutations_share_one_busy_gate_without_queueing(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        self.client.calls.clear()
+        started = threading.Event()
+        release = threading.Event()
+        original_req_api = self.client.req_api
+
+        def slow_create(url, *args, **kwargs):
+            data = kwargs.get("data", {})
+            if url == self.client.API_FAVORITE_FOLDER and data.get("type") == "add":
+                started.set()
+                release.wait(timeout=3)
+            return original_req_api(url, *args, **kwargs)
+
+        self.client.req_api = slow_create
+
+        first = self.controller.create_folder("Later")
+        self.assertTrue(started.wait(timeout=1))
+        repeated_create = self.controller.create_folder("Another")
+        delete_while_busy = self.controller.delete_folder("9")
+        move_while_busy = self.controller.move_album("4", "0")
+        release.set()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(repeated_create)
+        self.assertIsNone(delete_while_busy)
+        self.assertIsNone(move_while_busy)
+        writes = [
+            call
+            for call in self.client.calls
+            if call[0] == "favorite_folder_mutation"
+        ]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][1], "add")
+
     def test_sync_busy_rejects_an_add_request(self):
         started = threading.Event()
         release = threading.Event()
@@ -895,6 +942,121 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.current_snapshot)
         self.assertIn(None, cleared)
 
+    def test_logout_during_move_discards_remote_success_and_late_refresh(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        remote_written = threading.Event()
+        release = threading.Event()
+        original_req_api = self.client.req_api
+
+        def move_then_wait(url, *args, **kwargs):
+            result = original_req_api(url, *args, **kwargs)
+            data = kwargs.get("data", {})
+            if url == self.client.API_FAVORITE_FOLDER and data.get("type") == "move":
+                remote_written.set()
+                release.wait(timeout=3)
+            return result
+
+        self.client.req_api = move_then_wait
+        successes = []
+        refresh_failures = []
+        self.controller.mutation_succeeded.connect(
+            lambda *args: successes.append(args)
+        )
+        self.controller.mutation_refresh_failed.connect(
+            lambda *args: refresh_failures.append(args)
+        )
+
+        self.assertIsNotNone(self.controller.move_album("4", "0"))
+        self.assertTrue(remote_written.wait(timeout=1))
+        self.account_controller.logout()
+        release.set()
+
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.account_controller.current_snapshot.status
+                is AccountStatus.SIGNED_OUT
+                and not self.paths.account_file.exists()
+                and not self.paths.favorites_file.exists()
+            )
+        )
+        self.assertEqual(successes, [])
+        self.assertEqual(refresh_failures, [])
+        self.assertIsNone(self.controller.current_snapshot)
+
+    def test_remote_deleted_target_fails_once_then_manual_sync_removes_it(self):
+        failures = []
+        successes = []
+        self.controller.mutation_failed.connect(
+            lambda *args: failures.append(args)
+        )
+        self.controller.mutation_succeeded.connect(
+            lambda *args: successes.append(args)
+        )
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        self.assertIn(
+            "9",
+            {folder.folder_id for folder in self.controller.current_snapshot.folders},
+        )
+        del self.client.folders["9"]
+        self.client.calls.clear()
+
+        self.assertIsNotNone(self.controller.move_album("4", "9"))
+        self.assertTrue(self.wait_until(lambda: bool(failures)))
+
+        self.assertEqual(successes, [])
+        self.assertEqual(failures[0][0:2], ("move_album", "mutation_uncertain"))
+        writes = [
+            call
+            for call in self.client.calls
+            if call[0] == "favorite_folder_mutation"
+        ]
+        self.assertEqual(len(writes), 1)
+        self.assertIn(
+            "9",
+            {folder.folder_id for folder in self.controller.current_snapshot.folders},
+        )
+
+        self.assertIsNotNone(self.controller.sync())
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        self.assertNotIn(
+            "9",
+            {folder.folder_id for folder in self.controller.current_snapshot.folders},
+        )
+
+    def test_move_success_with_refresh_failure_keeps_old_cache(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        old_snapshot = self.controller.current_snapshot
+        old_cache = self.paths.favorites_file.read_bytes()
+        successes = []
+        refresh_failures = []
+        self.controller.mutation_succeeded.connect(
+            lambda *args: successes.append(args)
+        )
+        self.controller.mutation_refresh_failed.connect(
+            lambda *args: refresh_failures.append(args)
+        )
+        self.client.favorite_errors[("0", 1)] = TimeoutError("offline")
+
+        self.assertIsNotNone(self.controller.move_album("4", "0"))
+        self.assertTrue(self.wait_until(lambda: bool(refresh_failures)))
+
+        self.assertEqual(successes, [("move_album", "4")])
+        self.assertEqual(refresh_failures[0][0], "move_album")
+        self.assertIs(self.controller.current_snapshot, old_snapshot)
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_cache)
+
     def test_dispose_is_nonblocking_during_network_request(self):
         started = threading.Event()
         release = threading.Event()
@@ -977,6 +1139,76 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(self.controller.known_favorite_ids, frozenset())
         self.assertFalse(self.paths.favorites_file.exists())
+        window.deleteLater()
+
+    def test_window_close_during_sync_is_nonblocking_and_drops_late_result(self):
+        started = threading.Event()
+        release = threading.Event()
+        original_page = self.client.favorite_folder
+
+        def slow_page(*args, **kwargs):
+            started.set()
+            release.wait(timeout=3)
+            return original_page(*args, **kwargs)
+
+        self.client.favorite_folder = slow_page
+        snapshots = []
+        failures = []
+        self.controller.snapshot_changed.connect(snapshots.append)
+        self.controller.operation_failed.connect(
+            lambda *args: failures.append(args)
+        )
+        window = MainWindow(
+            ThemeManager(),
+            account_controller=self.account_controller,
+            favorites_controller=self.controller,
+            persist_window_state=False,
+        )
+        window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        window.show()
+        self.app.processEvents()
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and not self.controller.is_busy
+            )
+        )
+
+        self.assertIsNotNone(self.controller.sync())
+        self.assertTrue(started.wait(timeout=1))
+        before = time.monotonic()
+        closed = window.close()
+        elapsed = time.monotonic() - before
+        release.set()
+        self.controller._worker.join(timeout=2)
+        self.app.processEvents()
+
+        self.assertTrue(closed)
+        self.assertLess(elapsed, 0.1)
+        self.assertFalse(self.controller._worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertFalse(any(snapshot.synced_at_utc for snapshot in snapshots))
+        self.assertFalse(self.paths.favorites_file.exists())
+        window.deleteLater()
+
+    def test_main_window_reuses_one_favorites_controller_for_both_pages(self):
+        window = MainWindow(
+            ThemeManager(),
+            account_controller=self.account_controller,
+            favorites_controller=self.controller,
+            persist_window_state=False,
+        )
+        window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+
+        self.assertIs(
+            window.page("downloads")._favorites_controller,
+            self.controller,
+        )
+        self.assertIs(
+            window.page("favorites").favorites_controller,
+            self.controller,
+        )
+        window.close()
         window.deleteLater()
 
 

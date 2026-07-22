@@ -8,6 +8,7 @@ from jm_downloader.account import AccountService, AccountStore
 from jm_downloader.favorites import (
     FavoriteCacheStore,
     FavoritesAddUncertain,
+    FavoritesMutationUncertain,
     FavoritesService,
     FavoritesUnavailable,
 )
@@ -41,6 +42,7 @@ class AccountFavoritesSecurityAcceptanceTests(unittest.TestCase):
         cookie = "security-cookie-sentinel"
         endpoint = "security-endpoint-sentinel"
         title = "security-title-sentinel"
+        folder_name = "security-folder-sentinel"
 
         with tempfile.TemporaryDirectory() as directory:
             paths = AppPaths(Path(directory))
@@ -68,7 +70,9 @@ class AccountFavoritesSecurityAcceptanceTests(unittest.TestCase):
                         "0": (
                             "Default",
                             (("1449491", {"name": title}),),
-                        )
+                        ),
+                        "8": ("Reading", ()),
+                        "9": ("Disposable", ()),
                     },
                 )
                 account_service = AccountService(
@@ -131,6 +135,36 @@ class AccountFavoritesSecurityAcceptanceTests(unittest.TestCase):
                 )
                 self.assertEqual(client.retry_times, 0)
 
+                client.favorite_folder_mutation_errors["move"] = (
+                    ConnectionResetError(endpoint)
+                )
+                with self.assertRaises(FavoritesMutationUncertain) as move_error:
+                    favorites_service.move_album(
+                        "1449491",
+                        "8",
+                        favorites_service.start_operation(),
+                    )
+                self.assertNotIn(endpoint, str(move_error.exception))
+                client.favorite_folder_mutation_errors.pop("move")
+
+                favorites_service.create_folder(
+                    folder_name,
+                    favorites_service.start_operation(),
+                )
+                favorites_service.move_album(
+                    "1449491",
+                    "8",
+                    favorites_service.start_operation(),
+                )
+                favorites_service.delete_folder(
+                    "9",
+                    favorites_service.start_operation(),
+                )
+                self.assertEqual(
+                    paths.favorites_file.read_bytes(),
+                    favorites_before_add,
+                )
+
                 client.favorite_errors[("0", 1)] = TimeoutError(endpoint)
                 with self.assertRaises(FavoritesUnavailable) as raised:
                     favorites_service.sync(
@@ -167,7 +201,14 @@ class AccountFavoritesSecurityAcceptanceTests(unittest.TestCase):
                 )
                 secrets = tuple(
                     value.encode("utf-8")
-                    for value in (username, password, cookie, endpoint, title)
+                    for value in (
+                        username,
+                        password,
+                        cookie,
+                        endpoint,
+                        title,
+                        folder_name,
+                    )
                 )
                 for path in runtime_files:
                     with self.subTest(path=path.name):

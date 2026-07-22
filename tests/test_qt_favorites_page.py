@@ -131,6 +131,9 @@ class FavoritesPageTests(unittest.TestCase):
     def tearDown(self):
         self.page.close()
         self.controller.dispose()
+        for worker in self.controller._workers:
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
         self.controller.deleteLater()
         self.favorites_controller.deleteLater()
         self.download_controller.deleteLater()
@@ -492,6 +495,33 @@ class FavoritesPageTests(unittest.TestCase):
         for color in samples[Theme.DARK]:
             self.assertLess(color.lightness(), 60)
         self.assertNotEqual(samples[Theme.LIGHT], samples[Theme.DARK])
+
+    def test_failed_sync_keeps_stale_cards_and_last_sync_visible(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "全部收藏",
+                    (FavoriteItemSnapshot("1", "Cached item"),),
+                ),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+        previous_sync_text = self.page.last_sync_label.text()
+
+        self.page._on_favorites_failed("unavailable", "同步失败，保留旧缓存")
+
+        self.assertEqual(self.page.last_sync_label.text(), previous_sync_text)
+        self.assertEqual(
+            [card.snapshot.album_id for card in self.page.favorite_cards],
+            ["1"],
+        )
+        self.assertTrue(self.page.favorites_error_banner.isVisible())
+        self.assertIn("保留旧缓存", self.page.favorites_error_label.text())
 
     def test_sync_stop_and_download_reuse_existing_controllers(self):
         snapshot = FavoritesSnapshot(

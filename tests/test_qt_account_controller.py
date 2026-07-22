@@ -57,6 +57,9 @@ class AccountControllerTests(unittest.TestCase):
             event.set()
         for controller in self.controllers:
             controller.dispose()
+            for worker in controller._workers:
+                worker.join(timeout=1)
+                self.assertFalse(worker.is_alive())
             controller.deleteLater()
         self.app.processEvents()
         self.temp_dir.cleanup()

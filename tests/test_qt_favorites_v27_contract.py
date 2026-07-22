@@ -107,6 +107,13 @@ class FavoritesV27ControllerContractTests(unittest.TestCase):
     def tearDown(self):
         self.controller.dispose()
         self.account_controller.dispose()
+        for worker in (
+            self.controller._worker,
+            self.controller._filter_worker,
+            *self.account_controller._workers,
+        ):
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
         self.controller.deleteLater()
         self.account_controller.deleteLater()
         self.app.processEvents()
