@@ -32,6 +32,7 @@ from ..chapter_download_flow import ChapterDownloadFlow
 from ..icons import arrow_icon, search_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
 from ..widgets.search_result_card import SearchResultCard
+from ..widgets.favorite_folder_dialogs import FavoriteTargetDialog
 from ..widgets.task_row import DownloadTaskRow
 from ..widgets.thumbnail_loader import ThumbnailLoader
 from .base import SectionPage
@@ -84,6 +85,8 @@ class DownloadPage(SectionPage):
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
         self._favorite_pending_album_id: str | None = None
+        self._favorite_pending_folder_id = "0"
+        self._favorite_refresh_failed = False
         self._favorite_feedback_generation = 0
         self.comic_cards: tuple[SearchResultCard, ...] = ()
         self._column_count = 0
@@ -503,6 +506,12 @@ class DownloadPage(SectionPage):
         controller = self._favorites_controller
         controller.add_succeeded.connect(self._on_favorite_added)
         controller.add_failed.connect(self._on_favorite_add_failed)
+        controller.add_partially_succeeded.connect(
+            self._on_favorite_add_partially_succeeded
+        )
+        controller.mutation_refresh_failed.connect(
+            self._on_favorite_refresh_failed
+        )
         controller.add_availability_changed.connect(
             self._on_favorite_availability_changed
         )
@@ -789,11 +798,34 @@ class DownloadPage(SectionPage):
         if self._favorites_controller is None:
             return
         self._clear_favorite_feedback()
-        generation = self._favorites_controller.add_album(album_id)
+        snapshot = self._favorites_controller.current_snapshot
+        folders = (
+            snapshot.folders
+            if snapshot is not None and snapshot.synced_at_utc is not None
+            else ()
+        )
+        description = (
+            "选择收藏位置。添加成功后会自动刷新收藏。"
+            if folders
+            else "尚无完整同步，只能选择未分类；打开此窗口不会联网。"
+        )
+        folder_id = FavoriteTargetDialog.choose(
+            folders,
+            self,
+            description=description,
+        )
+        if folder_id is None:
+            return
+        generation = self._favorites_controller.add_album(
+            album_id,
+            folder_id,
+        )
         if generation is None:
             self._refresh_favorite_cards()
             return
         self._favorite_pending_album_id = album_id
+        self._favorite_pending_folder_id = folder_id
+        self._favorite_refresh_failed = False
         self._refresh_favorite_cards()
 
     def _on_favorite_added(self, album_id: str) -> None:
@@ -802,10 +834,36 @@ class DownloadPage(SectionPage):
         if self._favorite_pending_album_id == album_id:
             self._favorite_pending_album_id = None
         self._refresh_favorite_cards()
-        self._show_favorite_feedback(
-            "已添加到默认收藏，请在我的收藏中手动同步",
-            error=False,
-        )
+        if not self._favorite_refresh_failed:
+            target = self._favorite_folder_name(self._favorite_pending_folder_id)
+            self._show_favorite_feedback(
+                f"已添加到{target}并刷新收藏",
+                error=False,
+            )
+        self._favorite_refresh_failed = False
+
+    def _on_favorite_add_partially_succeeded(
+        self,
+        album_id: str,
+        _code: str,
+        message: str,
+    ) -> None:
+        if self._favorite_pending_album_id == album_id:
+            self._favorite_pending_album_id = None
+        self._favorite_refresh_failed = False
+        self._refresh_favorite_cards()
+        self._show_favorite_feedback(message, error=True)
+
+    def _on_favorite_refresh_failed(
+        self,
+        command: str,
+        _code: str,
+        message: str,
+    ) -> None:
+        if command != "add":
+            return
+        self._favorite_refresh_failed = True
+        self._show_favorite_feedback(message, error=True)
 
     def _on_favorite_add_failed(
         self,
@@ -819,6 +877,17 @@ class DownloadPage(SectionPage):
             self._favorite_pending_album_id = None
         self._refresh_favorite_cards()
         self._show_favorite_feedback(message, error=True)
+
+    def _favorite_folder_name(self, folder_id: str) -> str:
+        if folder_id == "0":
+            return "未分类"
+        controller = self._favorites_controller
+        snapshot = controller.current_snapshot if controller is not None else None
+        if snapshot is not None:
+            for folder in snapshot.folders:
+                if folder.folder_id == folder_id:
+                    return f"“{folder.name}”"
+        return "所选收藏夹"
 
     def _on_favorite_availability_changed(self, _available: bool) -> None:
         self._refresh_favorite_cards()

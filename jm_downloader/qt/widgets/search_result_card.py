@@ -117,6 +117,7 @@ class SearchResultCard(QFrame):
     download_requested = Signal(str)
     view_task_requested = Signal(str)
     favorite_requested = Signal(str)
+    move_favorite_requested = Signal(str)
 
     def __init__(self, snapshot: SearchResultSnapshot, parent=None):
         super().__init__(parent)
@@ -131,6 +132,8 @@ class SearchResultCard(QFrame):
         self._favorite_available = False
         self._favorite_busy = False
         self._favorited = False
+        self._move_visible = False
+        self._move_available = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -188,9 +191,17 @@ class SearchResultCard(QFrame):
         self.favorite_button.setCheckable(True)
         self.favorite_button.setFixedSize(32, 32)
         self.favorite_button.setIcon(svg_icon("bookmark"))
-        self.favorite_button.setToolTip("添加到默认收藏")
+        self.favorite_button.setToolTip("添加到收藏")
         self.favorite_button.clicked.connect(self._emit_favorite)
         action_layout.addWidget(self.favorite_button)
+
+        self.move_button = QToolButton(action_row)
+        self.move_button.setObjectName("favoriteMoveButton")
+        self.move_button.setFixedSize(32, 32)
+        self.move_button.setIcon(svg_icon("folder"))
+        self.move_button.setToolTip("移动到其他收藏夹")
+        self.move_button.clicked.connect(self._emit_move_favorite)
+        action_layout.addWidget(self.move_button)
 
         self.action_button = QPushButton(action_row)
         self.action_button.setObjectName("searchResultActionButton")
@@ -204,6 +215,7 @@ class SearchResultCard(QFrame):
         self.update_snapshot(snapshot)
         self.set_task_present(False)
         self.set_favorite_visible(False)
+        self.set_move_favorite_visible(False)
 
     @property
     def task_present(self) -> bool:
@@ -311,6 +323,15 @@ class SearchResultCard(QFrame):
         self._favorited = bool(favorited)
         self._render_favorite_state()
 
+    def set_move_favorite_visible(self, visible: bool) -> None:
+        self._move_visible = bool(visible)
+        self.move_button.setVisible(self._move_visible)
+        self._render_move_favorite_state()
+
+    def set_move_favorite_available(self, available: bool) -> None:
+        self._move_available = bool(available)
+        self._render_move_favorite_state()
+
     def set_cover(self, image: QImage) -> None:
         if image.isNull():
             self.clear_cover()
@@ -337,6 +358,20 @@ class SearchResultCard(QFrame):
         if self.favorite_button.isEnabled() and not self._favorited:
             self.favorite_requested.emit(self.snapshot.album_id)
 
+    def _emit_move_favorite(self) -> None:
+        if self.move_button.isEnabled():
+            self.move_favorite_requested.emit(self.snapshot.album_id)
+
+    def _render_move_favorite_state(self) -> None:
+        self.move_button.setEnabled(
+            self._move_visible and self._move_available
+        )
+        self.move_button.setToolTip(
+            "移动到其他收藏夹"
+            if self._move_available
+            else "同步完成且控制器空闲时可以移动"
+        )
+
     def _render_favorite_state(self) -> None:
         self.favorite_button.setChecked(self._favorited)
         self.favorite_button.setProperty("busy", self._favorite_busy)
@@ -349,9 +384,9 @@ class SearchResultCard(QFrame):
         if self._favorited:
             tooltip = "已收藏"
         elif self._favorite_busy:
-            tooltip = "正在添加到默认收藏"
+            tooltip = "正在添加到收藏"
         else:
-            tooltip = "添加到默认收藏"
+            tooltip = "添加到收藏"
         self.favorite_button.setToolTip(tooltip)
         self.favorite_button.style().unpolish(self.favorite_button)
         self.favorite_button.style().polish(self.favorite_button)

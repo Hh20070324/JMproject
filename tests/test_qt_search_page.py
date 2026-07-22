@@ -11,6 +11,8 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from jm_downloader.models import (
+    FavoriteFolderSnapshot,
+    FavoritesSnapshot,
     SearchMode,
     SearchPageSnapshot,
     SearchRequest,
@@ -190,6 +192,11 @@ class FakeFavoritesController(QObject):
     busy_changed = Signal(bool, str)
     add_succeeded = Signal(str)
     add_failed = Signal(str, str, str)
+    add_partially_succeeded = Signal(str, str, str)
+    mutation_refresh_failed = Signal(str, str, str)
+    filter_result_changed = Signal(int, object)
+    mutation_succeeded = Signal(str, str)
+    mutation_failed = Signal(str, str, str)
     add_availability_changed = Signal(bool)
     known_favorite_ids_changed = Signal(object)
 
@@ -200,10 +207,12 @@ class FakeFavoritesController(QObject):
         self.current_command = ""
         self.can_add_favorites = False
         self.known_favorite_ids = frozenset()
+        self.current_snapshot = None
         self.add_calls = []
+        self.add_targets = []
         self.sync_count = 0
 
-    def add_album(self, album_id):
+    def add_album(self, album_id, folder_id="0"):
         if (
             not self.can_add_favorites
             or self.is_busy
@@ -211,6 +220,7 @@ class FakeFavoritesController(QObject):
         ):
             return None
         self.add_calls.append(album_id)
+        self.add_targets.append(folder_id)
         self.is_busy = True
         self.current_command = "add"
         self.can_add_favorites = False
@@ -243,6 +253,22 @@ class FakeFavoritesController(QObject):
     def sync(self):
         self.sync_count += 1
         return self.sync_count
+
+    @staticmethod
+    def filter_items(_folder_id, _keyword):
+        return 1
+
+    @staticmethod
+    def create_folder(_name):
+        return 1
+
+    @staticmethod
+    def delete_folder(_folder_id):
+        return 1
+
+    @staticmethod
+    def move_album(_album_id, _folder_id):
+        return 1
 
     @staticmethod
     def cancel_sync():
@@ -314,6 +340,11 @@ class DownloadSearchPageTests(unittest.TestCase):
             return_value=self.cover_loader,
         )
         self.cover_patch.start()
+        self.target_patch = patch(
+            "jm_downloader.qt.pages.download_page.FavoriteTargetDialog.choose",
+            return_value="0",
+        )
+        self.target_choose = self.target_patch.start()
         self.window = MainWindow(
             self.theme_manager,
             self.download_controller,
@@ -335,6 +366,7 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.window.close()
         self._pump()
         self.cover_patch.stop()
+        self.target_patch.stop()
         self.cover_loader.deleteLater()
         self.search_controller.deleteLater()
         self.download_controller.deleteLater()
@@ -354,6 +386,49 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.search_controller.deliver(snapshot, generation=generation)
         self._pump()
         return generation
+
+    def test_favorite_target_can_be_custom_or_cancelled(self):
+        request = SearchRequest(SearchMode.EXACT_ID, "1449491", 1)
+        self._search_and_deliver(make_search_page(request, count=1, first_id=1449491))
+        self.favorites_controller.current_snapshot = FavoritesSnapshot(
+            "2026-07-22T12:00:00Z",
+            (
+                FavoriteFolderSnapshot("0", "全部收藏", ()),
+                FavoriteFolderSnapshot("9", "Reading", ()),
+            ),
+        )
+        self.favorites_controller.set_available(True)
+        self.target_choose.return_value = "9"
+
+        self.page.comic_cards[0].favorite_button.click()
+
+        self.assertEqual(self.favorites_controller.add_calls, ["1449491"])
+        self.assertEqual(self.favorites_controller.add_targets, ["9"])
+
+        self.favorites_controller.fail("1449491")
+        self.favorites_controller.add_calls.clear()
+        self.target_choose.return_value = None
+        self.page.comic_cards[0].favorite_button.click()
+        self.assertEqual(self.favorites_controller.add_calls, [])
+
+    def test_partial_move_failure_is_non_modal_and_honest(self):
+        request = SearchRequest(SearchMode.EXACT_ID, "1449491", 1)
+        self._search_and_deliver(make_search_page(request, count=1, first_id=1449491))
+        self.favorites_controller.set_available(True)
+        self.page.comic_cards[0].favorite_button.click()
+
+        self.favorites_controller.add_partially_succeeded.emit(
+            "1449491",
+            "move_failed_after_add",
+            "已收藏，但移动失败，当前位于默认位置",
+        )
+        self._pump()
+
+        self.assertTrue(self.page.favorite_feedback_banner.property("error"))
+        self.assertEqual(
+            self.page.favorite_feedback_label.text(),
+            "已收藏，但移动失败，当前位于默认位置",
+        )
 
     def test_modes_placeholders_and_both_search_commands_only_route_search(self):
         expectations = (
@@ -760,7 +835,7 @@ class DownloadSearchPageTests(unittest.TestCase):
         self.assertFalse(self.page.favorite_feedback_banner.isHidden())
         self.assertEqual(
             self.page.favorite_feedback_label.text(),
-            "已添加到默认收藏，请在我的收藏中手动同步",
+            "已添加到未分类并刷新收藏",
         )
         self.assertEqual(self.favorites_controller.sync_count, 0)
 

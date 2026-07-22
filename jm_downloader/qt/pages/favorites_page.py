@@ -25,6 +25,7 @@ from ...models import (
     AccountStatus,
     ChapterCatalogSnapshot,
     FavoriteFolderSnapshot,
+    FavoritesFilterSnapshot,
     FavoritesSnapshot,
     FavoritesSyncProgress,
     SearchResultSnapshot,
@@ -33,6 +34,10 @@ from ..chapter_download_flow import ChapterDownloadFlow
 from ..controllers.account_controller import AccountController
 from ..icons import arrow_icon, svg_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
+from ..widgets.favorite_folder_dialogs import (
+    FavoriteFolderManagerDialog,
+    FavoriteTargetDialog,
+)
 from ..widgets.search_result_card import SearchResultCard
 from .base import SectionPage
 
@@ -84,6 +89,13 @@ class FavoritesPage(SectionPage):
         )
         self._favorites_error_code = ""
         self._selected_folder_id: str | None = None
+        self._pending_order_by = (
+            self._favorites_snapshot.order_by
+            if self._favorites_snapshot is not None
+            else "mr"
+        )
+        self._filter_generation: int | None = None
+        self._filtered_snapshot: FavoritesFilterSnapshot | None = None
         self._local_page = 1
         self._tasks_by_album = set()
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
@@ -94,6 +106,10 @@ class FavoritesPage(SectionPage):
         self._column_count = 0
         self._disposed = False
         self.favorite_cards: tuple[SearchResultCard, ...] = ()
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(160)
+        self._filter_timer.timeout.connect(self._submit_filter)
 
         self._owns_cover_loader = False
         if cover_loader is not None:
@@ -139,6 +155,18 @@ class FavoritesPage(SectionPage):
             favorites_controller.busy_changed.connect(
                 self._on_favorites_busy_changed
             )
+            favorites_controller.filter_result_changed.connect(
+                self._on_filter_result
+            )
+            favorites_controller.mutation_succeeded.connect(
+                self._on_mutation_succeeded
+            )
+            favorites_controller.mutation_failed.connect(
+                self._on_mutation_failed
+            )
+            favorites_controller.mutation_refresh_failed.connect(
+                self._on_mutation_refresh_failed
+            )
         if download_controller is not None:
             download_controller.tasks_reset.connect(self._set_tasks)
             self._set_tasks(download_controller.list_tasks())
@@ -157,6 +185,13 @@ class FavoritesPage(SectionPage):
             self._on_chapter_task_created
         )
         self._chapter_flow.failed.connect(self._on_chapter_flow_failed)
+        if self._favorites_snapshot is not None:
+            sort_index = self.sort_combo.findData(
+                self._favorites_snapshot.order_by
+            )
+            if sort_index >= 0:
+                self.sort_combo.setCurrentIndex(sort_index)
+            self._rebuild_folder_options()
         self._render()
         QTimer.singleShot(0, self._reflow_cards)
 
@@ -352,7 +387,7 @@ class FavoritesPage(SectionPage):
 
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(0, 0, 0, 0)
-        filter_row.setSpacing(10)
+        filter_row.setSpacing(8)
         self.folder_combo = QComboBox(state)
         self.folder_combo.setObjectName("favoritesFolderCombo")
         self.folder_combo.setMinimumWidth(220)
@@ -360,11 +395,38 @@ class FavoritesPage(SectionPage):
         self.folder_combo.setFixedHeight(36)
         self.folder_combo.currentIndexChanged.connect(self._select_folder)
         filter_row.addWidget(self.folder_combo)
+        self.sort_combo = QComboBox(state)
+        self.sort_combo.setObjectName("favoritesSortCombo")
+        self.sort_combo.addItem("收藏时间", "mr")
+        self.sort_combo.addItem("更新时间", "mp")
+        self.sort_combo.setFixedSize(130, 36)
+        self.sort_combo.currentIndexChanged.connect(self._select_sort)
+        filter_row.addWidget(self.sort_combo)
+        self.manage_folders_button = QToolButton(state)
+        self.manage_folders_button.setObjectName("favoritesManageButton")
+        self.manage_folders_button.setIcon(svg_icon("folder"))
+        self.manage_folders_button.setToolTip("管理收藏夹")
+        self.manage_folders_button.setFixedSize(36, 36)
+        self.manage_folders_button.clicked.connect(self._open_folder_manager)
+        filter_row.addWidget(self.manage_folders_button)
         filter_row.addStretch(1)
+        layout.addLayout(filter_row)
+
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(0, 0, 0, 0)
+        search_row.setSpacing(8)
+        self.keyword_input = QLineEdit(state)
+        self.keyword_input.setObjectName("favoritesKeywordInput")
+        self.keyword_input.setPlaceholderText("筛选标题、作者或 JM 号")
+        self.keyword_input.setClearButtonEnabled(True)
+        self.keyword_input.setMaximumWidth(420)
+        self.keyword_input.setFixedHeight(36)
+        self.keyword_input.textChanged.connect(self._queue_filter)
+        search_row.addWidget(self.keyword_input, 1)
         self.favorites_summary = QLabel("", state)
         self.favorites_summary.setObjectName("favoritesResultsSummary")
-        filter_row.addWidget(self.favorites_summary)
-        layout.addLayout(filter_row)
+        search_row.addWidget(self.favorites_summary)
+        layout.addLayout(search_row)
 
         self.favorites_stack = QStackedWidget(state)
         self.favorites_stack.setObjectName("favoritesContentStack")
@@ -380,6 +442,10 @@ class FavoritesPage(SectionPage):
         self.favorite_empty_state = self._create_favorite_state(
             "favoritesEmptyState",
             "当前文件夹没有收藏",
+        )
+        self.favorite_empty_label = self.favorite_empty_state.findChild(
+            QLabel,
+            "favoritesStateLabel",
         )
         self.favorite_error_state = self._create_favorite_state(
             "favoritesDataErrorState",
@@ -489,6 +555,7 @@ class FavoritesPage(SectionPage):
         if self._disposed:
             return
         self._disposed = True
+        self._filter_timer.stop()
         self._chapter_flow.dispose()
         if self._owns_cover_loader and self._cover_loader is not None:
             self._cover_loader.dispose()
@@ -533,7 +600,7 @@ class FavoritesPage(SectionPage):
         elif not self._favorites_busy:
             self._set_favorites_error("")
             self._favorites_error_code = ""
-            self.favorites_controller.sync()
+            self.favorites_controller.sync(self._pending_order_by)
 
     @Slot()
     def _confirm_logout(self) -> None:
@@ -589,6 +656,15 @@ class FavoritesPage(SectionPage):
         if snapshot is not None and not isinstance(snapshot, FavoritesSnapshot):
             return
         self._favorites_snapshot = snapshot
+        if snapshot is not None:
+            self._pending_order_by = snapshot.order_by
+            index = self.sort_combo.findData(snapshot.order_by)
+            if index >= 0:
+                self.sort_combo.blockSignals(True)
+                self.sort_combo.setCurrentIndex(index)
+                self.sort_combo.blockSignals(False)
+        self._filtered_snapshot = None
+        self._filter_generation = None
         self._favorites_error_code = ""
         self._set_favorites_error("")
         self._rebuild_folder_options()
@@ -631,6 +707,41 @@ class FavoritesPage(SectionPage):
         self._favorites_command = command if busy else ""
         self._render_controls()
         self._render_favorites()
+
+    @Slot(int, object)
+    def _on_filter_result(self, generation: int, snapshot) -> None:
+        if (
+            not isinstance(snapshot, FavoritesFilterSnapshot)
+            or generation != self._filter_generation
+        ):
+            return
+        self._filtered_snapshot = snapshot
+        self._render_favorites()
+
+    @Slot(str, str)
+    def _on_mutation_succeeded(self, command: str, _value: str) -> None:
+        if command == "move_album":
+            self._set_favorites_feedback("已移动并刷新收藏", error=False)
+
+    @Slot(str, str, str)
+    def _on_mutation_failed(
+        self,
+        _command: str,
+        code: str,
+        message: str,
+    ) -> None:
+        self._favorites_error_code = code
+        self._set_favorites_feedback(message, error=True)
+
+    @Slot(str, str, str)
+    def _on_mutation_refresh_failed(
+        self,
+        _command: str,
+        code: str,
+        message: str,
+    ) -> None:
+        self._favorites_error_code = code
+        self._set_favorites_feedback(message, error=True)
 
     def _render(self) -> None:
         status = self._snapshot.status
@@ -715,8 +826,27 @@ class FavoritesPage(SectionPage):
             self._favorites_busy and self._favorites_command == "sync"
         )
         self.folder_combo.setEnabled(self.folder_combo.count() > 0)
+        self.sort_combo.setEnabled(not self._favorites_busy)
+        full_snapshot = (
+            self._favorites_snapshot is not None
+            and self._favorites_snapshot.synced_at_utc is not None
+        )
+        remote_available = self._snapshot.status in {
+            AccountStatus.SAVED_SESSION,
+            AccountStatus.SIGNED_IN,
+        }
+        self.manage_folders_button.setEnabled(
+            self.favorites_controller is not None
+            and full_snapshot
+            and remote_available
+            and not self._favorites_busy
+        )
+        self.keyword_input.setEnabled(full_snapshot)
         for card in self.favorite_cards:
             card.action_button.setEnabled(self.download_controller is not None)
+            card.set_move_favorite_available(
+                remote_available and full_snapshot and not self._favorites_busy
+            )
 
     def _render_favorites(self) -> None:
         snapshot = self._favorites_snapshot
@@ -725,6 +855,17 @@ class FavoritesPage(SectionPage):
             if snapshot is None or snapshot.synced_at_utc is None
             else f"最后同步：{_display_timestamp(snapshot.synced_at_utc)}"
         )
+        if (
+            snapshot is not None
+            and snapshot.synced_at_utc is not None
+            and self._pending_order_by != snapshot.order_by
+        ):
+            pending_name = (
+                "收藏时间" if self._pending_order_by == "mr" else "更新时间"
+            )
+            self.last_sync_label.setText(
+                f"{self.last_sync_label.text()} · 待按{pending_name}同步"
+            )
         if (
             self._favorites_busy
             and self._favorites_command == "restore"
@@ -752,7 +893,24 @@ class FavoritesPage(SectionPage):
             self.favorites_stack.setCurrentWidget(self.favorite_error_state)
             self.favorites_summary.clear()
             return
-        total = len(folder.items)
+        keyword = " ".join(self.keyword_input.text().split()).casefold()
+        if keyword:
+            filtered = self._filtered_snapshot
+            if (
+                filtered is None
+                or filtered.folder_id != folder.folder_id
+                or filtered.keyword != keyword
+            ):
+                self._set_cards(())
+                self.favorites_summary.setText("正在筛选…")
+                self.favorites_stack.setCurrentWidget(
+                    self.favorite_loading_state
+                )
+                return
+            items = filtered.items
+        else:
+            items = folder.items
+        total = len(items)
         page_count = max(1, (total + FAVORITES_PAGE_SIZE - 1) // FAVORITES_PAGE_SIZE)
         self._local_page = max(1, min(self._local_page, page_count))
         self.favorites_summary.setText(
@@ -762,10 +920,16 @@ class FavoritesPage(SectionPage):
         if total == 0:
             self._set_cards(())
             self.pagination.hide()
+            if self.favorite_empty_label is not None:
+                self.favorite_empty_label.setText(
+                    "没有匹配的收藏"
+                    if keyword
+                    else "当前文件夹没有收藏"
+                )
             self.favorites_stack.setCurrentWidget(self.favorite_empty_state)
             return
         start = (self._local_page - 1) * FAVORITES_PAGE_SIZE
-        self._set_cards(folder.items[start : start + FAVORITES_PAGE_SIZE])
+        self._set_cards(items[start : start + FAVORITES_PAGE_SIZE])
         self.page_label.setText(f"第 {self._local_page} / {page_count} 页")
         self.previous_page_button.setEnabled(self._local_page > 1)
         self.next_page_button.setEnabled(self._local_page < page_count)
@@ -806,7 +970,78 @@ class FavoritesPage(SectionPage):
             return
         self._selected_folder_id = self.folder_combo.itemData(index)
         self._local_page = 1
+        self._filtered_snapshot = None
+        self._queue_filter()
+
+    @Slot(int)
+    def _select_sort(self, index: int) -> None:
+        order_by = self.sort_combo.itemData(index)
+        if order_by not in {"mr", "mp"}:
+            return
+        self._pending_order_by = order_by
+        self._render_controls()
         self._render_favorites()
+
+    @Slot()
+    def _queue_filter(self, *_args) -> None:
+        self._local_page = 1
+        self._filtered_snapshot = None
+        keyword = " ".join(self.keyword_input.text().split())
+        if not keyword:
+            self._filter_timer.stop()
+            self._filter_generation = None
+            self._render_favorites()
+            return
+        self._filter_timer.start()
+        self._render_favorites()
+
+    @Slot()
+    def _submit_filter(self) -> None:
+        if self.favorites_controller is None:
+            return
+        folder = self._current_folder()
+        if folder is None:
+            return
+        self._filter_generation = self.favorites_controller.filter_items(
+            folder.folder_id,
+            self.keyword_input.text(),
+        )
+
+    @Slot()
+    def _open_folder_manager(self) -> None:
+        if (
+            self.favorites_controller is None
+            or not self.manage_folders_button.isEnabled()
+        ):
+            return
+        FavoriteFolderManagerDialog(
+            self.favorites_controller,
+            self,
+        ).exec()
+
+    @Slot(str)
+    def _move_favorite(self, album_id: str) -> None:
+        if self.favorites_controller is None or self._favorites_busy:
+            return
+        snapshot = self._favorites_snapshot
+        if snapshot is None or snapshot.synced_at_utc is None:
+            return
+        current_id = self._selected_folder_id
+        folders = tuple(
+            folder
+            for folder in snapshot.folders
+            if folder.folder_id != current_id or current_id == "0"
+        )
+        folder_id = FavoriteTargetDialog.choose(
+            folders,
+            self,
+            title="移动收藏",
+            description="选择这本漫画的新位置。移动后会自动刷新收藏。",
+        )
+        if folder_id is None:
+            return
+        self._set_favorites_error("")
+        self.favorites_controller.move_album(album_id, folder_id)
 
     def _previous_page(self) -> None:
         if self._local_page > 1:
@@ -817,9 +1052,18 @@ class FavoritesPage(SectionPage):
         folder = self._current_folder()
         if folder is None:
             return
+        items = folder.items
+        keyword = " ".join(self.keyword_input.text().split()).casefold()
+        if (
+            keyword
+            and self._filtered_snapshot is not None
+            and self._filtered_snapshot.folder_id == folder.folder_id
+            and self._filtered_snapshot.keyword == keyword
+        ):
+            items = self._filtered_snapshot.items
         page_count = max(
             1,
-            (len(folder.items) + FAVORITES_PAGE_SIZE - 1)
+            (len(items) + FAVORITES_PAGE_SIZE - 1)
             // FAVORITES_PAGE_SIZE,
         )
         if self._local_page < page_count:
@@ -853,6 +1097,15 @@ class FavoritesPage(SectionPage):
             card.set_action_available(self.download_controller is not None)
             card.download_requested.connect(self._download_favorite)
             card.view_task_requested.connect(self.view_task_requested)
+            card.set_move_favorite_visible(True)
+            card.set_move_favorite_available(
+                self._snapshot.status
+                in {AccountStatus.SAVED_SESSION, AccountStatus.SIGNED_IN}
+                and self._favorites_snapshot is not None
+                and self._favorites_snapshot.synced_at_utc is not None
+                and not self._favorites_busy
+            )
+            card.move_favorite_requested.connect(self._move_favorite)
             cards.append(card)
             self._cards_by_album.setdefault(item.album_id, []).append(card)
         self.favorite_cards = tuple(cards)
@@ -995,8 +1248,23 @@ class FavoritesPage(SectionPage):
         self.expired_error.setVisible(bool(message))
 
     def _set_favorites_error(self, message: str) -> None:
+        self._set_favorites_feedback(message, error=True)
+
+    def _set_favorites_feedback(
+        self,
+        message: str,
+        *,
+        error: bool,
+    ) -> None:
         message = str(message).strip()
         self.favorites_error_label.setText(message)
+        self.favorites_error_banner.setProperty("error", bool(error))
+        self.favorites_error_banner.style().unpolish(
+            self.favorites_error_banner
+        )
+        self.favorites_error_banner.style().polish(
+            self.favorites_error_banner
+        )
         self.favorites_error_banner.setVisible(bool(message))
 
 

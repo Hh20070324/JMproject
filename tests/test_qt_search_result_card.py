@@ -218,7 +218,7 @@ class SearchResultCardTests(unittest.TestCase):
         self.assertFalse(self.card.favorite_button.isEnabled())
         self.assertEqual(
             self.card.favorite_button.toolTip(),
-            "正在添加到默认收藏",
+            "正在添加到收藏",
         )
 
         self.card.set_favorite_state(available=True, favorited=True)
@@ -226,6 +226,17 @@ class SearchResultCardTests(unittest.TestCase):
         self.assertTrue(self.card.favorite_button.isChecked())
         self.assertFalse(self.card.favorite_button.isEnabled())
         self.assertEqual(self.card.favorite_button.toolTip(), "已收藏")
+
+    def test_move_action_is_separate_and_only_emits_when_available(self):
+        moved = []
+        self.card.move_favorite_requested.connect(moved.append)
+        self.card.set_move_favorite_visible(True)
+        self.card.move_button.click()
+        self.assertEqual(moved, [])
+
+        self.card.set_move_favorite_available(True)
+        self.card.move_button.click()
+        self.assertEqual(moved, ["1449491"])
         self.assertEqual(self.card.size().height(), SearchResultCard.HEIGHT)
 
     def test_checked_favorite_remains_visible_in_light_and_dark_themes(self):

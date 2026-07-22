@@ -343,8 +343,23 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                         ),
                     )
                 )
+                window.select_page("favorites")
                 app.processEvents()
                 assert len(favorites_page.favorite_cards) == 20
+                favorite_toolbar = [
+                    favorites_page.folder_combo,
+                    favorites_page.sort_combo,
+                    favorites_page.manage_folders_button,
+                ]
+                for index, control in enumerate(favorite_toolbar):
+                    assert control.geometry().right() <= favorites_page.account_state.width()
+                    for other in favorite_toolbar[index + 1:]:
+                        assert not control.geometry().intersects(other.geometry())
+                assert not favorites_page.keyword_input.geometry().intersects(
+                    favorites_page.favorites_summary.geometry()
+                )
+                window.select_page("downloads")
+                app.processEvents()
                 visible_actions = [
                     task_row.resume_button,
                     task_row.open_images_button,

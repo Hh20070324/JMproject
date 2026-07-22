@@ -777,12 +777,21 @@ QFrame#favoritesExpiredPanel {
 }
 
 QFrame#favoritesErrorBanner {
-    background: #fff0f0;
-    border: 1px solid #e3b1b1;
+    background: #edf5f0;
+    border: 1px solid #bdd7c7;
     border-radius: 6px;
 }
 
 QLabel#favoritesBannerText {
+    color: #285e43;
+}
+
+QFrame#favoritesErrorBanner[error="true"] {
+    background: #fff0f0;
+    border-color: #e3b1b1;
+}
+
+QFrame#favoritesErrorBanner[error="true"] QLabel#favoritesBannerText {
     color: #7d3c3c;
 }
 
@@ -819,6 +828,103 @@ QComboBox#favoritesFolderCombo:focus {
 QComboBox#favoritesFolderCombo::drop-down {
     border: 0;
     width: 28px;
+}
+
+QComboBox#favoritesSortCombo,
+QLineEdit#favoritesKeywordInput,
+QLineEdit#favoriteFolderNameInput {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 0 10px;
+}
+
+QComboBox#favoritesSortCombo:hover,
+QComboBox#favoritesSortCombo:focus,
+QLineEdit#favoritesKeywordInput:hover,
+QLineEdit#favoritesKeywordInput:focus,
+QLineEdit#favoriteFolderNameInput:hover,
+QLineEdit#favoriteFolderNameInput:focus {
+    border-color: #2e7d57;
+}
+
+QToolButton#favoritesManageButton,
+QToolButton#favoriteMoveButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+}
+
+QToolButton#favoritesManageButton:hover,
+QToolButton#favoriteMoveButton:hover {
+    background: #eef1ef;
+    border-color: #2e7d57;
+}
+
+QToolButton#favoritesManageButton:disabled,
+QToolButton#favoriteMoveButton:disabled {
+    background: #eef1ef;
+    border-color: #e1e6e3;
+}
+
+QDialog#favoriteTargetDialog,
+QDialog#favoriteFolderManagerDialog,
+QDialog#favoriteTargetDialog QWidget#qt_scrollarea_viewport {
+    background: #f7f9f8;
+    color: #1d2320;
+}
+
+QLabel#favoriteDialogDetail {
+    color: #65706a;
+}
+
+QRadioButton#favoriteTargetOption,
+QListWidget#favoriteFolderList {
+    background: #ffffff;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 7px;
+}
+
+QListWidget#favoriteFolderList::item {
+    min-height: 34px;
+    padding: 2px 8px;
+}
+
+QListWidget#favoriteFolderList::item:selected {
+    background: #dfeee6;
+    color: #174a32;
+}
+
+QLabel#favoriteDialogError {
+    color: #a33f3f;
+}
+
+QPushButton#favoriteDialogPrimaryButton,
+QPushButton#favoriteDialogSecondaryButton,
+QPushButton#favoriteDialogDangerButton {
+    min-height: 34px;
+    border-radius: 6px;
+    padding: 0 12px;
+}
+
+QPushButton#favoriteDialogPrimaryButton {
+    background: #2e7d57;
+    border: 1px solid #2e7d57;
+    color: #ffffff;
+}
+
+QPushButton#favoriteDialogSecondaryButton,
+QPushButton#favoriteDialogDangerButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    color: #1d2320;
+}
+
+QPushButton#favoriteDialogDangerButton:enabled {
+    color: #a33f3f;
 }
 
 QToolButton#favoritesPageButton {

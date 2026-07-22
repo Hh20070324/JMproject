@@ -18,6 +18,7 @@ from jm_downloader.models import (
     FavoriteFolderSnapshot,
     FavoriteItemSnapshot,
     FavoritesSnapshot,
+    FavoritesFilterSnapshot,
 )
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.account_controller import AccountController
@@ -42,6 +43,10 @@ class FakeFavoritesController(QObject):
     progress_changed = Signal(object)
     operation_failed = Signal(str, str)
     busy_changed = Signal(bool, str)
+    filter_result_changed = Signal(int, object)
+    mutation_succeeded = Signal(str, str)
+    mutation_failed = Signal(str, str, str)
+    mutation_refresh_failed = Signal(str, str, str)
 
     def __init__(self):
         super().__init__()
@@ -50,6 +55,10 @@ class FakeFavoritesController(QObject):
         self.current_command = ""
         self.sync = Mock(return_value=1)
         self.cancel_sync = Mock()
+        self.filter_items = Mock(return_value=1)
+        self.create_folder = Mock(return_value=1)
+        self.delete_folder = Mock(return_value=1)
+        self.move_album = Mock(return_value=1)
 
 
 class FakeDownloadController(QObject):
@@ -372,7 +381,7 @@ class FavoritesPageTests(unittest.TestCase):
         self.page._on_favorites_snapshot(snapshot)
 
         self.page.sync_button.click()
-        self.favorites_controller.sync.assert_called_once_with()
+        self.favorites_controller.sync.assert_called_once_with("mr")
         self.page._on_favorites_busy_changed(True, "sync")
         self.assertEqual(self.page.sync_button.text(), "停止")
         self.page.sync_button.click()
@@ -393,6 +402,81 @@ class FavoritesPageTests(unittest.TestCase):
         )
         self.assertTrue(self.page.logout_button.isEnabled())
         self.assertTrue(self.page.sync_button.isEnabled())
+
+    def test_sort_waits_for_sync_and_filter_uses_controller_result(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "全部收藏",
+                    (
+                        FavoriteItemSnapshot("1", "Alpha"),
+                        FavoriteItemSnapshot("2", "Beta"),
+                    ),
+                ),
+            ),
+            order_by="mr",
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+        self.favorites_controller.current_snapshot = snapshot
+
+        self.page.sort_combo.setCurrentIndex(
+            self.page.sort_combo.findData("mp")
+        )
+        self.assertIn("待按更新时间同步", self.page.last_sync_label.text())
+        self.favorites_controller.sync.assert_not_called()
+        self.page.sync_button.click()
+        self.favorites_controller.sync.assert_called_once_with("mp")
+
+        self.page.keyword_input.setText("alpha")
+        self.page._submit_filter()
+        self.favorites_controller.filter_items.assert_called_with(
+            "0", "alpha"
+        )
+        self.page._on_filter_result(
+            1,
+            FavoritesFilterSnapshot(
+                "0",
+                "alpha",
+                (FavoriteItemSnapshot("1", "Alpha"),),
+            ),
+        )
+        self.assertEqual(
+            [card.snapshot.album_id for card in self.page.favorite_cards],
+            ["1"],
+        )
+        self.assertEqual(self.page.favorites_summary.text(), "共 1 条")
+
+    def test_card_move_uses_single_target_dialog(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "全部收藏",
+                    (FavoriteItemSnapshot("1", "Alpha"),),
+                ),
+                FavoriteFolderSnapshot("9", "Reading", ()),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+        self.favorites_controller.current_snapshot = snapshot
+        self.assertTrue(self.page.favorite_cards[0].move_button.isEnabled())
+
+        with patch(
+            "jm_downloader.qt.pages.favorites_page.FavoriteTargetDialog.choose",
+            return_value="9",
+        ):
+            self.page.favorite_cards[0].move_button.click()
+
+        self.favorites_controller.move_album.assert_called_once_with("1", "9")
 
         self.page._on_favorites_busy_changed(True, "add")
 
