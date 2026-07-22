@@ -17,8 +17,12 @@ from jm_downloader.favorites import (
     FavoritesAccountMismatch,
     FavoritesAddUncertain,
     FavoritesCache,
+    FavoritesFolderExists,
+    FavoritesFolderProtected,
     FavoritesInvalidAlbumId,
+    FavoritesInvalidFolderName,
     FavoritesLocalDataError,
+    FavoritesMutationUncertain,
     FavoritesOperationCancelled,
     FavoritesResponseError,
     FavoritesService,
@@ -527,6 +531,191 @@ class FavoritesServiceTests(unittest.TestCase):
             client.calls,
             [("add_favorite_album", "777777", "0")],
         )
+
+    def test_create_folder_rejects_invalid_and_duplicate_names_offline(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+
+        for value in (None, "", "   ", "bad\nname", "x" * 257):
+            with self.subTest(value=value):
+                with self.assertRaises(FavoritesInvalidFolderName):
+                    service.create_folder(value, service.start_operation())
+
+        self.assertEqual(service.factory_calls, [])
+        self.assertEqual(client.calls, [])
+
+        self.sync(service)
+        service.factory_calls.clear()
+        client.calls.clear()
+        with self.assertRaises(FavoritesFolderExists):
+            service.create_folder(
+                "  second FOLDER  ",
+                service.start_operation(),
+            )
+        self.assertEqual(service.factory_calls, [])
+        self.assertEqual(client.calls, [])
+
+    def test_confirmed_folder_write_does_not_optimistically_change_cache(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        old_snapshot = self.sync(service)
+        old_bytes = self.paths.favorites_file.read_bytes()
+        client.calls.clear()
+
+        result = service.create_folder("Later", service.start_operation())
+
+        self.assertEqual(result, "Later")
+        self.assertIs(service.snapshot, old_snapshot)
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_bytes)
+        self.assertIn(
+            "Later",
+            [name for name, _items in client.folders.values()],
+        )
+
+    def test_folder_mutation_expiry_is_safe_and_not_retried(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.retry_times = 6
+        client.favorite_folder_mutation_errors["add"] = PermissionError(
+            "private response"
+        )
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesSessionExpired):
+            service.create_folder("Later", service.start_operation())
+
+        self.assertEqual(client.retry_times, 0)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(
+            client.calls[0][0:2],
+            ("favorite_folder_mutation", "add"),
+        )
+        self.assertEqual(
+            self.account_service.snapshot.status,
+            AccountStatus.EXPIRED,
+        )
+
+    def test_folder_mutation_rejected_response_is_uncertain_once(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        client.favorite_folder_mutation_response = replace(
+            client.favorite_folder_mutation_response,
+            status="failed",
+        )
+        service = self.service(client)
+
+        with self.assertRaises(FavoritesMutationUncertain):
+            service.create_folder("Later", service.start_operation())
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(
+            client.calls[0][0:2],
+            ("favorite_folder_mutation", "add"),
+        )
+
+    def test_delete_rejects_all_folder_before_client_creation(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        self.sync(service)
+        service.factory_calls.clear()
+        client.calls.clear()
+
+        with self.assertRaises(FavoritesFolderProtected):
+            service.delete_folder("0", service.start_operation())
+
+        self.assertEqual(service.factory_calls, [])
+        self.assertEqual(client.calls, [])
+
+    def test_delete_preflight_uses_snapshot_order_and_maps_expiry(self):
+        folders = self.populated_folders()
+        folders["8"] = ("Second folder", ())
+        client = FakeJmAccountClient(folders=folders)
+        service = self.service(client)
+        service.sync(service.start_operation(), order_by="mp")
+        client.calls.clear()
+        client.favorite_errors[("8", 1)] = PermissionError(
+            "private response"
+        )
+
+        with self.assertRaises(FavoritesSessionExpired):
+            service.delete_folder("8", service.start_operation())
+
+        self.assertEqual(
+            client.calls,
+            [("favorite_folder", 1, "mp", "8", "")],
+        )
+        self.assertFalse(
+            any(call[0] == "favorite_folder_mutation" for call in client.calls)
+        )
+
+    def test_delete_discards_nonempty_preflight_after_account_change(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        self.sync(service)
+        client.calls.clear()
+        original = client.favorite_folder
+
+        def preflight_then_logout(*args, **kwargs):
+            response = original(*args, **kwargs)
+            self.account_service.logout(
+                self.account_service.prepare_logout()
+            )
+            return response
+
+        client.favorite_folder = preflight_then_logout
+
+        with self.assertRaises(FavoritesOperationCancelled):
+            service.delete_folder("8", service.start_operation())
+
+        self.assertEqual(
+            client.calls,
+            [("favorite_folder", 1, "mr", "8", "")],
+        )
+        self.assertFalse(
+            any(call[0] == "favorite_folder_mutation" for call in client.calls)
+        )
+
+    def test_account_switch_cannot_reuse_the_previous_snapshot_targets(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        self.sync(service)
+        self.account_service.logout(self.account_service.prepare_logout())
+        self.account_client.uid = "20002"
+        self.account_service.login(
+            "test-user",
+            "test-password",
+            self.account_service.start_operation(),
+        )
+        service.factory_calls.clear()
+        client.calls.clear()
+
+        with self.assertRaises(ValueError):
+            service.move_album("1", "8", service.start_operation())
+
+        self.assertEqual(service.factory_calls, [])
+        self.assertEqual(client.calls, [])
+
+    def test_account_change_after_remote_write_discards_local_success(self):
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+        original = client.req_api
+
+        def mutate_then_logout(*args, **kwargs):
+            response = original(*args, **kwargs)
+            self.account_service.logout(
+                self.account_service.prepare_logout()
+            )
+            return response
+
+        client.req_api = mutate_then_logout
+
+        with self.assertRaises(FavoritesOperationCancelled):
+            service.create_folder("Later", service.start_operation())
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(
+            client.calls[0][0:2],
+            ("favorite_folder_mutation", "add"),
+        )
+        self.assertIsNone(service.snapshot)
 
     def test_restore_is_offline_and_empty_cache_does_not_create_file(self):
         service = self.service(FakeJmAccountClient())

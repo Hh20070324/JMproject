@@ -6,7 +6,10 @@ from unittest.mock import Mock, patch
 
 import jmcomic
 
-from jm_downloader.favorites import _invoke_add_favorite
+from jm_downloader.favorites import (
+    _invoke_add_favorite,
+    _invoke_favorite_folder_mutation,
+)
 from tests.account_fakes import FakeJmAccountClient
 
 
@@ -230,6 +233,38 @@ class JmcomicAccountContractTests(unittest.TestCase):
                     "req_api",
                     ("/favorite",),
                     {"get": False, "data": {"aid": "1449491"}},
+                ),
+                ("require_resp_status_ok", response),
+            ],
+        )
+
+    def test_favorite_folder_mutation_dispatches_one_reviewed_post(self):
+        response = SimpleNamespace(status="ok")
+
+        class ContractClient:
+            def __init__(self):
+                self.calls = []
+
+            def req_api(self, *args, **kwargs):
+                self.calls.append(("req_api", args, kwargs))
+                return response
+
+            def require_resp_status_ok(self, value):
+                self.calls.append(("require_resp_status_ok", value))
+
+        client = ContractClient()
+        payload = {"type": "move", "aid": "1449491", "folder_id": "8"}
+
+        result = _invoke_favorite_folder_mutation(client, payload)
+
+        self.assertIsNone(result)
+        self.assertEqual(
+            client.calls,
+            [
+                (
+                    "req_api",
+                    ("/favorite_folder",),
+                    {"get": False, "data": payload},
                 ),
                 ("require_resp_status_ok", response),
             ],

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import threading
+import unicodedata
 
 import jmcomic
 from curl_cffi.requests.exceptions import RequestException
@@ -39,6 +40,7 @@ LEGACY_FAVORITES_PAYLOAD_SCHEMA_VERSION = 1
 ALL_FAVORITES_FOLDER_ID = "0"
 ALL_FAVORITES_FOLDER_NAME = "全部收藏"
 FAVORITES_ORDER_BY_VALUES = frozenset({"mr", "mp"})
+FAVORITE_FOLDER_ENDPOINT = "/favorite_folder"
 MAX_ALBUM_ID_LENGTH = 32
 MAX_FOLDER_COUNT = 1_000
 MAX_FOLDER_ID_LENGTH = 32
@@ -85,6 +87,31 @@ class FavoritesToggleRemoved(FavoritesError):
         "检测到该漫画已在远端收藏，本次操作已将其移除；"
         "请手动同步收藏夹"
     )
+
+
+class FavoritesMutationUncertain(FavoritesError):
+    code = "mutation_uncertain"
+    default_message = "收藏夹修改结果无法确认，请手动同步"
+
+
+class FavoritesInvalidFolderName(FavoritesError):
+    code = "invalid_folder_name"
+    default_message = "收藏夹名称不符合要求"
+
+
+class FavoritesFolderExists(FavoritesError):
+    code = "folder_exists"
+    default_message = "已存在同名收藏夹"
+
+
+class FavoritesFolderNotEmpty(FavoritesError):
+    code = "folder_not_empty"
+    default_message = "只能删除空收藏夹"
+
+
+class FavoritesFolderProtected(FavoritesError):
+    code = "folder_protected"
+    default_message = "“全部收藏”不能删除"
 
 
 class FavoritesInvalidAlbumId(FavoritesError):
@@ -267,6 +294,7 @@ class FavoritesService:
         self._lock = threading.RLock()
         self._operation_generation = 0
         self._snapshot: FavoritesSnapshot | None = None
+        self._snapshot_account_uid: str | None = None
 
     @property
     def snapshot(self) -> FavoritesSnapshot | None:
@@ -286,6 +314,7 @@ class FavoritesService:
         with self._lock:
             self._operation_generation += 1
             self._snapshot = None
+            self._snapshot_account_uid = None
 
     def restore(self, operation: int) -> FavoritesSnapshot:
         session = self._require_local_session()
@@ -405,6 +434,160 @@ class FavoritesService:
         if mutation_type == "remove":
             raise FavoritesToggleRemoved()
         return album_id
+
+    def create_folder(self, name: str, operation: int) -> str:
+        name = _normalize_folder_name(name)
+        session = self._require_session()
+        self._ensure_current_session(operation, session)
+        snapshot = self._snapshot_for_session(session)
+        if snapshot is not None and any(
+            folder.name.casefold() == name.casefold()
+            for folder in snapshot.folders
+        ):
+            raise FavoritesFolderExists()
+        session, client = self._prepare_folder_mutation(operation, session)
+        self._invoke_folder_mutation(
+            client,
+            session,
+            operation,
+            {"type": "add", "folder_name": name},
+            "create",
+        )
+        return name
+
+    def delete_folder(self, folder_id: str, operation: int) -> str:
+        session = self._require_session()
+        self._ensure_current_session(operation, session)
+        snapshot = self._snapshot_for_session(session)
+        folder_id = _normalize_known_folder_id(
+            folder_id,
+            snapshot,
+            allow_all=False,
+        )
+        session, client = self._prepare_folder_mutation(operation, session)
+        try:
+            response = client.favorite_folder(
+                page=1,
+                order_by=snapshot.order_by,
+                folder_id=folder_id,
+                username="",
+            )
+            page_items, total, _page_count = _adapt_page(response)
+            self._ensure_current_session(operation, session)
+            if total or page_items:
+                raise FavoritesFolderNotEmpty()
+        except (FavoritesFolderNotEmpty, FavoritesOperationCancelled):
+            raise
+        except Exception as error:
+            mapped = _map_sync_error(error)
+            LOGGER.warning(
+                "Favorite folder delete preflight failed: category=%s "
+                "error_type=%s",
+                mapped.code,
+                type(error).__name__,
+            )
+            self._handle_sync_error(mapped, session)
+            raise mapped from None
+        self._invoke_folder_mutation(
+            client,
+            session,
+            operation,
+            {"type": "del", "folder_id": folder_id},
+            "delete",
+        )
+        return folder_id
+
+    def move_album(
+        self,
+        album_id: str,
+        folder_id: str,
+        operation: int,
+    ) -> str:
+        album_id = _normalize_add_album_id(album_id)
+        session = self._require_session()
+        self._ensure_current_session(operation, session)
+        snapshot = self._snapshot_for_session(session)
+        folder_id = _normalize_known_folder_id(
+            folder_id,
+            snapshot,
+            allow_all=True,
+        )
+        session, client = self._prepare_folder_mutation(operation, session)
+        self._invoke_folder_mutation(
+            client,
+            session,
+            operation,
+            {
+                "type": "move",
+                "aid": album_id,
+                "folder_id": (
+                    "" if folder_id == ALL_FAVORITES_FOLDER_ID else folder_id
+                ),
+            },
+            "move",
+        )
+        return album_id
+
+    def _prepare_folder_mutation(
+        self,
+        operation: int,
+        session: AccountSession,
+    ) -> tuple[AccountSession, object]:
+        self._ensure_current_session(operation, session)
+        try:
+            client = self._client_factory(session.cookie_dict())
+            _disable_mutation_retries(client)
+            self._ensure_current_session(operation, session)
+            return session, client
+        except FavoritesError:
+            raise
+        except Exception as error:
+            mapped = _map_sync_error(error)
+            LOGGER.warning(
+                "Favorite folder mutation setup failed: category=%s "
+                "error_type=%s",
+                mapped.code,
+                type(error).__name__,
+            )
+            self._handle_sync_error(mapped, session)
+            raise mapped from None
+
+    def _invoke_folder_mutation(
+        self,
+        client,
+        session: AccountSession,
+        operation: int,
+        data: Mapping[str, str],
+        command: str,
+    ) -> None:
+        try:
+            _invoke_favorite_folder_mutation(client, data)
+        except Exception as error:
+            mapped = _map_mutation_error(error)
+            LOGGER.warning(
+                "Favorite folder mutation failed: command=%s category=%s "
+                "error_type=%s",
+                command,
+                mapped.code,
+                type(error).__name__,
+            )
+            self._handle_sync_error(mapped, session)
+            raise mapped from None
+        self._ensure_current_session(operation, session)
+        try:
+            self.account_service.confirm_session(session)
+        except AccountOperationCancelled:
+            raise FavoritesOperationCancelled() from None
+        self._ensure_current_session(operation, session)
+
+    def _snapshot_for_session(
+        self,
+        session: AccountSession,
+    ) -> FavoritesSnapshot | None:
+        with self._lock:
+            if self._snapshot_account_uid != session.uid:
+                return None
+            return self._snapshot
 
     def _fetch_all(
         self,
@@ -551,6 +734,7 @@ class FavoritesService:
         except FavoritesError:
             with self._lock:
                 self._snapshot = None
+                self._snapshot_account_uid = None
             raise FavoritesStorageError(
                 "同步取消后无法恢复原收藏数据"
             ) from None
@@ -613,6 +797,7 @@ class FavoritesService:
             if operation != self._operation_generation:
                 raise FavoritesOperationCancelled()
             self._snapshot = snapshot
+            self._snapshot_account_uid = session.uid
             return snapshot
 
 
@@ -964,6 +1149,44 @@ def _normalize_add_album_id(value: str) -> str:
     return str(int(album_id))
 
 
+def _normalize_folder_name(value: str) -> str:
+    if not isinstance(value, str):
+        raise FavoritesInvalidFolderName()
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > MAX_FOLDER_NAME_LENGTH
+        or any(
+            unicodedata.category(character).startswith("C")
+            for character in normalized
+        )
+    ):
+        raise FavoritesInvalidFolderName()
+    return normalized
+
+
+def _normalize_known_folder_id(
+    value,
+    snapshot: FavoritesSnapshot | None,
+    *,
+    allow_all: bool,
+) -> str:
+    try:
+        folder_id = _bounded_numeric_id(value, MAX_FOLDER_ID_LENGTH)
+    except ValueError:
+        raise ValueError("folder_id must be one known folder ID") from None
+    if folder_id == ALL_FAVORITES_FOLDER_ID and not allow_all:
+        raise FavoritesFolderProtected()
+    known_ids = (
+        frozenset(folder.folder_id for folder in snapshot.folders)
+        if snapshot is not None and snapshot.synced_at_utc is not None
+        else frozenset()
+    )
+    if folder_id not in known_ids:
+        raise ValueError("folder_id must be one known folder ID")
+    return folder_id
+
+
 def _disable_mutation_retries(client) -> None:
     try:
         client.retry_times = 0
@@ -999,6 +1222,30 @@ def _invoke_add_favorite(client, album_id: str) -> str:
     if mutation_type not in {"add", "remove"}:
         raise FavoritesAddUncertain()
     return mutation_type
+
+
+def _invoke_favorite_folder_mutation(
+    client,
+    data: Mapping[str, str],
+) -> None:
+    response = client.req_api(
+        FAVORITE_FOLDER_ENDPOINT,
+        get=False,
+        data=dict(data),
+    )
+    client.require_resp_status_ok(response)
+
+
+def _map_mutation_error(error: Exception) -> FavoritesError:
+    if isinstance(error, FavoritesError):
+        return error
+    if isinstance(error, PermissionError):
+        return FavoritesSessionExpired()
+    if isinstance(error, jmcomic.ResponseUnexpectedException):
+        status = _response_status(error)
+        if status in {401, 403}:
+            return FavoritesSessionExpired()
+    return FavoritesMutationUncertain()
 
 
 def _map_add_error(error: Exception) -> FavoritesError:
@@ -1069,7 +1316,12 @@ __all__ = [
     "FavoritesCache",
     "FavoritesError",
     "FavoritesInvalidAlbumId",
+    "FavoritesInvalidFolderName",
     "FavoritesLocalDataError",
+    "FavoritesFolderExists",
+    "FavoritesFolderNotEmpty",
+    "FavoritesFolderProtected",
+    "FavoritesMutationUncertain",
     "FavoritesOperationCancelled",
     "FavoritesResponseError",
     "FavoritesService",
