@@ -31,10 +31,20 @@ class FakeFavoriteAddResponse:
         return self
 
 
+@dataclass(frozen=True)
+class FakeFavoriteFolderMutationResponse:
+    status: str = "ok"
+
+    @property
+    def model_data(self):
+        return self
+
+
 class FakeJmAccountClient:
     """Offline fake limited to the JMComic account/favorites contract."""
 
     API_FAVORITE = "/favorite"
+    API_FAVORITE_FOLDER = "/favorite_folder"
 
     def __init__(
         self,
@@ -72,6 +82,10 @@ class FakeJmAccountClient:
         self.favorite_errors: dict[tuple[str, int], Exception] = {}
         self.favorite_add_error: Exception | None = None
         self.favorite_add_response = FakeFavoriteAddResponse()
+        self.favorite_folder_mutation_errors: dict[str, Exception] = {}
+        self.favorite_folder_mutation_response = (
+            FakeFavoriteFolderMutationResponse()
+        )
 
     def login(self, username, password):
         self.calls.append(("login", username))
@@ -168,16 +182,81 @@ class FakeJmAccountClient:
         return self.favorite_add_response
 
     def req_api(self, url, get=True, require_success=True, **kwargs):
-        if (
-            url != self.API_FAVORITE
-            or get is not False
-            or require_success is not True
-            or set(kwargs) != {"data"}
-            or not isinstance(kwargs["data"], dict)
-            or set(kwargs["data"]) != {"aid"}
-        ):
+        if get is not False or require_success is not True:
             raise ValueError("unexpected fake favorite mutation request")
-        return self.add_favorite_album(kwargs["data"]["aid"])
+        if set(kwargs) != {"data"} or not isinstance(kwargs["data"], dict):
+            raise ValueError("unexpected fake favorite mutation payload")
+        data = dict(kwargs["data"])
+        if url == self.API_FAVORITE and set(data) == {"aid"}:
+            return self.add_favorite_album(data["aid"])
+        if url == self.API_FAVORITE_FOLDER:
+            return self._mutate_favorite_folder(data)
+        raise ValueError("unexpected fake favorite mutation request")
+
+    def _mutate_favorite_folder(self, data):
+        mutation_type = data.get("type")
+        expected_keys = {
+            "add": {"type", "folder_name"},
+            "del": {"type", "folder_id"},
+            "move": {"type", "aid", "folder_id"},
+        }
+        if mutation_type not in expected_keys or set(data) != expected_keys[
+            mutation_type
+        ]:
+            raise ValueError("unexpected fake favorite folder payload")
+        self.calls.append(
+            ("favorite_folder_mutation", mutation_type, dict(data))
+        )
+        error = self.favorite_folder_mutation_errors.get(mutation_type)
+        if error is not None:
+            raise error
+
+        if mutation_type == "add":
+            numeric_ids = [
+                int(folder_id)
+                for folder_id in self.folders
+                if str(folder_id).isdigit()
+            ]
+            folder_id = str(max(numeric_ids, default=0) + 1)
+            self.folders[folder_id] = (str(data["folder_name"]), ())
+        elif mutation_type == "del":
+            folder_id = str(data["folder_id"])
+            if folder_id == "0" or folder_id not in self.folders:
+                raise ValueError("fake cannot delete this favorite folder")
+            if self.folders[folder_id][1]:
+                raise ValueError("fake cannot delete a non-empty folder")
+            del self.folders[folder_id]
+        else:
+            album_id = str(data["aid"])
+            target_id = str(data["folder_id"])
+            source_item = None
+            for folder_id, (name, items) in tuple(self.folders.items()):
+                if folder_id != "0":
+                    self.folders[folder_id] = (
+                        name,
+                        tuple(
+                            item
+                            for item in items
+                            if str(item[0]) != album_id
+                        ),
+                    )
+                if source_item is None:
+                    source_item = next(
+                        (
+                            item
+                            for item in items
+                            if str(item[0]) == album_id
+                        ),
+                        None,
+                    )
+            if target_id:
+                if target_id not in self.folders or target_id == "0":
+                    raise ValueError("unknown fake favorite target")
+                if source_item is None:
+                    source_item = (album_id, {"name": None})
+                name, items = self.folders[target_id]
+                self.folders[target_id] = (name, items + (source_item,))
+        return self.favorite_folder_mutation_response
 
     @staticmethod
     def require_resp_status_ok(response):
