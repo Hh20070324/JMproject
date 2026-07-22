@@ -96,6 +96,11 @@ class FavoriteFolderSnapshot:
 class FavoritesSnapshot:
     synced_at_utc: str | None
     folders: tuple[FavoriteFolderSnapshot, ...]
+    order_by: str = "mr"
+
+    def __post_init__(self):
+        if self.order_by not in {"mr", "mp"}:
+            raise ValueError("order_by must be mr or mp")
 
 
 @dataclass(frozen=True, slots=True)

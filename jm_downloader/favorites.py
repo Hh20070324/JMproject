@@ -34,9 +34,11 @@ from .tasks import InvalidAlbumId, normalize_album_id
 
 
 LOGGER = logging.getLogger("jm-downloader")
-FAVORITES_PAYLOAD_SCHEMA_VERSION = 1
-DEFAULT_FOLDER_ID = "0"
-DEFAULT_FOLDER_NAME = "默认收藏"
+FAVORITES_PAYLOAD_SCHEMA_VERSION = 2
+LEGACY_FAVORITES_PAYLOAD_SCHEMA_VERSION = 1
+ALL_FAVORITES_FOLDER_ID = "0"
+ALL_FAVORITES_FOLDER_NAME = "全部收藏"
+FAVORITES_ORDER_BY_VALUES = frozenset({"mr", "mp"})
 MAX_ALBUM_ID_LENGTH = 32
 MAX_FOLDER_COUNT = 1_000
 MAX_FOLDER_ID_LENGTH = 32
@@ -120,15 +122,42 @@ class FavoritesCache:
     account_uid: str
     synced_at_utc: str
     folders: tuple[FavoriteFolderSnapshot, ...]
+    order_by: str = "mr"
+
+    def __post_init__(self):
+        _favorites_order_by(self.order_by)
+        if (
+            self.folders
+            and self.folders[0].folder_id == ALL_FAVORITES_FOLDER_ID
+            and self.folders[0].name != ALL_FAVORITES_FOLDER_NAME
+        ):
+            first = self.folders[0]
+            object.__setattr__(
+                self,
+                "folders",
+                (
+                    FavoriteFolderSnapshot(
+                        first.folder_id,
+                        ALL_FAVORITES_FOLDER_NAME,
+                        first.items,
+                    ),
+                    *self.folders[1:],
+                ),
+            )
 
     def to_snapshot(self) -> FavoritesSnapshot:
-        return FavoritesSnapshot(self.synced_at_utc, self.folders)
+        return FavoritesSnapshot(
+            self.synced_at_utc,
+            self.folders,
+            self.order_by,
+        )
 
     def to_payload(self) -> dict:
         return {
             "schema_version": FAVORITES_PAYLOAD_SCHEMA_VERSION,
             "account_uid": self.account_uid,
             "synced_at_utc": self.synced_at_utc,
+            "order_by": self.order_by,
             "folders": [
                 {
                     "folder_id": folder.folder_id,
@@ -273,9 +302,12 @@ class FavoritesService:
         self,
         operation: int,
         progress_callback: Callable[[FavoritesSyncProgress], None] | None = None,
+        *,
+        order_by: str = "mr",
     ) -> FavoritesSnapshot:
         if progress_callback is not None and not callable(progress_callback):
             raise TypeError("progress_callback must be callable")
+        order_by = _favorites_order_by(order_by)
         session = self._require_session()
         old_cache = self.cache_store.load(session.uid)
         self._ensure_current_session(operation, session)
@@ -287,6 +319,7 @@ class FavoritesService:
                 session,
                 operation,
                 progress_callback,
+                order_by,
             )
         except FavoritesError as error:
             self._handle_sync_error(error, session)
@@ -305,6 +338,7 @@ class FavoritesService:
             session.uid,
             _format_utc(self._clock()),
             folders,
+            order_by,
         )
         self._ensure_current_session(operation, session)
         try:
@@ -378,12 +412,13 @@ class FavoritesService:
         session: AccountSession,
         operation: int,
         progress_callback: Callable[[FavoritesSyncProgress], None] | None,
+        order_by: str,
     ) -> tuple[FavoriteFolderSnapshot, ...]:
         self._ensure_current_session(operation, session)
         first_page = client.favorite_folder(
             page=1,
-            order_by="mr",
-            folder_id=DEFAULT_FOLDER_ID,
+            order_by=order_by,
+            folder_id=ALL_FAVORITES_FOLDER_ID,
             username="",
         )
         folder_specs = _folder_specs(first_page)
@@ -400,8 +435,9 @@ class FavoritesService:
                 folder_name,
                 index,
                 folder_count,
-                first_page if folder_id == DEFAULT_FOLDER_ID else None,
+                first_page if folder_id == ALL_FAVORITES_FOLDER_ID else None,
                 progress_callback,
+                order_by,
             )
             total_items += len(folder.items)
             if total_items > MAX_TOTAL_ITEMS:
@@ -420,6 +456,7 @@ class FavoritesService:
         folder_count: int,
         first_page,
         progress_callback: Callable[[FavoritesSyncProgress], None] | None,
+        order_by: str,
     ) -> FavoriteFolderSnapshot:
         requested_page = 1
         response = first_page
@@ -432,7 +469,7 @@ class FavoritesService:
             if response is None:
                 response = client.favorite_folder(
                     page=requested_page,
-                    order_by="mr",
+                    order_by=order_by,
                     folder_id=folder_id,
                     username="",
                 )
@@ -583,8 +620,8 @@ def _folder_specs(first_page) -> tuple[tuple[str, str], ...]:
     raw_folders = getattr(first_page, "folder_list", None)
     if not isinstance(raw_folders, (list, tuple)):
         raise FavoritesResponseError()
-    specs = [(DEFAULT_FOLDER_ID, DEFAULT_FOLDER_NAME)]
-    positions = {DEFAULT_FOLDER_ID: 0}
+    specs = [(ALL_FAVORITES_FOLDER_ID, ALL_FAVORITES_FOLDER_NAME)]
+    positions = {ALL_FAVORITES_FOLDER_ID: 0}
     for raw in raw_folders:
         if not isinstance(raw, Mapping):
             raise FavoritesResponseError()
@@ -595,8 +632,10 @@ def _folder_specs(first_page) -> tuple[tuple[str, str], ...]:
             required=True,
         )
         if folder_id in positions:
-            if folder_id == DEFAULT_FOLDER_ID and positions[folder_id] == 0:
-                specs[0] = (folder_id, folder_name)
+            if (
+                folder_id == ALL_FAVORITES_FOLDER_ID
+                and positions[folder_id] == 0
+            ):
                 positions[folder_id] = -1
                 continue
             raise FavoritesResponseError()
@@ -647,15 +686,31 @@ def _adapt_remote_item(raw) -> FavoriteItemSnapshot:
 
 
 def _cache_from_payload(payload: Mapping) -> FavoritesCache:
-    if not isinstance(payload, Mapping) or set(payload) != {
-        "schema_version",
-        "account_uid",
-        "synced_at_utc",
-        "folders",
-    }:
+    if not isinstance(payload, Mapping):
         raise FavoritesLocalDataError()
-    if payload.get("schema_version") != FAVORITES_PAYLOAD_SCHEMA_VERSION:
+    version = payload.get("schema_version")
+    expected_keys = {
+        LEGACY_FAVORITES_PAYLOAD_SCHEMA_VERSION: {
+            "schema_version",
+            "account_uid",
+            "synced_at_utc",
+            "folders",
+        },
+        FAVORITES_PAYLOAD_SCHEMA_VERSION: {
+            "schema_version",
+            "account_uid",
+            "synced_at_utc",
+            "order_by",
+            "folders",
+        },
+    }
+    if version not in expected_keys or set(payload) != expected_keys[version]:
         raise FavoritesLocalDataError()
+    order_by = (
+        "mr"
+        if version == LEGACY_FAVORITES_PAYLOAD_SCHEMA_VERSION
+        else _cache_order_by(payload.get("order_by"))
+    )
     uid = _cache_uid(payload.get("account_uid"))
     synced_at = _cache_timestamp(payload.get("synced_at_utc"))
     raw_folders = payload.get("folders")
@@ -684,6 +739,8 @@ def _cache_from_payload(payload: Mapping) -> FavoritesCache:
             MAX_FOLDER_NAME_LENGTH,
             required=True,
         )
+        if folder_id == ALL_FAVORITES_FOLDER_ID:
+            name = ALL_FAVORITES_FOLDER_NAME
         raw_items = raw_folder.get("items")
         if not isinstance(raw_items, list):
             raise FavoritesLocalDataError()
@@ -699,9 +756,24 @@ def _cache_from_payload(payload: Mapping) -> FavoritesCache:
         if total_items > MAX_TOTAL_ITEMS:
             raise FavoritesLocalDataError()
         folders.append(FavoriteFolderSnapshot(folder_id, name, tuple(items)))
-    if not folders or folders[0].folder_id != DEFAULT_FOLDER_ID:
+    if not folders or folders[0].folder_id != ALL_FAVORITES_FOLDER_ID:
         raise FavoritesLocalDataError()
-    return FavoritesCache(uid, synced_at, tuple(folders))
+    return FavoritesCache(uid, synced_at, tuple(folders), order_by)
+
+
+def _favorites_order_by(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("order_by must be text")
+    if value not in FAVORITES_ORDER_BY_VALUES:
+        raise ValueError("order_by must be mr or mp")
+    return value
+
+
+def _cache_order_by(value) -> str:
+    try:
+        return _favorites_order_by(value)
+    except (TypeError, ValueError):
+        raise FavoritesLocalDataError() from None
 
 
 def _cache_item(raw_item) -> FavoriteItemSnapshot:

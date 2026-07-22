@@ -80,7 +80,7 @@ class ProtectedStoreTests(unittest.TestCase):
     @staticmethod
     def _favorites_payload(**changes):
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "uid": "10001",
             "folders": [
                 {
@@ -123,7 +123,7 @@ class ProtectedStoreTests(unittest.TestCase):
         self.assertEqual(self.favorites.kind, ProtectedStoreKind.FAVORITES)
         self.assertEqual(self.favorites.path, self.paths.favorites_file)
         self.assertEqual(self.account.payload_schema_version, 1)
-        self.assertEqual(self.favorites.payload_schema_version, 1)
+        self.assertEqual(self.favorites.payload_schema_version, 2)
         self.assertGreater(
             self.favorites.max_plaintext_bytes,
             self.account.max_plaintext_bytes,

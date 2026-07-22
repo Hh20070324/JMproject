@@ -185,6 +185,7 @@ class _StoreSpec:
     kind: ProtectedStoreKind
     filename: str
     payload_schema_version: int
+    readable_payload_schema_versions: frozenset[int]
     max_plaintext_bytes: int
 
     @property
@@ -202,12 +203,14 @@ _STORE_SPECS = {
         ProtectedStoreKind.ACCOUNT,
         "account.dat",
         1,
+        frozenset({1}),
         ACCOUNT_MAX_PLAINTEXT_BYTES,
     ),
     ProtectedStoreKind.FAVORITES: _StoreSpec(
         ProtectedStoreKind.FAVORITES,
         "favorites.dat",
-        1,
+        2,
+        frozenset({1, 2}),
         FAVORITES_MAX_PLAINTEXT_BYTES,
     ),
 }
@@ -460,7 +463,7 @@ class ProtectedStore:
             raise UnsupportedProtectedPayloadVersion(
                 "受保护载荷版本高于程序支持的版本"
             )
-        if version != self.payload_schema_version:
+        if version not in self.spec.readable_payload_schema_versions:
             raise ProtectedStoreValidationError("不支持的受保护载荷版本")
         return payload
 

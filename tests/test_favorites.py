@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+import json
 import logging
 import tempfile
 import threading
@@ -138,6 +139,20 @@ class FavoritesServiceTests(unittest.TestCase):
         operation = service.start_operation()
         return service.add_album(album_id, operation)
 
+    def write_legacy_cache(self, cache):
+        payload = cache.to_payload()
+        payload["schema_version"] = 1
+        payload.pop("order_by")
+        plaintext = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        ciphertext = self.protector.protect(plaintext)
+        envelope = self.favorites_protected._encode_envelope(ciphertext)
+        self.paths.favorites_file.write_bytes(envelope)
+
     def test_complete_sync_reads_default_custom_and_all_pages(self):
         client = FakeJmAccountClient(
             folders=self.populated_folders(),
@@ -151,7 +166,7 @@ class FavoritesServiceTests(unittest.TestCase):
         self.assertEqual(snapshot.synced_at_utc, "2026-07-16T12:45:00Z")
         self.assertEqual(
             [(folder.folder_id, folder.name) for folder in snapshot.folders],
-            [("0", "Default"), ("8", "Second folder")],
+            [("0", "全部收藏"), ("8", "Second folder")],
         )
         self.assertEqual(
             [item.album_id for item in snapshot.folders[0].items],
@@ -523,6 +538,25 @@ class FavoritesServiceTests(unittest.TestCase):
         self.assertEqual(service.factory_calls, [])
         self.assertFalse(self.paths.favorites_file.exists())
 
+    def test_legacy_cache_is_rewritten_only_after_successful_sync(self):
+        self.write_legacy_cache(self._sample_cache())
+        legacy_bytes = self.paths.favorites_file.read_bytes()
+        client = FakeJmAccountClient(folders=self.populated_folders())
+        service = self.service(client)
+
+        restored = service.restore(service.start_operation())
+
+        self.assertEqual(restored.order_by, "mr")
+        self.assertEqual(self.paths.favorites_file.read_bytes(), legacy_bytes)
+
+        synced = service.sync(service.start_operation(), order_by="mp")
+        payload = self.favorites_protected.load()
+
+        self.assertEqual(synced.order_by, "mp")
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["order_by"], "mp")
+        self.assertNotEqual(self.paths.favorites_file.read_bytes(), legacy_bytes)
+
     def test_empty_default_folder_is_a_successful_complete_snapshot(self):
         service = self.service(
             FakeJmAccountClient(folders={"0": ("Default", ())})
@@ -531,7 +565,7 @@ class FavoritesServiceTests(unittest.TestCase):
         snapshot = self.sync(service)
 
         self.assertEqual(len(snapshot.folders), 1)
-        self.assertEqual(snapshot.folders[0].name, "Default")
+        self.assertEqual(snapshot.folders[0].name, "全部收藏")
         self.assertEqual(snapshot.folders[0].items, ())
         self.assertTrue(self.paths.favorites_file.is_file())
 
@@ -988,17 +1022,39 @@ class FavoriteCacheStoreTests(unittest.TestCase):
         self.store.save(cache)
         restored = self.store.load("10001")
 
+        self.assertEqual(cache.folders[0].name, "全部收藏")
         self.assertEqual(restored, cache)
         self.assertEqual(restored.to_snapshot().folders, cache.folders)
         raw = self.paths.favorites_file.read_bytes()
         for secret in (b"10001", b"Title", b"Author", b"Tag"):
             self.assertNotIn(secret, raw)
 
-    def test_invalid_cache_item_types_and_duplicates_are_rejected(self):
-        base = {
+    def test_schema_v1_defaults_to_mr_and_canonicalizes_all_folder(self):
+        payload = {
             "schema_version": 1,
             "account_uid": "10001",
             "synced_at_utc": "2026-07-16T12:45:00Z",
+            "folders": [
+                {
+                    "folder_id": "0",
+                    "name": "Default",
+                    "items": [],
+                }
+            ],
+        }
+
+        cache = FavoritesCache.from_payload(payload)
+
+        self.assertEqual(cache.order_by, "mr")
+        self.assertEqual(cache.folders[0].name, "全部收藏")
+        self.assertEqual(cache.to_snapshot().order_by, "mr")
+
+    def test_invalid_cache_item_types_and_duplicates_are_rejected(self):
+        base = {
+            "schema_version": 2,
+            "account_uid": "10001",
+            "synced_at_utc": "2026-07-16T12:45:00Z",
+            "order_by": "mr",
             "folders": [
                 {
                     "folder_id": "0",
@@ -1015,6 +1071,8 @@ class FavoriteCacheStoreTests(unittest.TestCase):
             ],
         }
         invalid_payloads = []
+        invalid_order = {**base, "order_by": "newest"}
+        invalid_payloads.append(invalid_order)
         wrong_type = {
             **base,
             "folders": [{**base["folders"][0], "items": "not-a-list"}],

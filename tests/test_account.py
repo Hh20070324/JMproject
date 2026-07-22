@@ -193,7 +193,7 @@ class AccountServiceTests(unittest.TestCase):
         service = self.service([old_client, new_client])
         self.login(service)
         self.favorites_protected.save(
-            {"schema_version": 1, "uid": "10001", "folders": []}
+            {"schema_version": 2, "uid": "10001", "folders": []}
         )
         service.mark_expired()
 
@@ -276,7 +276,7 @@ class AccountServiceTests(unittest.TestCase):
         service = self.service()
         self.login(service)
         self.favorites_protected.save(
-            {"schema_version": 1, "uid": "10001", "folders": []}
+            {"schema_version": 2, "uid": "10001", "folders": []}
         )
         operation = service.prepare_logout()
 
