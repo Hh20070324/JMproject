@@ -94,6 +94,15 @@ class FavoritesV27ControllerContractTests(unittest.TestCase):
         self.assertTrue(
             self.wait_until(lambda: self.controller.current_snapshot is not None)
         )
+        self.assertIsNotNone(self.controller.sync())
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_snapshot is not None
+                and self.controller.current_snapshot.synced_at_utc is not None
+                and not self.controller.is_busy
+            )
+        )
+        self.client.calls.clear()
 
     def tearDown(self):
         self.controller.dispose()

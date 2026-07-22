@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 
 if os.name != "nt":
@@ -26,6 +27,7 @@ from jm_downloader.models import (
 )
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.account_controller import AccountController
+import jm_downloader.qt.controllers.favorites_controller as favorites_controller_module
 from jm_downloader.qt.controllers.favorites_controller import FavoritesController
 from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.theme import ThemeManager
@@ -183,6 +185,252 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertIn(AccountStatus.SIGNED_IN, account_states)
         self.assertTrue(self.paths.favorites_file.is_file())
 
+    def test_sync_preserves_the_explicit_sort_order(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+
+        self.assertIsNotNone(self.controller.sync("mp"))
+        self.assertTrue(
+            self.wait_until(
+                lambda: not self.controller.is_busy
+                and self.controller.current_snapshot.order_by == "mp"
+            )
+        )
+        first_calls = [
+            call for call in self.client.calls if call[0] == "favorite_folder"
+        ]
+        self.assertTrue(first_calls)
+        self.assertTrue(all(call[2] == "mp" for call in first_calls))
+
+        self.client.calls.clear()
+        self.assertIsNotNone(self.controller.sync())
+        self.assertTrue(
+            self.wait_until(
+                lambda: not self.controller.is_busy
+                and any(
+                    call[0] == "favorite_folder" for call in self.client.calls
+                )
+            )
+        )
+        second_calls = [
+            call for call in self.client.calls if call[0] == "favorite_folder"
+        ]
+        self.assertTrue(all(call[2] == "mp" for call in second_calls))
+
+    def test_confirmed_create_refresh_failure_preserves_the_old_cache(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        old_snapshot = self.controller.current_snapshot
+        old_cache = self.paths.favorites_file.read_bytes()
+        successes = []
+        refresh_failures = []
+        self.controller.mutation_succeeded.connect(
+            lambda *args: successes.append(args)
+        )
+        self.controller.mutation_refresh_failed.connect(
+            lambda *args: refresh_failures.append(args)
+        )
+        self.client.favorite_errors[("0", 1)] = TimeoutError("offline")
+
+        self.assertIsNotNone(self.controller.create_folder("Later"))
+
+        self.assertTrue(self.wait_until(lambda: bool(refresh_failures)))
+        self.assertEqual(successes, [("create_folder", "Later")])
+        self.assertEqual(refresh_failures[0][0], "create_folder")
+        self.assertIn("Later", [name for name, _items in self.client.folders.values()])
+        self.assertEqual(self.controller.current_snapshot, old_snapshot)
+        self.assertEqual(self.paths.favorites_file.read_bytes(), old_cache)
+
+    def test_move_and_delete_are_serial_and_auto_sync(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        successes = []
+        self.controller.mutation_succeeded.connect(
+            lambda *args: successes.append(args)
+        )
+
+        self.assertIsNotNone(self.controller.move_album("4", "0"))
+        self.assertIsNone(self.controller.delete_folder("9"))
+        self.assertTrue(
+            self.wait_until(
+                lambda: ("move_album", "4") in successes
+                and not self.controller.is_busy
+            )
+        )
+        other = next(
+            folder
+            for folder in self.controller.current_snapshot.folders
+            if folder.folder_id == "9"
+        )
+        self.assertEqual(other.items, ())
+
+        self.assertIsNotNone(self.controller.delete_folder("9"))
+        self.assertTrue(
+            self.wait_until(
+                lambda: ("delete_folder", "9") in successes
+                and not self.controller.is_busy
+            )
+        )
+        self.assertNotIn(
+            "9",
+            [folder.folder_id for folder in self.controller.current_snapshot.folders],
+        )
+
+    def test_filter_matches_id_title_and_author_but_not_tags(self):
+        self.client.folders["0"] = (
+            "Default",
+            (
+                (
+                    "101",
+                    {
+                        "name": "Alpha Story",
+                        "authors": ["Writer One"],
+                        "tags": ["Hidden Tag"],
+                    },
+                ),
+                (
+                    "202",
+                    {
+                        "name": "Beta Story",
+                        "authors": ["Writer Two"],
+                        "tags": ["Secret Tag"],
+                    },
+                ),
+            ),
+        )
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        deliveries = []
+        delivery_threads = []
+        self.controller.filter_result_changed.connect(
+            lambda generation, snapshot: (
+                deliveries.append((generation, snapshot)),
+                delivery_threads.append(QThread.currentThread()),
+            )
+        )
+        self.client.calls.clear()
+
+        for keyword, expected_ids in (
+            ("jm101", ["101"]),
+            ("alpha", ["101"]),
+            ("writer two", ["202"]),
+            ("secret tag", []),
+        ):
+            generation = self.controller.filter_items("0", keyword)
+            self.assertIsNotNone(generation)
+            self.assertTrue(
+                self.wait_until(
+                    lambda: bool(deliveries)
+                    and deliveries[-1][0] == generation
+                )
+            )
+            self.assertEqual(
+                [item.album_id for item in deliveries[-1][1].items],
+                expected_ids,
+            )
+
+        self.assertEqual(self.client.calls, [])
+        self.assertTrue(self.controller.filter_worker_is_daemon)
+        self.assertTrue(
+            all(thread is self.app.thread() for thread in delivery_threads)
+        )
+
+    def test_filter_discards_a_late_generation(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        started = threading.Event()
+        release = threading.Event()
+        deliveries = []
+        original_filter = favorites_controller_module._filter_folder_items
+
+        def delayed_filter(folder, keyword):
+            if keyword == "slow":
+                started.set()
+                release.wait(timeout=3)
+            return original_filter(folder, keyword)
+
+        self.controller.filter_result_changed.connect(
+            lambda generation, snapshot: deliveries.append(
+                (generation, snapshot)
+            )
+        )
+        with patch.object(
+            favorites_controller_module,
+            "_filter_folder_items",
+            side_effect=delayed_filter,
+        ):
+            slow_generation = self.controller.filter_items("0", "slow")
+            self.assertTrue(started.wait(timeout=1))
+            latest_generation = self.controller.filter_items("0", "two")
+            release.set()
+            self.assertTrue(
+                self.wait_until(
+                    lambda: bool(deliveries)
+                    and deliveries[-1][0] == latest_generation
+                )
+            )
+
+        self.assertNotEqual(slow_generation, latest_generation)
+        self.assertTrue(
+            all(generation == latest_generation for generation, _ in deliveries)
+        )
+        self.assertEqual(
+            [item.album_id for item in deliveries[-1][1].items],
+            ["2"],
+        )
+
+    def test_dispose_is_nonblocking_during_local_filter(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        started = threading.Event()
+        release = threading.Event()
+        deliveries = []
+        original_filter = favorites_controller_module._filter_folder_items
+
+        def delayed_filter(folder, keyword):
+            started.set()
+            release.wait(timeout=3)
+            return original_filter(folder, keyword)
+
+        self.controller.filter_result_changed.connect(
+            lambda *args: deliveries.append(args)
+        )
+        with patch.object(
+            favorites_controller_module,
+            "_filter_folder_items",
+            side_effect=delayed_filter,
+        ):
+            self.assertIsNotNone(self.controller.filter_items("0", "two"))
+            self.assertTrue(started.wait(timeout=1))
+            self.assertTrue(self.controller.is_filter_busy)
+            before = time.monotonic()
+            self.controller.dispose()
+            elapsed = time.monotonic() - before
+            release.set()
+            self.controller._filter_worker.join(timeout=1)
+            self.app.processEvents()
+
+        self.assertLess(elapsed, 0.1)
+        self.assertFalse(self.controller.is_filter_busy)
+        self.assertFalse(self.controller._filter_worker.is_alive())
+        self.assertEqual(deliveries, [])
+
     def test_sync_rebuilds_an_immutable_known_favorite_id_set(self):
         self.assertTrue(
             self.wait_until(lambda: self.controller.current_snapshot is not None)
@@ -200,7 +448,7 @@ class FavoritesControllerTests(unittest.TestCase):
         )
         self.assertIsInstance(deliveries[-1], frozenset)
 
-    def test_add_is_background_dedicated_and_does_not_write_the_cache(self):
+    def test_add_is_background_and_auto_syncs_the_cache(self):
         self.assertTrue(
             self.wait_until(
                 lambda: self.controller.current_snapshot is not None
@@ -233,10 +481,14 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(generic_failures, [])
         self.assertEqual(
-            self.client.calls,
-            [("add_favorite_album", "777777", "0")],
+            self.client.calls[0],
+            ("add_favorite_album", "777777", "0"),
+        )
+        self.assertTrue(
+            all(call[0] == "favorite_folder" for call in self.client.calls[1:])
         )
         self.assertIn("777777", self.controller.known_favorite_ids)
+        self.assertTrue(self.paths.favorites_file.is_file())
         self.assertIs(delivery_threads[-1], self.app.thread())
         self.assertEqual(availability, [False, True])
         self.assertTrue(self.controller.can_add_favorites)
@@ -244,7 +496,6 @@ class FavoritesControllerTests(unittest.TestCase):
             self.account_controller.current_snapshot.status,
             AccountStatus.SIGNED_IN,
         )
-        self.assertFalse(self.paths.favorites_file.exists())
 
     def test_add_and_sync_are_serial_and_repeated_add_is_rejected(self):
         started = threading.Event()
@@ -508,7 +759,10 @@ class FavoritesControllerTests(unittest.TestCase):
         self.account_controller.mark_expired()
         self.app.processEvents()
 
-        self.assertEqual(self.controller.known_favorite_ids, frozenset())
+        self.assertEqual(
+            self.controller.known_favorite_ids,
+            frozenset({"1", "2", "3", "4", "777777"}),
+        )
         self.assertFalse(self.controller.can_add_favorites)
 
         self.controller._on_account_snapshot(

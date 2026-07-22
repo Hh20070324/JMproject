@@ -104,6 +104,13 @@ class FavoritesSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class FavoritesFilterSnapshot:
+    folder_id: str
+    keyword: str
+    items: tuple[FavoriteItemSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FavoritesSyncProgress:
     folder_index: int
     folder_count: int
