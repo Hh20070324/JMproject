@@ -214,6 +214,8 @@ class FavoritesV27ContractTests(unittest.TestCase):
         client = FakeJmAccountClient(folders=self.folders())
         client.retry_times = 4
         service = self.service(client)
+        service.sync(service.start_operation())
+        client.calls.clear()
 
         folder_name = service.create_folder(
             "  Later  ",

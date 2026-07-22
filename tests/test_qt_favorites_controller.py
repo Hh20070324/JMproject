@@ -290,7 +290,7 @@ class FavoritesControllerTests(unittest.TestCase):
                 (
                     "101",
                     {
-                        "name": "Alpha Story",
+                        "name": "Alpha  Story",
                         "authors": ["Writer One"],
                         "tags": ["Hidden Tag"],
                     },
@@ -299,7 +299,7 @@ class FavoritesControllerTests(unittest.TestCase):
                     "202",
                     {
                         "name": "Beta Story",
-                        "authors": ["Writer Two"],
+                        "authors": ["Writer   Two"],
                         "tags": ["Secret Tag"],
                     },
                 ),
@@ -322,7 +322,7 @@ class FavoritesControllerTests(unittest.TestCase):
 
         for keyword, expected_ids in (
             ("jm101", ["101"]),
-            ("alpha", ["101"]),
+            ("alpha story", ["101"]),
             ("writer two", ["202"]),
             ("secret tag", []),
         ):
@@ -344,6 +344,40 @@ class FavoritesControllerTests(unittest.TestCase):
         self.assertTrue(
             all(thread is self.app.thread() for thread in delivery_threads)
         )
+
+    def test_failed_sync_preserves_the_current_filter_and_skips_old_snapshot(self):
+        self.assertTrue(
+            self.wait_until(lambda: self.controller.current_snapshot is not None)
+        )
+        self.controller.sync()
+        self.assertTrue(self.wait_until(lambda: not self.controller.is_busy))
+        generation = self.controller.filter_items("0", "two")
+        self.assertTrue(
+            self.wait_until(
+                lambda: self.controller.current_filter is not None
+                and not self.controller.is_filter_busy
+            )
+        )
+        old_snapshot = self.controller.current_snapshot
+        old_filter = self.controller.current_filter
+        snapshots = []
+        failures = []
+        self.controller.snapshot_changed.connect(snapshots.append)
+        self.controller.operation_failed.connect(
+            lambda *args: failures.append(args)
+        )
+        self.client.favorite_errors[("0", 1)] = TimeoutError("offline")
+
+        self.assertIsNotNone(self.controller.sync())
+
+        self.assertTrue(
+            self.wait_until(lambda: bool(failures) and not self.controller.is_busy)
+        )
+        self.assertIs(self.controller.current_snapshot, old_snapshot)
+        self.assertIs(self.controller.current_filter, old_filter)
+        self.assertEqual(self.controller.current_filter.items[0].album_id, "2")
+        self.assertEqual(snapshots, [])
+        self.assertIsNotNone(generation)
 
     def test_filter_discards_a_late_generation(self):
         self.assertTrue(

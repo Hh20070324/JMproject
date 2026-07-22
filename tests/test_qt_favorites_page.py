@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QMessageBox
 
 from jm_downloader.account import AccountService, AccountStore
@@ -307,7 +308,7 @@ class FavoritesPageTests(unittest.TestCase):
             self.page.favorites_stack.currentWidget(),
             self.page.favorite_results_state,
         )
-        self.assertEqual(self.page.folder_combo.count(), 2)
+        self.assertEqual(len(self.page.folder_menu.actions()), 2)
         self.assertEqual(len(self.page.favorite_cards), 20)
         self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "1")
         self.page.next_page_button.click()
@@ -315,11 +316,139 @@ class FavoritesPageTests(unittest.TestCase):
         self.assertEqual(len(self.page.favorite_cards), 5)
         self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "21")
         self.assertEqual(self.page.page_label.text(), "第 2 / 2 页")
-        self.page.folder_combo.setCurrentIndex(1)
+        self.page.folder_menu.actions()[1].trigger()
         self.app.processEvents()
         self.assertEqual(len(self.page.favorite_cards), 1)
         self.assertEqual(self.page.favorite_cards[0].snapshot.album_id, "99")
         self.assertEqual(self.page.favorites_summary.text(), "共 1 条")
+
+    def test_popup_click_switches_folder_with_one_selection(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot("0", "全部收藏", ()),
+                FavoriteFolderSnapshot("9", "Reading", ()),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+
+        self.page.keyword_input.setText("alpha")
+        self.favorites_controller.filter_items.reset_mock()
+        target = self.page.folder_menu.actions()[1]
+        QTimer.singleShot(
+            50,
+            lambda: QTest.mouseClick(
+                self.page.folder_menu,
+                Qt.MouseButton.LeftButton,
+                pos=self.page.folder_menu.actionGeometry(target).center(),
+            ),
+        )
+        QTest.mouseClick(
+            self.page.folder_button,
+            Qt.MouseButton.LeftButton,
+        )
+        self.app.processEvents()
+
+        self.assertEqual(self.page.folder_button.text(), "Reading (0)  ▾")
+        self.assertEqual(self.page._selected_folder_id, "9")
+        self.assertEqual(
+            sum(
+                action.isChecked()
+                for action in self.page.folder_menu.actions()
+            ),
+            1,
+        )
+        self.assertTrue(
+            next(
+                action
+                for action in self.page.folder_menu.actions()
+                if action.data() == "9"
+            ).isChecked()
+        )
+        self.favorites_controller.filter_items.assert_called_once_with(
+            "9", "alpha"
+        )
+
+        refreshed = FavoritesSnapshot(
+            "2026-07-16T12:50:00Z",
+            (
+                FavoriteFolderSnapshot("0", "全部收藏", ()),
+                FavoriteFolderSnapshot(
+                    "9",
+                    "Reading",
+                    (FavoriteItemSnapshot("2", "Beta"),),
+                ),
+            ),
+        )
+        self.page._on_favorites_snapshot(refreshed)
+
+        self.assertEqual(self.page._selected_folder_id, "9")
+        self.assertEqual(self.page.folder_button.text(), "Reading (1)  ▾")
+        self.assertEqual(
+            [
+                action.data()
+                for action in self.page.folder_menu.actions()
+                if action.isChecked()
+            ],
+            ["9"],
+        )
+
+    def test_folder_switch_is_disabled_while_snapshot_can_be_rebuilt(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot("0", "全部收藏", ()),
+                FavoriteFolderSnapshot("9", "Reading", ()),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(snapshot)
+        self.assertTrue(self.page.folder_button.isEnabled())
+        self.assertTrue(self.page.sort_button.isEnabled())
+
+        self.page._on_favorites_busy_changed(True, "move_album")
+
+        self.assertFalse(self.page.folder_button.isEnabled())
+        self.assertFalse(self.page.sort_button.isEnabled())
+        self.assertIn("操作完成", self.page.folder_button.toolTip())
+
+        self.page._on_favorites_busy_changed(False, "")
+        self.assertTrue(self.page.folder_button.isEnabled())
+        self.assertTrue(self.page.sort_button.isEnabled())
+
+    def test_manage_button_explicitly_tracks_hover(self):
+        self.assertTrue(
+            self.page.manage_folders_button.testAttribute(
+                Qt.WidgetAttribute.WA_Hover
+            )
+        )
+        self.assertTrue(self.page.manage_folders_button.hasMouseTracking())
+
+    def test_restored_complete_snapshot_reenables_folder_controls(self):
+        snapshot = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot("0", "全部收藏", ()),
+                FavoriteFolderSnapshot("9", "Reading", ()),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SAVED_SESSION, "saved-user")
+        )
+        self.page._on_favorites_busy_changed(True, "restore")
+        self.page._on_favorites_busy_changed(False, "")
+        self.assertFalse(self.page.folder_button.isEnabled())
+        self.assertFalse(self.page.manage_folders_button.isEnabled())
+
+        self.page._on_favorites_snapshot(snapshot)
+
+        self.assertTrue(self.page.folder_button.isEnabled())
+        self.assertTrue(self.page.manage_folders_button.isEnabled())
 
     def test_light_and_dark_themes_paint_the_page_and_results_background(self):
         snapshot = FavoritesSnapshot(
@@ -424,8 +553,32 @@ class FavoritesPageTests(unittest.TestCase):
         self.page._on_favorites_snapshot(snapshot)
         self.favorites_controller.current_snapshot = snapshot
 
-        self.page.sort_combo.setCurrentIndex(
-            self.page.sort_combo.findData("mp")
+        target = next(
+            action
+            for action in self.page.sort_menu.actions()
+            if action.data() == "mp"
+        )
+        QTimer.singleShot(
+            50,
+            lambda: QTest.mouseClick(
+                self.page.sort_menu,
+                Qt.MouseButton.LeftButton,
+                pos=self.page.sort_menu.actionGeometry(target).center(),
+            ),
+        )
+        QTest.mouseClick(
+            self.page.sort_button,
+            Qt.MouseButton.LeftButton,
+        )
+        self.app.processEvents()
+        self.assertEqual(self.page.sort_button.text(), "更新时间  ▾")
+        self.assertEqual(
+            [
+                action.data()
+                for action in self.page.sort_menu.actions()
+                if action.isChecked()
+            ],
+            ["mp"],
         )
         self.assertIn("待按更新时间同步", self.page.last_sync_label.text())
         self.favorites_controller.sync.assert_not_called()

@@ -2,13 +2,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -186,11 +187,7 @@ class FavoritesPage(SectionPage):
         )
         self._chapter_flow.failed.connect(self._on_chapter_flow_failed)
         if self._favorites_snapshot is not None:
-            sort_index = self.sort_combo.findData(
-                self._favorites_snapshot.order_by
-            )
-            if sort_index >= 0:
-                self.sort_combo.setCurrentIndex(sort_index)
+            self._update_sort_selection(self._favorites_snapshot.order_by)
             self._rebuild_folder_options()
         self._render()
         QTimer.singleShot(0, self._reflow_cards)
@@ -388,25 +385,51 @@ class FavoritesPage(SectionPage):
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(0, 0, 0, 0)
         filter_row.setSpacing(8)
-        self.folder_combo = QComboBox(state)
-        self.folder_combo.setObjectName("favoritesFolderCombo")
-        self.folder_combo.setMinimumWidth(220)
-        self.folder_combo.setMaximumWidth(360)
-        self.folder_combo.setFixedHeight(36)
-        self.folder_combo.currentIndexChanged.connect(self._select_folder)
-        filter_row.addWidget(self.folder_combo)
-        self.sort_combo = QComboBox(state)
-        self.sort_combo.setObjectName("favoritesSortCombo")
-        self.sort_combo.addItem("收藏时间", "mr")
-        self.sort_combo.addItem("更新时间", "mp")
-        self.sort_combo.setFixedSize(130, 36)
-        self.sort_combo.currentIndexChanged.connect(self._select_sort)
-        filter_row.addWidget(self.sort_combo)
+        self.folder_button = QToolButton(state)
+        self.folder_button.setObjectName("favoritesFolderButton")
+        self.folder_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.folder_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.folder_button.setMinimumWidth(220)
+        self.folder_button.setMaximumWidth(360)
+        self.folder_button.setFixedHeight(36)
+        self.folder_menu = QMenu(self.folder_button)
+        self.folder_menu.setObjectName("favoritesFolderMenu")
+        self.folder_menu.triggered.connect(self._select_folder)
+        self.folder_button.setMenu(self.folder_menu)
+        filter_row.addWidget(self.folder_button)
+        self.sort_button = QToolButton(state)
+        self.sort_button.setObjectName("favoritesSortButton")
+        self.sort_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.sort_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.sort_button.setFixedSize(130, 36)
+        self.sort_menu = QMenu(self.sort_button)
+        self.sort_menu.setObjectName("favoritesSortMenu")
+        for label, order_by in (("收藏时间", "mr"), ("更新时间", "mp")):
+            action = self.sort_menu.addAction(label)
+            action.setData(order_by)
+            action.setCheckable(True)
+        self.sort_menu.triggered.connect(self._select_sort)
+        self.sort_button.setMenu(self.sort_menu)
+        self._update_sort_selection(self._pending_order_by)
+        filter_row.addWidget(self.sort_button)
         self.manage_folders_button = QToolButton(state)
         self.manage_folders_button.setObjectName("favoritesManageButton")
         self.manage_folders_button.setIcon(svg_icon("folder"))
         self.manage_folders_button.setToolTip("管理收藏夹")
         self.manage_folders_button.setFixedSize(36, 36)
+        self.manage_folders_button.setAttribute(
+            Qt.WidgetAttribute.WA_Hover,
+            True,
+        )
+        self.manage_folders_button.setMouseTracking(True)
         self.manage_folders_button.clicked.connect(self._open_folder_manager)
         filter_row.addWidget(self.manage_folders_button)
         filter_row.addStretch(1)
@@ -657,17 +680,13 @@ class FavoritesPage(SectionPage):
             return
         self._favorites_snapshot = snapshot
         if snapshot is not None:
-            self._pending_order_by = snapshot.order_by
-            index = self.sort_combo.findData(snapshot.order_by)
-            if index >= 0:
-                self.sort_combo.blockSignals(True)
-                self.sort_combo.setCurrentIndex(index)
-                self.sort_combo.blockSignals(False)
+            self._update_sort_selection(snapshot.order_by)
         self._filtered_snapshot = None
         self._filter_generation = None
         self._favorites_error_code = ""
         self._set_favorites_error("")
         self._rebuild_folder_options()
+        self._render_controls()
         self._render_favorites()
 
     @Slot(object)
@@ -825,8 +844,16 @@ class FavoritesPage(SectionPage):
         self.sync_progress_frame.setVisible(
             self._favorites_busy and self._favorites_command == "sync"
         )
-        self.folder_combo.setEnabled(self.folder_combo.count() > 0)
-        self.sort_combo.setEnabled(not self._favorites_busy)
+        self.folder_button.setEnabled(
+            bool(self.folder_menu.actions()) and not self._favorites_busy
+        )
+        if self._favorites_busy and self._favorites_command == "restore":
+            self.folder_button.setToolTip("正在恢复本地收藏")
+        elif self._favorites_busy:
+            self.folder_button.setToolTip("收藏操作完成后可切换文件夹")
+        else:
+            self.folder_button.setToolTip("切换当前收藏夹")
+        self.sort_button.setEnabled(not self._favorites_busy)
         full_snapshot = (
             self._favorites_snapshot is not None
             and self._favorites_snapshot.synced_at_utc is not None
@@ -942,17 +969,19 @@ class FavoritesPage(SectionPage):
         snapshot = self._favorites_snapshot
         folders = snapshot.folders if snapshot is not None else ()
         selected = self._selected_folder_id
-        self.folder_combo.blockSignals(True)
-        self.folder_combo.clear()
+        folder_ids = {folder.folder_id for folder in folders}
+        if selected not in folder_ids:
+            selected = folders[0].folder_id if folders else None
+        self.folder_menu.clear()
         for folder in folders:
-            self.folder_combo.addItem(
-                f"{folder.name} ({len(folder.items)})",
-                folder.folder_id,
+            action = self.folder_menu.addAction(
+                f"{folder.name} ({len(folder.items)})"
             )
-        target = self.folder_combo.findData(selected) if selected else -1
-        self.folder_combo.setCurrentIndex(target if target >= 0 else 0)
-        self.folder_combo.blockSignals(False)
-        self._selected_folder_id = self.folder_combo.currentData()
+            action.setData(folder.folder_id)
+            action.setCheckable(True)
+            action.setChecked(folder.folder_id == selected)
+        self._selected_folder_id = selected
+        self._update_folder_button_text()
         self._local_page = 1
 
     def _current_folder(self) -> FavoriteFolderSnapshot | None:
@@ -964,23 +993,59 @@ class FavoritesPage(SectionPage):
                 return folder
         return snapshot.folders[0] if snapshot.folders else None
 
-    @Slot(int)
-    def _select_folder(self, index: int) -> None:
-        if index < 0:
+    @Slot(QAction)
+    def _select_folder(self, action: QAction) -> None:
+        folder_id = action.data()
+        snapshot = self._favorites_snapshot
+        if not isinstance(folder_id, str) or snapshot is None:
             return
-        self._selected_folder_id = self.folder_combo.itemData(index)
+        if not any(folder.folder_id == folder_id for folder in snapshot.folders):
+            return
+        self._selected_folder_id = folder_id
+        for candidate in self.folder_menu.actions():
+            candidate.setChecked(candidate is action)
+        self._update_folder_button_text()
         self._local_page = 1
         self._filtered_snapshot = None
         self._queue_filter()
+        if self.keyword_input.text().strip():
+            self._filter_timer.stop()
+            self._submit_filter()
 
-    @Slot(int)
-    def _select_sort(self, index: int) -> None:
-        order_by = self.sort_combo.itemData(index)
+    def _update_folder_button_text(self) -> None:
+        current = next(
+            (
+                action
+                for action in self.folder_menu.actions()
+                if action.data() == self._selected_folder_id
+            ),
+            None,
+        )
+        self.folder_button.setText(
+            "选择收藏夹 ▾" if current is None else f"{current.text()}  ▾"
+        )
+
+    @Slot(QAction)
+    def _select_sort(self, action: QAction) -> None:
+        order_by = action.data()
+        if order_by not in {"mr", "mp"}:
+            return
+        self._update_sort_selection(order_by)
+        self._render_controls()
+        self._render_favorites()
+
+    def _update_sort_selection(self, order_by: str) -> None:
         if order_by not in {"mr", "mp"}:
             return
         self._pending_order_by = order_by
-        self._render_controls()
-        self._render_favorites()
+        current = None
+        for action in self.sort_menu.actions():
+            selected = action.data() == order_by
+            action.setChecked(selected)
+            if selected:
+                current = action
+        if current is not None:
+            self.sort_button.setText(f"{current.text()}  ▾")
 
     @Slot()
     def _queue_filter(self, *_args) -> None:

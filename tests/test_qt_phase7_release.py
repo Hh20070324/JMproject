@@ -347,8 +347,8 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                 app.processEvents()
                 assert len(favorites_page.favorite_cards) == 20
                 favorite_toolbar = [
-                    favorites_page.folder_combo,
-                    favorites_page.sort_combo,
+                    favorites_page.folder_button,
+                    favorites_page.sort_button,
                     favorites_page.manage_folders_button,
                 ]
                 for index, control in enumerate(favorite_toolbar):

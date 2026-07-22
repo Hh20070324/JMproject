@@ -166,12 +166,29 @@ class FavoritesV27ControllerContractTests(unittest.TestCase):
         self.assertEqual(successes, [])
         self.assertEqual(failures, [])
         self.assertEqual(partial[0][0], "777777")
+        self.assertEqual(partial[0][1], "mutation_uncertain")
         self.assertIn("已收藏", partial[0][-1])
-        self.assertIn("移动失败", partial[0][-1])
+        self.assertIn("结果无法确认", partial[0][-1])
         self.assertTrue(
             any(call[0] == "favorite_folder" for call in self.client.calls[2:])
         )
         self.assertIn("777777", self.controller.known_favorite_ids)
+
+    def test_move_expiry_after_add_keeps_the_specific_partial_reason(self):
+        self.client.favorite_folder_mutation_errors["move"] = PermissionError(
+            "private response"
+        )
+        partial = []
+        self.controller.add_partially_succeeded.connect(
+            lambda *args: partial.append(args)
+        )
+
+        generation = self.controller.add_album("777777", "8")
+
+        self.assertIsNotNone(generation)
+        self.assertTrue(self.wait_until(lambda: bool(partial)))
+        self.assertEqual(partial[0][0:2], ("777777", "session_expired"))
+        self.assertIn("登录会话已过期", partial[0][2])
 
     def test_confirmed_folder_writes_automatically_refresh_snapshot(self):
         generation = self.controller.create_folder("Later")

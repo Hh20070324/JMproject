@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from ...favorites import (
     FavoritesAccountMismatch,
     FavoritesAddUncertain,
+    FavoritesDeletePreflightFailed,
     FavoritesError,
     FavoritesFolderExists,
     FavoritesFolderNotEmpty,
@@ -21,6 +22,7 @@ from ...favorites import (
     FavoritesService,
     FavoritesSessionExpired,
     FavoritesSessionRequired,
+    FavoritesSnapshotRequired,
     FavoritesStorageError,
     FavoritesToggleRemoved,
     FavoritesUnavailable,
@@ -262,10 +264,11 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                             job.folder_id,
                             job.operation,
                         )
-                    except Exception:
-                        partial_code = "move_failed_after_add"
-                        partial_message = (
-                            "已收藏，但移动失败，当前位于默认位置"
+                    except FavoritesOperationCancelled:
+                        raise
+                    except Exception as error:
+                        partial_code, partial_message = (
+                            _partial_move_error_payload(error)
                         )
                 snapshot = mailbox.service.sync(
                     job.operation,
@@ -363,6 +366,8 @@ def _safe_error_payload(error: Exception) -> tuple[str, str]:
         FavoritesToggleRemoved,
         FavoritesAddUncertain,
         FavoritesMutationUncertain,
+        FavoritesDeletePreflightFailed,
+        FavoritesSnapshotRequired,
         FavoritesInvalidFolderName,
         FavoritesFolderExists,
         FavoritesFolderNotEmpty,
@@ -421,7 +426,6 @@ class FavoritesController(QObject):
         self._disposed = False
         self._account_snapshot = account_controller.current_snapshot
         self._known_favorite_ids = _favorite_ids(self._snapshot)
-        self._session_added_ids: set[str] = set()
         self._add_available = self._calculate_add_available()
         self._filter_snapshot: FavoritesFilterSnapshot | None = None
         self._filter_busy = False
@@ -585,7 +589,7 @@ class FavoritesController(QObject):
         folder = _folder_by_id(self._snapshot, folder_id)
         if folder is None:
             return None
-        normalized = " ".join(keyword.split()).casefold()
+        normalized = _normalize_filter_text(keyword)
         self._filter_generation += 1
         job = _FilterJob(self._filter_generation, folder, normalized)
         if not self._filter_mailbox.submit(job):
@@ -618,7 +622,6 @@ class FavoritesController(QObject):
         self._filter_mailbox.close()
         self._busy = False
         self._command = ""
-        self._session_added_ids.clear()
         self._known_favorite_ids = frozenset()
         self._set_add_available(False)
         self._filter_generation += 1
@@ -666,7 +669,10 @@ class FavoritesController(QObject):
                 continue
             self._set_busy(False, "")
             self.progress_changed.emit(None)
-            if outcome.snapshot is not None:
+            if (
+                outcome.snapshot is not None
+                and outcome.snapshot is not self._snapshot
+            ):
                 self._publish_snapshot(
                     outcome.snapshot,
                     rebuild_known=outcome.error_code is None,
@@ -703,7 +709,6 @@ class FavoritesController(QObject):
                     self.operation_failed.emit(outcome.error_code, message)
             if outcome.remote_changed and outcome.job.command == "add":
                 album_id = outcome.album_id or ""
-                self._session_added_ids.add(album_id)
                 self._publish_known_favorite_ids(
                     self._known_favorite_ids | {album_id}
                 )
@@ -812,8 +817,6 @@ class FavoritesController(QObject):
         self.progress_changed.emit(None)
         self._set_busy(False, "")
         self._invalidate_filter()
-        if clear_runtime_additions:
-            self._session_added_ids.clear()
         if clear:
             self.service.clear_memory()
             self._snapshot = None
@@ -834,7 +837,6 @@ class FavoritesController(QObject):
         self._snapshot = snapshot
         self.snapshot_changed.emit(snapshot)
         if rebuild_known:
-            self._session_added_ids.clear()
             self._publish_known_favorite_ids(_favorite_ids(snapshot))
 
     def _publish_known_favorite_ids(self, album_ids) -> None:
@@ -916,7 +918,7 @@ def _filter_folder_items(
             item
             for item in folder.items
             if any(
-                keyword in value.casefold()
+                keyword in _normalize_filter_text(value)
                 for value in (
                     item.album_id,
                     f"jm{item.album_id}",
@@ -926,6 +928,28 @@ def _filter_folder_items(
             )
         )
     return FavoritesFilterSnapshot(folder.folder_id, keyword, items)
+
+
+def _normalize_filter_text(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _partial_move_error_payload(error: Exception) -> tuple[str, str]:
+    code, _message = _safe_error_payload(error)
+    if code == FavoritesSessionExpired.code:
+        return (
+            code,
+            "已收藏，但登录会话已过期，未能移动到所选收藏夹",
+        )
+    if code == FavoritesMutationUncertain.code:
+        return (
+            code,
+            "已收藏，但移动结果无法确认，请同步收藏后核对",
+        )
+    return (
+        "move_failed_after_add",
+        "已收藏，但移动失败，当前可能位于默认位置",
+    )
 
 
 def _safe_album_id(value: str) -> str | None:

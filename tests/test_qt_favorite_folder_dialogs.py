@@ -7,7 +7,7 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QApplication, QMessageBox, QRadioButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QRadioButton, QWidget
 
 from jm_downloader.models import (
     FavoriteFolderSnapshot,
@@ -18,6 +18,7 @@ from jm_downloader.qt.widgets.favorite_folder_dialogs import (
     FavoriteFolderManagerDialog,
     FavoriteTargetDialog,
 )
+from jm_downloader.qt.theme import Theme, load_stylesheet
 
 
 class FakeManagerController(QObject):
@@ -70,6 +71,34 @@ class FavoriteFolderDialogTests(unittest.TestCase):
         self.assertEqual(dialog.selected_folder_id, "9")
         self.assertEqual(sum(option.isChecked() for option in options), 1)
         dialog.close()
+
+    def test_target_dialog_canvas_follows_both_themes(self):
+        previous_stylesheet = self.app.styleSheet()
+        samples = {}
+        try:
+            for theme in (Theme.LIGHT, Theme.DARK):
+                self.app.setStyleSheet(load_stylesheet(theme))
+                dialog = FavoriteTargetDialog(self.snapshot.folders)
+                dialog.setAttribute(
+                    Qt.WidgetAttribute.WA_DontShowOnScreen,
+                    True,
+                )
+                dialog.show()
+                self.app.processEvents()
+                canvas = dialog.findChild(QWidget, "favoriteTargetCanvas")
+                self.assertIsNotNone(canvas)
+                image = canvas.grab().toImage()
+                samples[theme] = image.pixelColor(
+                    image.width() - 2,
+                    image.height() - 2,
+                )
+                dialog.close()
+        finally:
+            self.app.setStyleSheet(previous_stylesheet)
+            self.app.processEvents()
+
+        self.assertGreater(samples[Theme.LIGHT].lightness(), 200)
+        self.assertLess(samples[Theme.DARK].lightness(), 60)
 
     def test_manager_creates_and_only_deletes_empty_custom_folder(self):
         controller = FakeManagerController(self.snapshot)

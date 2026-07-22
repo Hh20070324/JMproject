@@ -809,25 +809,67 @@ QProgressBar#favoritesProgressBar::chunk {
     border-radius: 3px;
 }
 
-QComboBox#favoritesFolderCombo {
+QToolButton#favoritesFolderButton,
+QToolButton#favoritesSortButton {
     background: #202421;
     border: 1px solid #454c48;
     border-radius: 6px;
     color: #f1f4f2;
-    padding: 0 10px;
+    padding: 0 12px;
+    text-align: left;
 }
 
-QComboBox#favoritesFolderCombo:hover,
-QComboBox#favoritesFolderCombo:focus {
+QToolButton#favoritesFolderButton:hover,
+QToolButton#favoritesFolderButton:focus,
+QToolButton#favoritesFolderButton:open,
+QToolButton#favoritesSortButton:hover,
+QToolButton#favoritesSortButton:focus,
+QToolButton#favoritesSortButton:open {
     border-color: #4f9b73;
 }
 
-QComboBox#favoritesFolderCombo::drop-down {
-    border: 0;
-    width: 28px;
+QToolButton#favoritesFolderButton:disabled,
+QToolButton#favoritesSortButton:disabled {
+    background: #202522;
+    border-color: #343c38;
+    color: #707a74;
 }
 
-QComboBox#favoritesSortCombo,
+QToolButton#favoritesFolderButton::menu-indicator,
+QToolButton#favoritesSortButton::menu-indicator {
+    image: none;
+    width: 0;
+}
+
+QMenu#favoritesFolderMenu,
+QMenu#favoritesSortMenu {
+    background: #202421;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+    color: #f1f4f2;
+    padding: 4px;
+}
+
+QMenu#favoritesFolderMenu::item,
+QMenu#favoritesSortMenu::item {
+    min-height: 28px;
+    margin: 2px;
+    padding: 5px 28px 5px 12px;
+    border-radius: 5px;
+}
+
+QMenu#favoritesFolderMenu::item:selected,
+QMenu#favoritesSortMenu::item:selected {
+    background: #284535;
+    color: #dff3e7;
+}
+
+QMenu#favoritesFolderMenu::item:checked,
+QMenu#favoritesSortMenu::item:checked {
+    color: #67b88d;
+    font-weight: 600;
+}
+
 QLineEdit#favoritesKeywordInput,
 QLineEdit#favoriteFolderNameInput {
     background: #202421;
@@ -837,8 +879,6 @@ QLineEdit#favoriteFolderNameInput {
     padding: 0 10px;
 }
 
-QComboBox#favoritesSortCombo:hover,
-QComboBox#favoritesSortCombo:focus,
 QLineEdit#favoritesKeywordInput:hover,
 QLineEdit#favoritesKeywordInput:focus,
 QLineEdit#favoriteFolderNameInput:hover,
@@ -854,9 +894,15 @@ QToolButton#favoriteMoveButton {
 }
 
 QToolButton#favoritesManageButton:hover,
+QToolButton#favoritesManageButton:focus,
 QToolButton#favoriteMoveButton:hover {
     background: #313936;
-    border-color: #4f9b73;
+    border: 2px solid #4f9b73;
+}
+
+QToolButton#favoritesManageButton:pressed {
+    background: #284535;
+    border: 2px solid #67b88d;
 }
 
 QToolButton#favoritesManageButton:disabled,
@@ -867,7 +913,8 @@ QToolButton#favoriteMoveButton:disabled {
 
 QDialog#favoriteTargetDialog,
 QDialog#favoriteFolderManagerDialog,
-QDialog#favoriteTargetDialog QWidget#qt_scrollarea_viewport {
+QDialog#favoriteTargetDialog QWidget#qt_scrollarea_viewport,
+QWidget#favoriteTargetCanvas {
     background: #181b19;
     color: #f1f4f2;
 }
@@ -876,23 +923,60 @@ QLabel#favoriteDialogDetail {
     color: #aeb8b2;
 }
 
-QRadioButton#favoriteTargetOption,
-QListWidget#favoriteFolderList {
+QRadioButton#favoriteTargetOption {
     background: #202421;
     border: 1px solid #454c48;
     border-radius: 6px;
     color: #f1f4f2;
     padding: 7px;
+    spacing: 10px;
+}
+
+QRadioButton#favoriteTargetOption::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #4f9b73;
+    border-radius: 9px;
+    background: transparent;
+}
+
+QRadioButton#favoriteTargetOption::indicator:checked {
+    background: qradialgradient(
+        cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+        stop: 0 #4f9b73,
+        stop: 0.44 #4f9b73,
+        stop: 0.45 transparent,
+        stop: 1 transparent
+    );
+}
+
+QListWidget#favoriteFolderList {
+    background: #202421;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+    color: #f1f4f2;
+    outline: 0;
+    padding: 3px;
 }
 
 QListWidget#favoriteFolderList::item {
     min-height: 34px;
+    margin: 3px;
     padding: 2px 8px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+}
+
+QListWidget#favoriteFolderList::item:hover {
+    background: #1d2c24;
+    border-color: #4f9b73;
+    color: #dff3e7;
 }
 
 QListWidget#favoriteFolderList::item:selected {
-    background: #284535;
-    color: #dff3e7;
+    background: #4f9b73;
+    border-color: #4f9b73;
+    color: #ffffff;
 }
 
 QLabel#favoriteDialogError {

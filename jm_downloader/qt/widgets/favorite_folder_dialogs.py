@@ -52,6 +52,7 @@ class FavoriteTargetDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         canvas = QWidget(scroll)
+        canvas.setObjectName("favoriteTargetCanvas")
         choices = QVBoxLayout(canvas)
         choices.setContentsMargins(2, 2, 8, 2)
         choices.setSpacing(6)

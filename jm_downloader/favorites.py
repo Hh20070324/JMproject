@@ -94,6 +94,16 @@ class FavoritesMutationUncertain(FavoritesError):
     default_message = "收藏夹修改结果无法确认，请手动同步"
 
 
+class FavoritesDeletePreflightFailed(FavoritesError):
+    code = "delete_preflight_failed"
+    default_message = "无法确认收藏夹为空，未执行删除"
+
+
+class FavoritesSnapshotRequired(FavoritesError):
+    code = "favorites_sync_required"
+    default_message = "请先完整同步收藏，再管理收藏夹"
+
+
 class FavoritesInvalidFolderName(FavoritesError):
     code = "invalid_folder_name"
     default_message = "收藏夹名称不符合要求"
@@ -440,12 +450,14 @@ class FavoritesService:
         session = self._require_session()
         self._ensure_current_session(operation, session)
         snapshot = self._snapshot_for_session(session)
-        if snapshot is not None and any(
+        if snapshot is None or snapshot.synced_at_utc is None:
+            raise FavoritesSnapshotRequired()
+        if any(
             folder.name.casefold() == name.casefold()
             for folder in snapshot.folders
         ):
             raise FavoritesFolderExists()
-        session, client = self._prepare_folder_mutation(operation, session)
+        client = self._prepare_folder_mutation(operation, session)
         self._invoke_folder_mutation(
             client,
             session,
@@ -464,7 +476,7 @@ class FavoritesService:
             snapshot,
             allow_all=False,
         )
-        session, client = self._prepare_folder_mutation(operation, session)
+        client = self._prepare_folder_mutation(operation, session)
         try:
             response = client.favorite_folder(
                 page=1,
@@ -479,7 +491,7 @@ class FavoritesService:
         except (FavoritesFolderNotEmpty, FavoritesOperationCancelled):
             raise
         except Exception as error:
-            mapped = _map_sync_error(error)
+            mapped = _map_delete_preflight_error(error)
             LOGGER.warning(
                 "Favorite folder delete preflight failed: category=%s "
                 "error_type=%s",
@@ -512,7 +524,7 @@ class FavoritesService:
             snapshot,
             allow_all=True,
         )
-        session, client = self._prepare_folder_mutation(operation, session)
+        client = self._prepare_folder_mutation(operation, session)
         self._invoke_folder_mutation(
             client,
             session,
@@ -532,13 +544,13 @@ class FavoritesService:
         self,
         operation: int,
         session: AccountSession,
-    ) -> tuple[AccountSession, object]:
+    ) -> object:
         self._ensure_current_session(operation, session)
         try:
             client = self._client_factory(session.cookie_dict())
             _disable_mutation_retries(client)
             self._ensure_current_session(operation, session)
-            return session, client
+            return client
         except FavoritesError:
             raise
         except Exception as error:
@@ -1248,6 +1260,18 @@ def _map_mutation_error(error: Exception) -> FavoritesError:
     return FavoritesMutationUncertain()
 
 
+def _map_delete_preflight_error(error: Exception) -> FavoritesError:
+    if isinstance(error, FavoritesError):
+        return error
+    if isinstance(error, PermissionError):
+        return FavoritesSessionExpired()
+    if isinstance(error, jmcomic.ResponseUnexpectedException):
+        status = _response_status(error)
+        if status in {401, 403}:
+            return FavoritesSessionExpired()
+    return FavoritesDeletePreflightFailed()
+
+
 def _map_add_error(error: Exception) -> FavoritesError:
     if isinstance(error, FavoritesError):
         return error
@@ -1314,6 +1338,7 @@ __all__ = [
     "FavoritesAccountMismatch",
     "FavoritesAddUncertain",
     "FavoritesCache",
+    "FavoritesDeletePreflightFailed",
     "FavoritesError",
     "FavoritesInvalidAlbumId",
     "FavoritesInvalidFolderName",
@@ -1327,6 +1352,7 @@ __all__ = [
     "FavoritesService",
     "FavoritesSessionExpired",
     "FavoritesSessionRequired",
+    "FavoritesSnapshotRequired",
     "FavoritesStorageError",
     "FavoritesToggleRemoved",
     "FavoritesUnavailable",
