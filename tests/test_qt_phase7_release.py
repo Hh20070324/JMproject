@@ -7,7 +7,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "JM-Downloader-v2.5.1-Windows-x64.zip"
+ARCHIVE_NAME = "JM-Downloader-v2.7.0-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
@@ -36,8 +36,8 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         for resource in (formal, debug):
             self.assertIn("filevers=(2, 5, 1, 0)", resource)
             self.assertIn("prodvers=(2, 5, 1, 0)", resource)
-            self.assertIn("StringStruct('FileVersion', '2.5.1')", resource)
-            self.assertIn("StringStruct('ProductVersion', '2.5.1')", resource)
+            self.assertIn("StringStruct('FileVersion', '2.7.0')", resource)
+            self.assertIn("StringStruct('ProductVersion', '2.7.0')", resource)
             self.assertNotIn("2.1.0", resource)
 
         self.assertIn("OriginalFilename', 'JM-Downloader.exe'", formal)
@@ -55,7 +55,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
 
         for document in (readme, guide):
             self.assertIn(ARCHIVE_NAME, document)
-        self.assertIn('$ReleaseVersion = "2.5.1"', build_script)
+        self.assertIn('$ReleaseVersion = "2.7.0"', build_script)
         self.assertIn(
             '"JM-Downloader-v$ReleaseVersion-Windows-x64.zip"',
             build_script,
@@ -68,6 +68,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertIn("JM-Downloader-v2.3.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.4.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.5.0-Windows-x64.zip", build_script)
+        self.assertIn("JM-Downloader-v2.5.1-Windows-x64.zip", build_script)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", readme)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", guide)
 
@@ -110,6 +111,15 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         )
         self.assertIn('$_ -match "\\.jm-part-[^/]*$"', build_script)
         self.assertIn("Assert-NoSensitiveTestData", build_script)
+        for marker in (
+            "security-user-sentinel",
+            "security-password-sentinel",
+            "security-cookie-sentinel",
+            "security-endpoint-sentinel",
+            "security-title-sentinel",
+            "security-folder-sentinel",
+        ):
+            self.assertIn(marker, build_script)
 
     def test_qt_lgpl_materials_are_complete_and_referenced(self):
         lgpl = (PROJECT_ROOT / "LICENSES" / "LGPL-3.0-only.txt").read_text(

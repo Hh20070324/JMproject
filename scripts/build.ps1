@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ReleaseVersion = "2.5.1"
+$ReleaseVersion = "2.7.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -19,7 +19,8 @@ $HistoricalArchives = @(
     (Join-Path $ReleaseDir "JM-Downloader-v2.2.0-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.3.0-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.4.0-Windows-x64.zip"),
-    (Join-Path $ReleaseDir "JM-Downloader-v2.5.0-Windows-x64.zip")
+    (Join-Path $ReleaseDir "JM-Downloader-v2.5.0-Windows-x64.zip"),
+    (Join-Path $ReleaseDir "JM-Downloader-v2.5.1-Windows-x64.zip")
 )
 $LicensesDir = Join-Path $ProjectRoot "LICENSES"
 $RequiredLicenseFiles = @(
@@ -291,8 +292,12 @@ function Assert-NoSensitiveTestData
         "test-cookie",
         "real-cookie-sentinel",
         "password-cookie-url-secret",
+        "security-user-sentinel",
         "security-password-sentinel",
-        "security-cookie-sentinel"
+        "security-cookie-sentinel",
+        "security-endpoint-sentinel",
+        "security-title-sentinel",
+        "security-folder-sentinel"
     )
     foreach ($File in Get-ChildItem -LiteralPath $AppDir -Recurse -File -Force)
     {

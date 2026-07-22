@@ -1,4 +1,4 @@
-# JM 漫画下载器 v2.5.1
+# JM 漫画下载器 v2.7.0
 
 一个 Windows 原生漫画下载工具。可以按漫画名、作者、标签或精确 JM 号查找漫画，选择需要的章节后加入下载队列；程序会显示首张图片预览，并把该漫画现有的本地章节合并为一个 PDF。
 
@@ -6,8 +6,8 @@
 
 ## 开箱即用版
 
-1. 下载 `JM-Downloader-v2.5.1-Windows-x64.zip` 及同名 `.sha256` 文件。
-2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.5.1-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
+1. 下载 `JM-Downloader-v2.7.0-Windows-x64.zip` 及同名 `.sha256` 文件。
+2. 在 PowerShell 运行 `Get-FileHash .\JM-Downloader-v2.7.0-Windows-x64.zip -Algorithm SHA256`，确认结果与 `.sha256` 文件一致。
 3. 解压 ZIP，保持文件夹结构完整，然后双击 `JM-Downloader.exe`。
 4. 首次启动会在程序目录创建 `settings.json`、`Pictures/`、`PDFs/` 和 `logs/`。登录和同步后还会按需创建加密的 `account.dat` 与 `favorites.dat`。
 
@@ -200,10 +200,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\build.ps1
 
 脚本会安装构建依赖、运行完整测试、构建 PyInstaller `onedir` 目录，验证正式版和调试版，并生成：
 
-- `release/JM-Downloader-v2.5.1-Windows-x64.zip`
-- `release/JM-Downloader-v2.5.1-Windows-x64.zip.sha256`
+- `release/JM-Downloader-v2.7.0-Windows-x64.zip`
+- `release/JM-Downloader-v2.7.0-Windows-x64.zip.sha256`
 
-构建不会覆盖保留的 v2.1.0、v2.2.0、v2.3.0、v2.4.0 和 v2.5.0 历史发行包，也会拒绝把设置、任务恢复记录、账号会话、收藏缓存、日志、下载内容或临时文件打入 ZIP。
+构建不会覆盖保留的 v2.1.0、v2.2.0、v2.3.0、v2.4.0、v2.5.0 和 v2.5.1 历史发行包，也会拒绝把设置、任务恢复记录、账号会话、收藏缓存、日志、下载内容或临时文件打入 ZIP。
 
 ## 合规与免责声明
 
