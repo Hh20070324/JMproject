@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QEventLoop, QTimer, Qt, Signal
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from jm_downloader.models import LibraryItem
+from jm_downloader.models import LibraryItem, LibraryLayout
 from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.pages import LibraryPage
 from jm_downloader.qt.theme import ThemeManager
@@ -199,14 +199,20 @@ class LibraryPageTests(unittest.TestCase):
 
     def _item(self, album_id: str, images: bool, pdf: bool) -> LibraryItem:
         preview = self.image_path if images else None
-        pdf_path = self.root / "PDFs" / f"{album_id}.pdf" if pdf else None
+        pdf_directory = (
+            self.root / "PDFs" / album_id / f"测试漫画 {album_id}"
+            if pdf
+            else None
+        )
         return LibraryItem(
             album_id=album_id,
+            title=f"测试漫画 {album_id}",
+            layout=LibraryLayout.MANAGED,
             chapter_count=1 if images else 0,
             image_count=2 if images else 0,
             image_size=2048 if images else 0,
             preview_path=preview,
-            pdf_path=pdf_path,
+            pdf_directory=pdf_directory,
             pdf_size=4096 if pdf else 0,
         )
 

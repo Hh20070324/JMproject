@@ -183,11 +183,13 @@ class DownloadControllerTests(unittest.TestCase):
     def test_cancel_with_delete_waits_for_stop_then_deletes_files(self):
         snapshot = self.controller.add_task("1")
         image = self.paths.pictures / "1" / "chapter" / "1.jpg"
-        pdf = self.paths.pdfs / "1.pdf"
+        pdf = self.paths.pdfs / "1" / "测试漫画" / "第1章.pdf"
+        legacy_pdf = self.paths.pdfs / "1.pdf"
         image.parent.mkdir(parents=True)
         pdf.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (4, 4), "white").save(image, "JPEG")
         pdf.write_bytes(b"pdf")
+        legacy_pdf.write_bytes(b"legacy")
         worker = ControlledWorker.instances[0]
 
         self.controller.cancel_task(snapshot.id, True)
@@ -203,6 +205,7 @@ class DownloadControllerTests(unittest.TestCase):
         )
         self.assertFalse(image.exists())
         self.assertFalse(pdf.exists())
+        self.assertEqual(legacy_pdf.read_bytes(), b"legacy")
 
     def test_delete_failure_keeps_failed_task_and_reports_error(self):
         snapshot = self.controller.add_task("1")

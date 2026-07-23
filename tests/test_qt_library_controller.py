@@ -12,7 +12,7 @@ from PySide6.QtCore import QEventLoop, QThread, QThreadPool, QTimer
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.library import LibraryError
-from jm_downloader.models import LibraryItem, TaskStatus
+from jm_downloader.models import LibraryItem, LibraryLayout, TaskStatus
 from jm_downloader.qt.controllers import LibraryController
 from jm_downloader.settings import AppPaths
 from jm_downloader.tasks import TaskConflict, TaskManager
@@ -21,11 +21,13 @@ from jm_downloader.tasks import TaskConflict, TaskManager
 def library_item(album_id: str) -> LibraryItem:
     return LibraryItem(
         album_id=album_id,
+        title=f"测试漫画 {album_id}",
+        layout=LibraryLayout.MANAGED,
         chapter_count=1,
         image_count=2,
         image_size=100,
         preview_path=Path(f"Pictures/{album_id}/1/1.jpg"),
-        pdf_path=None,
+        pdf_directory=None,
         pdf_size=0,
     )
 

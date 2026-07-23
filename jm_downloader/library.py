@@ -8,8 +8,20 @@ import threading
 import uuid
 from pathlib import Path
 
-from .models import ChapterManifest, ChapterManifestEntry, LibraryItem
-from .pdf import album_to_pdf, find_album_images, is_linked_directory, natural_key
+from .models import (
+    ChapterManifest,
+    ChapterManifestEntry,
+    LibraryItem,
+    LibraryLayout,
+)
+from .pdf import (
+    IMAGE_EXTENSIONS,
+    PART_FILE_MARKER,
+    album_to_pdf,
+    find_album_images,
+    is_linked_directory,
+    natural_key,
+)
 from .settings import AppPaths, DEFAULT_PATHS
 
 
@@ -108,6 +120,23 @@ class ChapterManifestStore:
 
         self._write_atomic(path, self._encode(merged))
         return merged
+
+    def replace_exact(self, manifest: ChapterManifest) -> ChapterManifest:
+        """Atomically publish an exact manifest without merging old chapters.
+
+        This is intentionally narrower than ``merge_and_save``.  It exists for
+        the managed "delete images" transaction, where keeping the album
+        identity but clearing every chapter is the desired state.
+        """
+
+        self._validate_manifest(manifest)
+        path = self._manifest_path(manifest.album_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._require_real_directory(path.parent)
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ChapterManifestError("章节清单路径无效")
+        self._write_atomic(path, self._encode(manifest))
+        return manifest
 
     def _manifest_path(self, album_id: str) -> Path:
         album_id = str(album_id)
@@ -365,20 +394,8 @@ class LibraryService:
 
     def list_items(self) -> list[LibraryItem]:
         with self._lock:
-            album_ids = {
-                path.name
-                for path in self.paths.pictures.iterdir()
-                if path.is_dir()
-                and not is_linked_directory(path)
-                and self._valid_album_id(path.name)
-            }
-            album_ids.update(
-                path.stem
-                for path in self.paths.pdfs.glob("*.pdf")
-                if path.is_file()
-                and not path.is_symlink()
-                and self._valid_album_id(path.stem)
-            )
+            album_ids = self._safe_album_ids(self.paths.pictures)
+            album_ids.update(self._safe_album_ids(self.paths.pdfs))
             items = []
             for album_id in sorted(album_ids, key=natural_key):
                 try:
@@ -390,38 +407,100 @@ class LibraryService:
     def get_item(self, album_id: str) -> LibraryItem:
         with self._lock:
             self._require_album_id(album_id)
-            album_dir = self._album_dir(album_id)
-            pdf_path = self._pdf_path(album_id)
-            images = self._list_images(album_dir)
-            try:
-                chapter_count = (
-                    sum(
-                        path.is_dir()
-                        and not path.is_symlink()
-                        and not is_linked_directory(path)
-                        for path in album_dir.iterdir()
-                    )
-                    if album_dir.is_dir()
-                    else 0
+            album_dir = self._album_directory(self.paths.pictures, album_id)
+            pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
+
+            manifest = None
+            if album_dir.is_dir():
+                try:
+                    manifest = ChapterManifestStore(self.paths).load(album_id)
+                except UnsupportedChapterManifestVersion as error:
+                    # A newer application may own this directory.  Hiding it
+                    # is safer than presenting destructive legacy actions.
+                    raise LibraryNotFound(
+                        "章节清单版本高于当前程序支持的版本"
+                    ) from error
+                except ChapterManifestError:
+                    # Invalid or unreadable manifests never contribute a title
+                    # or a path.  The remaining files are scanned only through
+                    # the conservative legacy/unverified paths below.
+                    manifest = None
+
+            if manifest is not None:
+                managed_images = self._managed_images(album_dir, manifest)
+                pdf_directory, pdf_files = self._managed_pdfs(
+                    pdf_album_dir,
+                    manifest,
                 )
-                image_size = sum(path.stat().st_size for path in images)
-                pdf_exists = pdf_path.is_file() and not pdf_path.is_symlink()
-                pdf_size = pdf_path.stat().st_size if pdf_exists else 0
-            except OSError as error:
-                raise LibraryNotFound("本地漫画文件已发生变化，请刷新后重试") from error
+                if managed_images or pdf_files:
+                    return self._item_from_files(
+                        album_id=album_id,
+                        title=manifest.album_title,
+                        layout=LibraryLayout.MANAGED,
+                        chapter_count=len(manifest.chapters),
+                        images=managed_images,
+                        pdf_directory=pdf_directory,
+                        pdf_files=pdf_files,
+                    )
+                # A valid manifest whose declared image layout has drifted is
+                # not rebound to a guessed title path.  The remaining disk
+                # facts continue through the conservative legacy/PDF-only
+                # branches below.
 
-            if not images and not pdf_exists:
+            images = self._list_images(album_dir)
+            if images:
+                return self._item_from_files(
+                    album_id=album_id,
+                    title=None,
+                    layout=LibraryLayout.LEGACY,
+                    chapter_count=self._legacy_directory_count(album_dir),
+                    images=images,
+                    pdf_directory=None,
+                    pdf_files=(),
+                )
+
+            pdf_files = self._list_pdf_files(pdf_album_dir)
+            if not pdf_files:
                 raise LibraryNotFound("未找到该漫画")
-
-            return LibraryItem(
+            return self._item_from_files(
                 album_id=album_id,
-                chapter_count=chapter_count,
-                image_count=len(images),
-                image_size=image_size,
-                preview_path=images[0] if images else None,
-                pdf_path=pdf_path if pdf_exists else None,
-                pdf_size=pdf_size,
+                title=None,
+                layout=LibraryLayout.UNVERIFIED,
+                chapter_count=0,
+                images=(),
+                pdf_directory=pdf_album_dir,
+                pdf_files=pdf_files,
             )
+
+    @staticmethod
+    def _item_from_files(
+        *,
+        album_id: str,
+        title: str | None,
+        layout: LibraryLayout,
+        chapter_count: int,
+        images,
+        pdf_directory: Path | None,
+        pdf_files,
+    ) -> LibraryItem:
+        try:
+            image_size = sum(path.stat().st_size for path in images)
+            pdf_size = sum(path.stat().st_size for path in pdf_files)
+        except OSError as error:
+            raise LibraryNotFound(
+                "本地漫画文件已发生变化，请刷新后重试"
+            ) from error
+        return LibraryItem(
+            album_id=album_id,
+            title=title,
+            layout=layout,
+            chapter_count=chapter_count,
+            image_count=len(images),
+            image_size=image_size,
+            preview_path=images[0] if images else None,
+            pdf_directory=pdf_directory,
+            pdf_size=pdf_size,
+        )
 
     def get_preview(self, album_id: str) -> Path:
         with self._lock:
@@ -430,63 +509,19 @@ class LibraryService:
                 raise LibraryNotFound("没有可用的预览图")
             return preview
 
-    def get_pdf(self, album_id: str) -> Path:
-        with self._lock:
-            self._require_album_id(album_id)
-            pdf_path = self._pdf_path(album_id)
-            if not pdf_path.is_file() or pdf_path.is_symlink():
-                raise LibraryNotFound("PDF 不存在")
-            return pdf_path
-
     def get_pdf_directory(self, album_id: str) -> Path:
         with self._lock:
-            self._require_album_id(album_id)
-            try:
-                manifest = ChapterManifestStore(self.paths).load(album_id)
-            except ChapterManifestError as error:
-                raise LibraryNotFound("章节清单不可用") from error
-            if manifest is None:
-                raise LibraryNotFound("章节清单不存在")
-
-            if is_linked_directory(self.paths.pdfs):
-                raise LibraryNotFound("不支持链接形式的 PDF 根目录")
-            album_root = self.paths.pdfs / album_id
-            target = album_root / manifest.album_dir_name
-            if (
-                is_linked_directory(album_root)
-                or is_linked_directory(target)
-                or not target.is_dir()
-            ):
+            item = self.get_item(album_id)
+            if item.pdf_directory is None:
                 raise LibraryNotFound("PDF 储存文件夹不存在")
-            resolved = target.resolve()
-            try:
-                relative = resolved.relative_to(self.paths.pdfs.resolve())
-            except ValueError as error:
-                raise LibraryNotFound("PDF 目录不在受管范围内") from error
-            if (
-                len(relative.parts) != 2
-                or relative.parts[0] != album_id
-                or relative.parts[1] != manifest.album_dir_name
-            ):
-                raise LibraryNotFound("PDF 目录结构无效")
-            try:
-                has_pdf = any(
-                    path.suffix.lower() == ".pdf"
-                    and path.is_file()
-                    and not path.is_symlink()
-                    and path.resolve().is_relative_to(resolved)
-                    for path in target.iterdir()
-                )
-            except OSError as error:
-                raise LibraryNotFound("PDF 储存文件夹无法读取") from error
-            if not has_pdf:
-                raise LibraryNotFound("PDF 不存在")
-            return resolved
+            return item.pdf_directory
 
     def rebuild_pdf(self, album_id: str) -> str:
+        """Retained temporarily for the hidden v2.7 whole-album action."""
+
         with self._lock:
             self._require_album_id(album_id)
-            album_dir = self._album_dir(album_id)
+            album_dir = self._album_directory(self.paths.pictures, album_id)
             if not self._list_images(album_dir):
                 raise LibraryNotFound("没有可用于生成 PDF 的图片")
             try:
@@ -503,53 +538,65 @@ class LibraryService:
     def delete_images(self, album_id: str) -> None:
         with self._lock:
             self._require_album_id(album_id)
-            album_dir = self._album_dir(album_id)
-            if not album_dir.is_dir():
+            item = self.get_item(album_id)
+            if not item.has_images:
                 raise LibraryNotFound("图片目录不存在")
-            try:
-                shutil.rmtree(album_dir)
-            except OSError as error:
-                raise LibraryError(f"删除图片失败：{error}") from error
+            album_dir = self._album_directory(self.paths.pictures, album_id)
+            self._reject_linked_tree(album_dir)
+
+            if item.layout is LibraryLayout.MANAGED:
+                try:
+                    manifest = ChapterManifestStore(self.paths).load(album_id)
+                except ChapterManifestError as error:
+                    raise LibraryError(
+                        "章节清单已发生变化，未删除图片"
+                    ) from error
+                if manifest is None:
+                    raise LibraryError("章节清单已发生变化，未删除图片")
+                minimal = ChapterManifest(
+                    version=manifest.version,
+                    album_id=manifest.album_id,
+                    album_title=manifest.album_title,
+                    album_dir_name=manifest.album_dir_name,
+                    chapters=(),
+                )
+                self._delete_managed_images(album_dir, minimal)
+                return
+
+            self._delete_directory(album_dir, label="图片")
 
     def delete_pdf(self, album_id: str) -> None:
         with self._lock:
-            try:
-                self.get_pdf(album_id).unlink()
-            except OSError as error:
-                raise LibraryError(f"删除 PDF 失败：{error}") from error
+            self._require_album_id(album_id)
+            item = self.get_item(album_id)
+            if not item.has_pdf:
+                raise LibraryNotFound("PDF 储存文件夹不存在")
+            pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
+            self._reject_linked_tree(pdf_album_dir)
+            self._delete_directory(pdf_album_dir, label="PDF")
 
     def delete_all(self, album_id: str) -> None:
         with self._lock:
             self._require_album_id(album_id)
-            album_dir = self._album_dir(album_id)
-            pdf_path = self._pdf_path(album_id)
-            has_images = album_dir.is_dir() and not is_linked_directory(album_dir)
-            has_pdf = pdf_path.is_file() and not pdf_path.is_symlink()
-            if not has_images and not has_pdf:
-                raise LibraryNotFound("未找到该漫画")
-
+            self.get_item(album_id)
+            album_dir = self._album_directory(self.paths.pictures, album_id)
+            pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
+            targets = [
+                path for path in (album_dir, pdf_album_dir) if path.is_dir()
+            ]
+            for path in targets:
+                self._reject_linked_tree(path)
             token = uuid.uuid4().hex
             staged = []
             try:
-                if has_images:
-                    staged_images = album_dir.with_name(
-                        f".{album_id}.{token}.delete"
+                for original in targets:
+                    staged_path = original.with_name(
+                        f".{album_id}.{token}.{original.parent.name}.delete"
                     )
-                    os.replace(album_dir, staged_images)
-                    staged.append((staged_images, album_dir, True))
-                if has_pdf:
-                    staged_pdf = pdf_path.with_name(
-                        f".{album_id}.{token}.pdf.delete"
-                    )
-                    os.replace(pdf_path, staged_pdf)
-                    staged.append((staged_pdf, pdf_path, False))
+                    os.replace(original, staged_path)
+                    staged.append((staged_path, original))
             except OSError as error:
-                rollback_errors = []
-                for staged_path, original_path, _is_directory in reversed(staged):
-                    try:
-                        os.replace(staged_path, original_path)
-                    except OSError as rollback_error:
-                        rollback_errors.append(str(rollback_error))
+                rollback_errors = self._rollback_staged(staged)
                 if rollback_errors:
                     details = "; ".join(rollback_errors)
                     raise LibraryError(
@@ -558,12 +605,9 @@ class LibraryService:
                 raise LibraryError(f"删除漫画失败：{error}") from error
 
             cleanup_errors = []
-            for staged_path, _original_path, is_directory in staged:
+            for staged_path, _original_path in staged:
                 try:
-                    if is_directory:
-                        shutil.rmtree(staged_path)
-                    else:
-                        staged_path.unlink()
+                    shutil.rmtree(staged_path)
                 except OSError as error:
                     cleanup_errors.append(str(error))
             if cleanup_errors:
@@ -575,17 +619,15 @@ class LibraryService:
     def open_location(self, album_id: str, kind: str) -> None:
         with self._lock:
             self._require_album_id(album_id)
+            item = self.get_item(album_id)
             if kind == "images":
-                target = self._album_dir(album_id)
-                if not target.is_dir():
+                if not item.has_images:
                     raise LibraryNotFound("图片目录不存在")
+                target = self._album_directory(self.paths.pictures, album_id)
             elif kind == "pdf":
-                try:
-                    target = self.get_pdf_directory(album_id)
-                except LibraryNotFound:
-                    # Phase 3 removes this compatibility fallback when the
-                    # local-library scanner fully switches to nested PDFs.
-                    target = self.get_pdf(album_id)
+                if item.pdf_directory is None:
+                    raise LibraryNotFound("PDF 储存文件夹不存在")
+                target = item.pdf_directory
             else:
                 raise LibraryError("不支持的打开类型")
 
@@ -596,23 +638,231 @@ class LibraryService:
         except OSError as error:
             raise LibraryError(f"打开失败：{error}") from error
 
-    def _album_dir(self, album_id: str) -> Path:
-        album_dir = self.paths.pictures / album_id
-        if is_linked_directory(album_dir):
+    def _safe_album_ids(self, root: Path) -> set[str]:
+        resolved_root = self._require_real_root(root)
+        try:
+            candidates = tuple(root.iterdir())
+        except OSError as error:
+            raise LibraryError(f"无法读取本地库目录：{error}") from error
+
+        result = set()
+        for candidate in candidates:
+            if not self._valid_album_id(candidate.name):
+                continue
+            if is_linked_directory(candidate) or not candidate.is_dir():
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.parent == resolved_root:
+                result.add(candidate.name)
+        return result
+
+    def _album_directory(self, root: Path, album_id: str) -> Path:
+        resolved_root = self._require_real_root(root)
+        candidate = root / album_id
+        if is_linked_directory(candidate):
             raise LibraryNotFound("不支持链接形式的漫画目录")
-        resolved = album_dir.resolve()
-        if not resolved.is_relative_to(self.paths.pictures.resolve()):
+        if candidate.exists():
+            if not candidate.is_dir():
+                raise LibraryNotFound("漫画目录结构无效")
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError as error:
+                raise LibraryNotFound("漫画目录无法安全解析") from error
+        else:
+            resolved = resolved_root / album_id
+        if resolved.parent != resolved_root:
             raise LibraryNotFound("漫画目录不在受管目录中")
         return resolved
 
-    def _pdf_path(self, album_id: str) -> Path:
-        pdf_path = self.paths.pdfs / f"{album_id}.pdf"
-        if pdf_path.is_symlink():
-            raise LibraryNotFound("不支持符号链接形式的 PDF")
-        resolved = pdf_path.resolve()
-        if not resolved.is_relative_to(self.paths.pdfs.resolve()):
-            raise LibraryNotFound("PDF 不在受管目录中")
+    @staticmethod
+    def _require_real_root(root: Path) -> Path:
+        if is_linked_directory(root) or not root.is_dir():
+            raise LibraryNotFound("本地库根目录不可用")
+        try:
+            return root.resolve(strict=True)
+        except OSError as error:
+            raise LibraryNotFound("本地库根目录无法安全解析") from error
+
+    def _managed_images(
+        self,
+        album_dir: Path,
+        manifest: ChapterManifest,
+    ) -> tuple[Path, ...]:
+        title_dir = self._safe_child_directory(
+            album_dir,
+            manifest.album_dir_name,
+        )
+        if title_dir is None:
+            return ()
+        images = {}
+        for chapter in sorted(
+            manifest.chapters,
+            key=lambda value: value.index,
+        ):
+            chapter_dir = title_dir
+            if chapter.dir_name:
+                chapter_dir = self._safe_child_directory(
+                    title_dir,
+                    chapter.dir_name,
+                )
+                if chapter_dir is None:
+                    continue
+            chapter_images = self._list_direct_images(chapter_dir)
+            for image in chapter_images:
+                images[image] = None
+        return tuple(images)
+
+    def _managed_pdfs(
+        self,
+        pdf_album_dir: Path,
+        manifest: ChapterManifest,
+    ) -> tuple[Path | None, tuple[Path, ...]]:
+        target = self._safe_child_directory(
+            pdf_album_dir,
+            manifest.album_dir_name,
+        )
+        if target is None:
+            return None, ()
+        pdf_files = self._list_direct_pdfs(target)
+        if not pdf_files:
+            return None, ()
+        return target, pdf_files
+
+    @staticmethod
+    def _safe_child_directory(parent: Path, name: str) -> Path | None:
+        if not parent.is_dir():
+            return None
+        candidate = parent / name
+        if is_linked_directory(candidate) or not candidate.is_dir():
+            return None
+        try:
+            resolved_parent = parent.resolve(strict=True)
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            return None
+        if resolved.parent != resolved_parent:
+            return None
         return resolved
+
+    @staticmethod
+    def _list_direct_images(directory: Path) -> tuple[Path, ...]:
+        try:
+            candidates = tuple(directory.iterdir())
+        except OSError as error:
+            raise LibraryNotFound(
+                "本地漫画文件已发生变化，请刷新后重试"
+            ) from error
+        images = []
+        for candidate in candidates:
+            if (
+                candidate.suffix.lower() not in IMAGE_EXTENSIONS
+                or PART_FILE_MARKER in candidate.name
+                or is_linked_directory(candidate)
+                or not candidate.is_file()
+            ):
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.parent == directory:
+                images.append(resolved)
+        images.sort(key=lambda path: natural_key(path.name))
+        return tuple(images)
+
+    @staticmethod
+    def _list_direct_pdfs(directory: Path) -> tuple[Path, ...]:
+        try:
+            candidates = tuple(directory.iterdir())
+        except OSError as error:
+            raise LibraryNotFound(
+                "本地 PDF 文件已发生变化，请刷新后重试"
+            ) from error
+        pdf_files = []
+        for candidate in candidates:
+            if (
+                candidate.suffix.lower() != ".pdf"
+                or PART_FILE_MARKER in candidate.name
+                or is_linked_directory(candidate)
+                or not candidate.is_file()
+            ):
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.parent == directory:
+                pdf_files.append(resolved)
+        pdf_files.sort(key=lambda path: natural_key(path.name))
+        return tuple(pdf_files)
+
+    def _list_pdf_files(self, album_dir: Path) -> tuple[Path, ...]:
+        if not album_dir.is_dir() or is_linked_directory(album_dir):
+            return ()
+        try:
+            resolved_album = album_dir.resolve(strict=True)
+        except OSError:
+            return ()
+
+        pdf_files = []
+        walk_errors = []
+        for root, directories, filenames in os.walk(
+            album_dir,
+            followlinks=False,
+            onerror=walk_errors.append,
+        ):
+            root_path = Path(root)
+            try:
+                resolved_root = root_path.resolve(strict=True)
+            except OSError:
+                directories[:] = []
+                continue
+            if not resolved_root.is_relative_to(resolved_album):
+                directories[:] = []
+                continue
+
+            safe_directories = []
+            for name in directories:
+                candidate = root_path / name
+                if is_linked_directory(candidate):
+                    continue
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except OSError:
+                    continue
+                if resolved.is_dir() and resolved.is_relative_to(resolved_album):
+                    safe_directories.append(name)
+            directories[:] = safe_directories
+
+            for name in filenames:
+                candidate = root_path / name
+                if (
+                    candidate.suffix.lower() != ".pdf"
+                    or PART_FILE_MARKER in candidate.name
+                    or is_linked_directory(candidate)
+                    or not candidate.is_file()
+                ):
+                    continue
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except OSError:
+                    continue
+                if resolved.is_relative_to(resolved_album):
+                    pdf_files.append(resolved)
+        if walk_errors:
+            raise LibraryNotFound(
+                "本地 PDF 文件已发生变化，请刷新后重试"
+            ) from walk_errors[0]
+        pdf_files.sort(
+            key=lambda path: tuple(
+                natural_key(part)
+                for part in path.relative_to(resolved_album).parts
+            )
+        )
+        return tuple(pdf_files)
 
     def _list_images(self, album_dir: Path) -> list[Path]:
         if not album_dir.is_dir():
@@ -620,11 +870,120 @@ class LibraryService:
         try:
             return find_album_images(album_dir)
         except OSError as error:
-            raise LibraryNotFound("本地漫画文件已发生变化，请刷新后重试") from error
+            raise LibraryNotFound(
+                "本地漫画文件已发生变化，请刷新后重试"
+            ) from error
+
+    @staticmethod
+    def _legacy_directory_count(album_dir: Path) -> int:
+        try:
+            return sum(
+                candidate.is_dir() and not is_linked_directory(candidate)
+                for candidate in album_dir.iterdir()
+            )
+        except OSError as error:
+            raise LibraryNotFound(
+                "本地漫画文件已发生变化，请刷新后重试"
+            ) from error
+
+    @staticmethod
+    def _reject_linked_tree(root: Path) -> None:
+        if is_linked_directory(root) or not root.is_dir():
+            raise LibraryError("拒绝操作链接形式的本地漫画目录")
+        walk_errors = []
+        for current, directories, filenames in os.walk(
+            root,
+            followlinks=False,
+            onerror=walk_errors.append,
+        ):
+            current_path = Path(current)
+            for name in (*directories, *filenames):
+                if is_linked_directory(current_path / name):
+                    raise LibraryError("本地漫画目录包含链接，未执行删除")
+        if walk_errors:
+            raise LibraryError(
+                f"无法安全检查本地漫画目录：{walk_errors[0]}"
+            )
+
+    def _delete_managed_images(
+        self,
+        album_dir: Path,
+        minimal: ChapterManifest,
+    ) -> None:
+        token = uuid.uuid4().hex
+        staged = album_dir.with_name(
+            f".{album_dir.name}.{token}.images.delete"
+        )
+        try:
+            os.replace(album_dir, staged)
+        except OSError as error:
+            raise LibraryError(f"删除图片失败：{error}") from error
+
+        try:
+            album_dir.mkdir()
+            ChapterManifestStore(self.paths).replace_exact(minimal)
+        except (OSError, ChapterManifestError) as error:
+            rollback_errors = []
+            try:
+                if album_dir.exists():
+                    shutil.rmtree(album_dir)
+            except OSError as rollback_error:
+                rollback_errors.append(str(rollback_error))
+            if not album_dir.exists():
+                try:
+                    os.replace(staged, album_dir)
+                except OSError as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+            if rollback_errors:
+                raise LibraryError(
+                    "删除图片失败，且无法完整回滚："
+                    + "; ".join(rollback_errors)
+                ) from error
+            raise LibraryError(f"删除图片失败：{error}") from error
+
+        try:
+            shutil.rmtree(staged)
+        except OSError as error:
+            raise LibraryError(
+                f"图片已移出本地库，但临时文件清理失败：{error}"
+            ) from error
+
+    def _delete_directory(self, directory: Path, *, label: str) -> None:
+        token = uuid.uuid4().hex
+        staged = directory.with_name(
+            f".{directory.name}.{token}.{label}.delete"
+        )
+        try:
+            os.replace(directory, staged)
+        except OSError as error:
+            raise LibraryError(f"删除{label}失败：{error}") from error
+        try:
+            shutil.rmtree(staged)
+        except OSError as error:
+            raise LibraryError(
+                f"{label}已移出本地库，但临时文件清理失败：{error}"
+            ) from error
+
+    @staticmethod
+    def _rollback_staged(
+        staged: list[tuple[Path, Path]],
+    ) -> list[str]:
+        errors = []
+        for staged_path, original_path in reversed(staged):
+            try:
+                os.replace(staged_path, original_path)
+            except OSError as error:
+                errors.append(str(error))
+        return errors
 
     @staticmethod
     def _valid_album_id(album_id: str) -> bool:
-        return album_id.isascii() and album_id.isdigit()
+        return (
+            isinstance(album_id, str)
+            and bool(album_id)
+            and album_id.isascii()
+            and album_id.isdigit()
+        )
 
     def _require_album_id(self, album_id: str) -> None:
         if not self._valid_album_id(album_id):

@@ -18,7 +18,8 @@ from PySide6.QtWidgets import QApplication
 from jm_downloader import desktop_runtime
 from jm_downloader.desktop_runtime import SingleInstance
 from jm_downloader.downloader import DownloadWorker
-from jm_downloader.library import LibraryService
+from jm_downloader.library import ChapterManifestStore, LibraryService
+from jm_downloader.models import ChapterManifest, ChapterManifestEntry
 from jm_downloader.qt import app as qt_app
 from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.main_window import MainWindow
@@ -277,14 +278,38 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
             SettingsStore(original_paths).save(settings)
             original_runtime = original_paths.with_settings(settings)
 
+            manifest = ChapterManifest(
+                version=1,
+                album_id="1449491",
+                album_title="便携漫画",
+                album_dir_name="便携漫画",
+                chapters=(
+                    ChapterManifestEntry(
+                        "301",
+                        1,
+                        "第一章",
+                        "第1章",
+                        1,
+                    ),
+                ),
+            )
+            ChapterManifestStore(original_runtime).merge_and_save(manifest)
             image_path = (
-                original_runtime.pictures / "1449491" / "chapter-1" / "1.jpg"
+                original_runtime.pictures
+                / "1449491"
+                / "便携漫画"
+                / "第1章"
+                / "1.jpg"
             )
             image_path.parent.mkdir(parents=True)
             image_path.write_bytes(b"offline image fixture")
-            pdf_path = original_runtime.pdfs / "1449491.pdf"
-            pdf_path.parent.mkdir(parents=True)
-            pdf_path.write_bytes(b"%PDF-1.4\noffline fixture")
+            pdf_directory = (
+                original_runtime.pdfs / "1449491" / "便携漫画"
+            )
+            pdf_directory.mkdir(parents=True)
+            (pdf_directory / "第1章.pdf").write_bytes(
+                b"%PDF-1.4\noffline fixture"
+            )
 
             moved_root = container / "moved"
             original_root.rename(moved_root)
@@ -310,7 +335,11 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
             self.assertTrue(
                 items[0].preview_path.is_relative_to(moved_root.resolve())
             )
-            self.assertTrue(items[0].pdf_path.is_relative_to(moved_root.resolve()))
+            self.assertTrue(
+                items[0].pdf_directory.is_relative_to(
+                    moved_root.resolve()
+                )
+            )
 
     @unittest.skipUnless(
         os.name == "nt" and hasattr(desktop_runtime.ctypes, "windll"),

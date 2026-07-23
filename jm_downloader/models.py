@@ -34,6 +34,12 @@ class AccountStatus(str, Enum):
     LOCAL_DATA_UNREADABLE = "local_data_unreadable"
 
 
+class LibraryLayout(str, Enum):
+    MANAGED = "managed"
+    LEGACY = "legacy"
+    UNVERIFIED = "unverified"
+
+
 @dataclass(frozen=True, slots=True)
 class SearchRequest:
     mode: SearchMode
@@ -162,17 +168,19 @@ class TaskSnapshot:
 @dataclass(frozen=True, slots=True)
 class LibraryItem:
     album_id: str
+    title: str | None
+    layout: LibraryLayout
     chapter_count: int
     image_count: int
     image_size: int
     preview_path: Path | None
-    pdf_path: Path | None
+    pdf_directory: Path | None
     pdf_size: int
 
     @property
     def has_images(self) -> bool:
-        return self.preview_path is not None
+        return self.image_count > 0
 
     @property
     def has_pdf(self) -> bool:
-        return self.pdf_path is not None
+        return self.pdf_directory is not None

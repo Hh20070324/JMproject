@@ -10,7 +10,11 @@ from jm_downloader.library import (
     LibraryNotFound,
     LibraryService,
 )
-from jm_downloader.models import ChapterManifest, ChapterManifestEntry
+from jm_downloader.models import (
+    ChapterManifest,
+    ChapterManifestEntry,
+    LibraryLayout,
+)
 from jm_downloader.settings import AppPaths
 
 
@@ -23,65 +27,84 @@ class LibraryServiceTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def test_scans_images_and_pdfs_from_disk(self):
-        (self.paths.pictures / "5").mkdir()
-        self._write("Pictures/10/2/10.jpg", b"ten")
-        self._write("Pictures/10/2/2.jpg", b"two")
-        self._write("Pictures/2/1/1.jpg", b"one")
-        self._write("PDFs/10.pdf", b"pdf")
-        self._write("PDFs/30.pdf", b"pdf only")
+    def test_scans_nested_layouts_and_ignores_flat_whole_pdfs(self):
+        self._write("Pictures/10/旧章节/10.jpg", b"ten")
+        self._write("Pictures/10/旧章节/2.jpg", b"two")
+        self._write("PDFs/10.pdf", b"unmanaged")
+        self._write("PDFs/30.pdf", b"unmanaged-only")
+        self._write("PDFs/40/未知标题/第1章.pdf", b"nested")
 
         items = self.library.list_items()
 
-        self.assertEqual([item.album_id for item in items], ["2", "10", "30"])
-        item = items[1]
-        self.assertEqual(item.chapter_count, 1)
-        self.assertEqual(item.image_count, 2)
-        self.assertTrue(item.has_pdf)
+        self.assertEqual([item.album_id for item in items], ["10", "40"])
+        legacy, unverified = items
+        self.assertEqual(legacy.layout, LibraryLayout.LEGACY)
+        self.assertIsNone(legacy.title)
+        self.assertEqual(legacy.chapter_count, 1)
+        self.assertEqual(legacy.image_count, 2)
+        self.assertFalse(legacy.has_pdf)
         self.assertEqual(
-            item.preview_path.relative_to(self.paths.pictures).as_posix(),
-            "10/2/2.jpg",
+            legacy.preview_path.relative_to(self.paths.pictures).as_posix(),
+            "10/旧章节/2.jpg",
         )
-        self.assertEqual(item.pdf_path, self.paths.pdfs / "10.pdf")
-        self.assertEqual(
-            self.library.get_preview("10").relative_to(self.paths.pictures).as_posix(),
-            "10/2/2.jpg",
-        )
+        self.assertEqual(unverified.layout, LibraryLayout.UNVERIFIED)
+        self.assertIsNone(unverified.title)
+        self.assertFalse(unverified.has_images)
+        self.assertEqual(unverified.pdf_directory, self.paths.pdfs / "40")
 
-    def test_delete_images_and_pdf_independently(self):
-        self._write("Pictures/123/1/1.jpg", b"image")
-        self._write("PDFs/123.pdf", b"pdf")
+    def test_delete_images_and_pdf_independently_for_managed_item(self):
+        self._save_manifest()
+        self._write("Pictures/123/测试漫画/第1章/1.jpg", b"image")
+        self._write("PDFs/123/测试漫画/第1章.pdf", b"pdf")
+        whole_pdf = self._write("PDFs/123.pdf", b"keep")
 
         self.library.delete_images("123")
+
         item = self.library.get_item("123")
+        manifest = ChapterManifestStore(self.paths).load("123")
+        self.assertEqual(item.layout, LibraryLayout.MANAGED)
         self.assertFalse(item.has_images)
         self.assertTrue(item.has_pdf)
+        self.assertEqual(item.chapter_count, 0)
+        self.assertEqual(manifest.chapters, ())
+        self.assertEqual(whole_pdf.read_bytes(), b"keep")
 
         self.library.delete_pdf("123")
+        self.assertFalse((self.paths.pdfs / "123").exists())
+        self.assertEqual(whole_pdf.read_bytes(), b"keep")
         with self.assertRaises(LibraryNotFound):
             self.library.get_item("123")
 
-    def test_delete_all_removes_images_and_pdf(self):
-        self._write("Pictures/123/1/1.jpg", b"image")
-        self._write("PDFs/123.pdf", b"pdf")
+    def test_delete_all_removes_only_nested_managed_roots(self):
+        self._save_manifest()
+        self._write("Pictures/123/测试漫画/第1章/1.jpg", b"image")
+        self._write("PDFs/123/测试漫画/第1章.pdf", b"pdf")
+        whole_pdf = self._write("PDFs/123.pdf", b"keep")
 
         self.library.delete_all("123")
 
         self.assertFalse((self.paths.pictures / "123").exists())
-        self.assertFalse((self.paths.pdfs / "123.pdf").exists())
+        self.assertFalse((self.paths.pdfs / "123").exists())
+        self.assertEqual(whole_pdf.read_bytes(), b"keep")
         with self.assertRaises(LibraryNotFound):
             self.library.delete_all("123")
 
     def test_delete_all_rolls_back_images_when_pdf_cannot_be_staged(self):
-        image_path = self.paths.pictures / "123" / "1" / "1.jpg"
-        pdf_path = self.paths.pdfs / "123.pdf"
-        self._write("Pictures/123/1/1.jpg", b"image")
-        self._write("PDFs/123.pdf", b"pdf")
+        self._save_manifest()
+        image_path = self._write(
+            "Pictures/123/测试漫画/第1章/1.jpg",
+            b"image",
+        )
+        pdf_path = self._write(
+            "PDFs/123/测试漫画/第1章.pdf",
+            b"pdf",
+        )
+        pdf_root = self.paths.pdfs / "123"
         original_replace = os.replace
 
         def replace_with_locked_pdf(source, destination):
-            if Path(source) == pdf_path:
-                raise PermissionError("PDF 文件被占用")
+            if Path(source) == pdf_root:
+                raise PermissionError("PDF 文件夹被占用")
             return original_replace(source, destination)
 
         with patch(
@@ -100,20 +123,9 @@ class LibraryServiceTests(unittest.TestCase):
         with self.assertRaises(LibraryNotFound):
             self.library.get_preview("../secret")
 
-    def test_rebuild_pdf_uses_managed_directories(self):
-        self._write("Pictures/123/1/1.jpg", b"image")
-        expected = self.paths.pdfs / "123.pdf"
-        with patch("jm_downloader.library.album_to_pdf", return_value=str(expected)) as build:
-            result = self.library.rebuild_pdf("123")
-
-        self.assertEqual(result, str(expected))
-        build.assert_called_once_with(
-            str(self.paths.pictures / "123"), str(self.paths.pdfs)
-        )
-
-    def test_rebuild_pdf_wraps_failure_without_removing_existing_pdf(self):
-        self._write("Pictures/123/1/1.jpg", b"image")
-        self._write("PDFs/123.pdf", b"old pdf")
+    def test_hidden_rebuild_api_still_wraps_legacy_builder_failure(self):
+        self._write("Pictures/123/旧章节/1.jpg", b"image")
+        old_pdf = self._write("PDFs/123.pdf", b"old pdf")
         with patch(
             "jm_downloader.library.album_to_pdf",
             side_effect=OSError("文件被占用"),
@@ -121,18 +133,28 @@ class LibraryServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(LibraryError, "PDF 生成失败"):
                 self.library.rebuild_pdf("123")
 
-        self.assertEqual((self.paths.pdfs / "123.pdf").read_bytes(), b"old pdf")
+        self.assertEqual(old_pdf.read_bytes(), b"old pdf")
 
-    def test_open_pdf_uses_system_default_application(self):
-        pdf_path = self.paths.pdfs / "123.pdf"
-        self._write("PDFs/123.pdf", b"pdf")
+    def test_open_pdf_uses_verified_managed_title_directory(self):
+        self._save_manifest()
+        self._write("Pictures/123/测试漫画/第1章/1.jpg", b"image")
+        pdf_directory = self.paths.pdfs / "123" / "测试漫画"
+        self._write("PDFs/123/测试漫画/第1章.pdf", b"pdf")
 
         with patch("jm_downloader.library.os.startfile", create=True) as startfile:
             self.library.open_location("123", "pdf")
 
-        startfile.assert_called_once_with(pdf_path)
+        startfile.assert_called_once_with(pdf_directory.resolve())
 
-    def test_open_pdf_prefers_new_managed_directory(self):
+    def test_open_pdf_only_item_uses_conservative_album_root(self):
+        self._write("PDFs/123/外部目录/第1章.pdf", b"pdf")
+
+        with patch("jm_downloader.library.os.startfile", create=True) as startfile:
+            self.library.open_location("123", "pdf")
+
+        startfile.assert_called_once_with((self.paths.pdfs / "123").resolve())
+
+    def _save_manifest(self):
         manifest = ChapterManifest(
             version=1,
             album_id="123",
@@ -149,16 +171,14 @@ class LibraryServiceTests(unittest.TestCase):
             ),
         )
         ChapterManifestStore(self.paths).merge_and_save(manifest)
-        pdf_directory = self.paths.pdfs / "123" / "测试漫画"
-        pdf_directory.mkdir(parents=True)
-        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
-
-        with patch("jm_downloader.library.os.startfile", create=True) as startfile:
-            self.library.open_location("123", "pdf")
-
-        startfile.assert_called_once_with(pdf_directory.resolve())
+        return manifest
 
     def _write(self, relative_path: str, content: bytes):
         path = self.paths.root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
+        return path
+
+
+if __name__ == "__main__":
+    unittest.main()
