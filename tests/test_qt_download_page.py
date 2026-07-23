@@ -185,17 +185,44 @@ class DownloadPageTests(unittest.TestCase):
             preview_revision=1,
             pdf_directory=Path(self.temp_dir.name) / "pdfs",
         )
+        completed.pdf_directory.mkdir()
         self.controller.tasks = [completed]
         self.controller.tasks_reset.emit([completed])
         self.app.processEvents()
         self.assertFalse(row.open_images_button.isHidden())
         self.assertFalse(row.open_pdf_button.isHidden())
+        self.assertTrue(row.open_pdf_button.isEnabled())
+        self.assertIn(
+            "文件资源管理器",
+            row.open_pdf_button.toolTip(),
+        )
         row.open_images_button.click()
         row.open_pdf_button.click()
         self.assertEqual(
             self.controller.opened,
             [(completed.id, "images"), (completed.id, "pdf")],
         )
+
+        failed_with_pdf = replace(
+            completed,
+            status=TaskStatus.FAILED,
+            error="第二章 PDF 生成失败",
+        )
+        self.controller.tasks = [failed_with_pdf]
+        self.controller.tasks_reset.emit([failed_with_pdf])
+        self.app.processEvents()
+        self.assertFalse(row.open_pdf_button.isHidden())
+        self.assertTrue(row.open_pdf_button.isEnabled())
+
+        missing_directory = replace(
+            failed_with_pdf,
+            pdf_directory=Path(self.temp_dir.name) / "missing-pdfs",
+        )
+        self.controller.tasks = [missing_directory]
+        self.controller.tasks_reset.emit([missing_directory])
+        self.app.processEvents()
+        self.assertFalse(row.open_pdf_button.isHidden())
+        self.assertFalse(row.open_pdf_button.isEnabled())
 
     def test_task_row_displays_transitional_states_without_actions(self):
         page = self.window.page("downloads")

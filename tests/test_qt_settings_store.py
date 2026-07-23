@@ -66,6 +66,7 @@ class QtSettingsStoreTests(unittest.TestCase):
             pictures_directory="portable/images",
             pdf_directory="portable/pdfs",
             max_concurrent_tasks=5,
+            multi_chapter_download_behavior="queued",
             theme="dark",
         )
         self.store.save(expected)
@@ -73,6 +74,19 @@ class QtSettingsStoreTests(unittest.TestCase):
         self.assertEqual(self.store.load(), expected)
         self.assertEqual(self.store.reset(), AppSettings())
         self.assertEqual(self.store.load(), AppSettings())
+
+    def test_old_schema_v1_file_without_chapter_behavior_uses_default(self):
+        payload = AppSettings().to_dict()
+        del payload["download"]["multi_chapter_download_behavior"]
+        self.paths.settings_file.write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+
+        settings = self.store.load()
+
+        self.assertEqual(settings.multi_chapter_download_behavior, "parallel")
+        self.assertIsNone(self.store.last_recovery_backup)
 
     def test_corrupt_json_is_backed_up_and_replaced_with_defaults(self):
         raw = b'{"schema_version": 1, broken'

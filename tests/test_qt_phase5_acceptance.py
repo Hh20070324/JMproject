@@ -46,6 +46,7 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
                 pdf_directory="data/PDFs",
                 max_concurrent_tasks=6,
                 image_concurrency=31,
+                multi_chapter_download_behavior="queued",
                 log_level="ERROR",
                 window_width=1280,
                 window_height=800,
@@ -153,6 +154,12 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
                 self.assertEqual(
                     worker_factory.keywords["image_concurrency"],
                     31,
+                )
+                self.assertEqual(
+                    worker_factory.keywords[
+                        "multi_chapter_download_behavior"
+                    ],
+                    "queued",
                 )
 
             self.assertEqual(

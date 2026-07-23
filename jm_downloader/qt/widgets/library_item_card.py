@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import LibraryItem
+from ...models import LibraryItem, LibraryLayout
 from ..icons import svg_icon
 
 
@@ -106,7 +106,7 @@ class LibraryItemCard(QFrame):
         self.open_pdf_button = self._make_icon_button(
             actions,
             "libraryOpenPdfButton",
-            "使用系统默认程序查看 PDF",
+            "使用文件资源管理器打开本漫画 PDF 储存文件夹",
             svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
@@ -134,8 +134,11 @@ class LibraryItemCard(QFrame):
         )
         self.delete_menu = QMenu(self.delete_button)
         self.delete_menu.setObjectName("libraryDeleteMenu")
-        self.delete_images_action = QAction("删除图片", self.delete_menu)
-        self.delete_pdf_action = QAction("删除 PDF", self.delete_menu)
+        self.delete_images_action = QAction("删除全部图片", self.delete_menu)
+        self.delete_pdf_action = QAction(
+            "删除全部受管 PDF",
+            self.delete_menu,
+        )
         self.delete_all_action = QAction("删除全部", self.delete_menu)
         self.delete_images_action.triggered.connect(
             lambda: self.delete_requested.emit(self.item.album_id, "images")
@@ -170,15 +173,26 @@ class LibraryItemCard(QFrame):
 
     def update_item(self, item: LibraryItem) -> None:
         self.item = item
-        self.album_id_label.setText(f"JM {item.album_id}")
+        heading = (
+            f"{item.title} · JM {item.album_id}"
+            if item.title
+            else f"JM {item.album_id}"
+        )
+        self.album_id_label.setText(heading)
+        self.album_id_label.setToolTip(heading)
         self.image_meta.setText(
             f"图片 {item.image_count} 张 · {format_file_size(item.image_size)}"
             if item.has_images
             else "没有本地图片"
         )
-        self.chapter_meta.setText(
-            f"章节 {item.chapter_count} 个" if item.has_images else "章节 0 个"
-        )
+        if item.layout is LibraryLayout.LEGACY:
+            self.chapter_meta.setText(
+                f"章节信息未知 · 目录 {item.chapter_count} 个"
+            )
+        elif item.layout is LibraryLayout.UNVERIFIED:
+            self.chapter_meta.setText("章节信息未知")
+        else:
+            self.chapter_meta.setText(f"章节 {item.chapter_count} 个")
         self.pdf_meta.setText(
             f"PDF · {format_file_size(item.pdf_size)}"
             if item.has_pdf
@@ -186,7 +200,11 @@ class LibraryItemCard(QFrame):
         )
         self.open_images_button.setVisible(item.has_images)
         self.open_pdf_button.setVisible(item.has_pdf)
-        self.rebuild_button.setVisible(item.has_images)
+        self.open_pdf_button.setEnabled(
+            item.pdf_directory is not None
+            and item.pdf_directory.is_dir()
+        )
+        self.rebuild_button.setVisible(False)
         self.rebuild_button.setText("重建 PDF" if item.has_pdf else "生成 PDF")
         self.delete_images_action.setVisible(item.has_images)
         self.delete_pdf_action.setVisible(item.has_pdf)
@@ -215,11 +233,17 @@ class LibraryItemCard(QFrame):
             self.state_label.setText("任务占用")
             self.state_label.setProperty("state", "active")
             tooltip = "该漫画仍有下载任务，暂不可修改本地文件"
+        elif self.item.layout is LibraryLayout.LEGACY:
+            self.state_label.setText("旧版布局")
+            self.state_label.setProperty("state", "legacy")
+            tooltip = "旧版布局，章节信息未知"
         else:
             self.state_label.clear()
             self.state_label.setProperty("state", "")
             tooltip = ""
-        self.state_label.setVisible(locked)
+        self.state_label.setVisible(
+            locked or self.item.layout is LibraryLayout.LEGACY
+        )
         self.rebuild_button.setToolTip(tooltip or self.rebuild_button.text())
         self.delete_button.setToolTip(tooltip or "删除本地文件")
         self.state_label.style().unpolish(self.state_label)

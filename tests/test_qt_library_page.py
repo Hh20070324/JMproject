@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
@@ -115,6 +116,7 @@ class LibraryPageTests(unittest.TestCase):
 
     def test_card_actions_and_activity_state(self):
         card = self.page.item_card("30")
+        self.assertIn("文件资源管理器", card.open_pdf_button.toolTip())
         card.open_images_button.click()
         card.open_pdf_button.click()
 
@@ -135,14 +137,14 @@ class LibraryPageTests(unittest.TestCase):
         self.controller.busy_albums_changed.emit(self.controller.busy)
         self.assertEqual(card.state_label.text(), "处理中")
 
-    def test_delete_and_rebuild_require_native_confirmation(self):
+    def test_delete_requires_native_confirmation_and_rebuild_is_hidden(self):
         card = self.page.item_card("30")
+        self.assertTrue(card.rebuild_button.isHidden())
         with patch(
             "jm_downloader.qt.pages.library_page.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Cancel,
         ):
             card.delete_images_action.trigger()
-            card.rebuild_button.click()
         self.assertEqual(self.controller.calls, [])
 
         with patch(
@@ -150,11 +152,28 @@ class LibraryPageTests(unittest.TestCase):
             return_value=QMessageBox.StandardButton.Yes,
         ):
             card.delete_all_action.trigger()
-            card.rebuild_button.click()
 
         self.assertEqual(
             self.controller.calls,
-            [("delete", "30", "all"), ("rebuild", "30")],
+            [("delete", "30", "all")],
+        )
+
+    def test_legacy_layout_uses_honest_degraded_metadata(self):
+        card = self.page.item_card("10")
+        card.update_item(
+            replace(
+                card.item,
+                title=None,
+                layout=LibraryLayout.LEGACY,
+                chapter_count=3,
+            )
+        )
+
+        self.assertEqual(card.state_label.text(), "旧版布局")
+        self.assertFalse(card.state_label.isHidden())
+        self.assertEqual(
+            card.chapter_meta.text(),
+            "章节信息未知 · 目录 3 个",
         )
 
     def test_loading_empty_error_and_thumbnail_states(self):
@@ -204,6 +223,8 @@ class LibraryPageTests(unittest.TestCase):
             if pdf
             else None
         )
+        if pdf_directory is not None:
+            pdf_directory.mkdir(parents=True, exist_ok=True)
         return LibraryItem(
             album_id=album_id,
             title=f"测试漫画 {album_id}",

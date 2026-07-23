@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import ChapterCatalogSnapshot
+from ...models import MAX_CHAPTERS_PER_TASK, ChapterCatalogSnapshot
 from ..icons import svg_icon
 
 
@@ -135,6 +135,13 @@ class ChapterSelectionDialog(QDialog):
         metadata.setObjectName("chapterDialogMetadata")
         root.addWidget(metadata)
 
+        self.selection_limit_label = QLabel(
+            f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章",
+            self,
+        )
+        self.selection_limit_label.setObjectName("chapterSelectionLimit")
+        root.addWidget(self.selection_limit_label)
+
         toolbar = QFrame(self)
         toolbar.setObjectName("chapterDialogToolbar")
         toolbar_layout = QHBoxLayout(toolbar)
@@ -178,7 +185,7 @@ class ChapterSelectionDialog(QDialog):
             checkbox.setObjectName("chapterItemCheck")
             checkbox.setProperty("chapter_id", chapter.photo_id)
             checkbox.setChecked(position == 0)
-            checkbox.toggled.connect(self._update_selection_state)
+            checkbox.toggled.connect(self._on_chapter_toggled)
             chapter_layout.addWidget(checkbox)
             checkboxes.append(checkbox)
         chapter_layout.addStretch(1)
@@ -206,6 +213,7 @@ class ChapterSelectionDialog(QDialog):
         footer.addWidget(self.confirm_button)
         root.addLayout(footer)
 
+        self._limit_message_visible = False
         self._update_selection_state()
 
     def selected_chapter_ids(self) -> tuple[str, ...]:
@@ -219,20 +227,39 @@ class ChapterSelectionDialog(QDialog):
         if state is Qt.CheckState.PartiallyChecked:
             return
         checked = state is Qt.CheckState.Checked
-        for checkbox in self.chapter_checkboxes:
+        for position, checkbox in enumerate(self.chapter_checkboxes):
             blocker = QSignalBlocker(checkbox)
-            checkbox.setChecked(checked)
+            checkbox.setChecked(
+                checked and position < MAX_CHAPTERS_PER_TASK
+            )
             del blocker
+        self._limit_message_visible = False
         self._update_selection_state()
 
-    def _update_selection_state(self, _checked: bool = False) -> None:
+    def _on_chapter_toggled(self, checked: bool) -> None:
+        checkbox = self.sender()
+        if (
+            checked
+            and isinstance(checkbox, QCheckBox)
+            and len(self.selected_chapter_ids()) > MAX_CHAPTERS_PER_TASK
+        ):
+            blocker = QSignalBlocker(checkbox)
+            checkbox.setChecked(False)
+            del blocker
+            self._limit_message_visible = True
+        else:
+            self._limit_message_visible = False
+        self._update_selection_state()
+
+    def _update_selection_state(self) -> None:
         selected_count = sum(
             checkbox.isChecked() for checkbox in self.chapter_checkboxes
         )
         total_count = len(self.chapter_checkboxes)
+        checked_target = min(total_count, MAX_CHAPTERS_PER_TASK)
         if selected_count == 0:
             state = Qt.CheckState.Unchecked
-        elif selected_count == total_count:
+        elif selected_count == checked_target:
             state = Qt.CheckState.Checked
         else:
             state = Qt.CheckState.PartiallyChecked
@@ -240,9 +267,31 @@ class ChapterSelectionDialog(QDialog):
         self.select_all_checkbox.setCheckState(state)
         del blocker
 
-        self.selection_summary.setText(
-            f"已选 {selected_count} / {total_count}"
-        )
+        if self._limit_message_visible:
+            summary = (
+                f"已达到 {MAX_CHAPTERS_PER_TASK} 章上限，"
+                "请先取消一个已选章节"
+            )
+        else:
+            summary = f"已选 {selected_count} / {total_count}"
+            if total_count > MAX_CHAPTERS_PER_TASK:
+                summary += f"（上限 {MAX_CHAPTERS_PER_TASK}）"
+        limit_reached = self._limit_message_visible
+        if (
+            self.selection_summary.property("limitReached")
+            != limit_reached
+        ):
+            self.selection_summary.setProperty(
+                "limitReached",
+                limit_reached,
+            )
+            self.selection_summary.style().unpolish(
+                self.selection_summary
+            )
+            self.selection_summary.style().polish(
+                self.selection_summary
+            )
+        self.selection_summary.setText(summary)
         self.confirm_button.setText(f"确认下载（{selected_count}）")
         self.confirm_button.setEnabled(selected_count > 0)
 

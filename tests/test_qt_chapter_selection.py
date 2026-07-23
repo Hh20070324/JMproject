@@ -14,6 +14,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.models import (
+    MAX_CHAPTERS_PER_TASK,
     ChapterCatalogSnapshot,
     ChapterSnapshot,
     SearchResultSnapshot,
@@ -165,6 +166,70 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(all(box.isChecked() for box in boxes))
         self.assertEqual(select_all.checkState(), Qt.CheckState.Checked)
+
+    def test_selection_limit_rejects_eleventh_then_allows_replacement(self):
+        dialog = ChapterSelectionDialog(
+            make_catalog(
+                *(
+                    ChapterSnapshot(
+                        f"photo-{index}",
+                        index,
+                        f"章节 {index}",
+                    )
+                    for index in range(1, 13)
+                )
+            )
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dialog.show()
+        self.app.processEvents()
+        try:
+            self.assertTrue(dialog.selection_limit_label.isVisible())
+            self.assertEqual(
+                dialog.selection_limit_label.text(),
+                f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章",
+            )
+
+            dialog.select_all_checkbox.click()
+            self.app.processEvents()
+            self.assertEqual(
+                len(dialog.selected_chapter_ids()),
+                MAX_CHAPTERS_PER_TASK,
+            )
+            self.assertEqual(
+                dialog.select_all_checkbox.checkState(),
+                Qt.CheckState.Checked,
+            )
+            self.assertIn("上限 10", dialog.selection_summary.text())
+
+            boxes = dialog.chapter_checkboxes
+            boxes[MAX_CHAPTERS_PER_TASK].click()
+            self.app.processEvents()
+            self.assertFalse(boxes[MAX_CHAPTERS_PER_TASK].isChecked())
+            self.assertTrue(
+                dialog.selection_summary.property("limitReached")
+            )
+            self.assertEqual(
+                dialog.selection_summary.text(),
+                "已达到 10 章上限，请先取消一个已选章节",
+            )
+
+            boxes[0].click()
+            boxes[MAX_CHAPTERS_PER_TASK].click()
+            self.app.processEvents()
+            self.assertFalse(boxes[0].isChecked())
+            self.assertTrue(boxes[MAX_CHAPTERS_PER_TASK].isChecked())
+            self.assertEqual(
+                len(dialog.selected_chapter_ids()),
+                MAX_CHAPTERS_PER_TASK,
+            )
+            self.assertFalse(
+                dialog.selection_summary.property("limitReached")
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+            self.app.processEvents()
 
     def test_chapter_hover_state_tracks_enter_and_leave_in_both_directions(self):
         first, second, third = self.dialog.chapter_checkboxes

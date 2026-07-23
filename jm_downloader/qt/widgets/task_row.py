@@ -165,7 +165,7 @@ class DownloadTaskRow(QFrame):
         self.open_pdf_button = self._make_action(
             actions,
             "openPdfButton",
-            "使用系统默认程序查看 PDF",
+            "使用文件资源管理器打开本漫画 PDF 储存文件夹",
             svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
@@ -251,14 +251,12 @@ class DownloadTaskRow(QFrame):
             and snapshot.preview_path is not None
         )
         self.open_pdf_button.setVisible(
-            (
-                snapshot.status == TaskStatus.COMPLETED
-                or (
-                    snapshot.status == TaskStatus.FAILED
-                    and snapshot.preview_path is None
-                )
-            )
+            snapshot.status in (TaskStatus.FAILED, TaskStatus.COMPLETED)
             and snapshot.pdf_directory is not None
+        )
+        self.open_pdf_button.setEnabled(
+            snapshot.pdf_directory is not None
+            and snapshot.pdf_directory.is_dir()
         )
 
     def set_preview(self, image: QImage, revision: int) -> None:

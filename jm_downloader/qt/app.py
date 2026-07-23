@@ -191,6 +191,9 @@ def run_qt_app(
         worker_factory = partial(
             DownloadWorker,
             image_concurrency=settings.image_concurrency,
+            multi_chapter_download_behavior=(
+                settings.multi_chapter_download_behavior
+            ),
         )
         try:
             task_store = TaskStore(paths)

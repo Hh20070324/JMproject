@@ -75,6 +75,7 @@ class AppSettings:
     pdf_directory: str = "PDFs"
     max_concurrent_tasks: int = 2
     image_concurrency: int = 16
+    multi_chapter_download_behavior: str = "parallel"
     log_level: str = "INFO"
     window_width: int = 1100
     window_height: int = 720
@@ -104,6 +105,11 @@ class AppSettings:
         self._validate_integer(
             "图片并发数", self.image_concurrency, minimum=1, maximum=64
         )
+        if (
+            not isinstance(self.multi_chapter_download_behavior, str)
+            or self.multi_chapter_download_behavior not in {"parallel", "queued"}
+        ):
+            raise SettingsValidationError("多章漫画下载行为无效")
         self._validate_integer(
             "窗口宽度", self.window_width, minimum=760, maximum=10000
         )
@@ -142,6 +148,9 @@ class AppSettings:
             "download": {
                 "max_concurrent_tasks": self.max_concurrent_tasks,
                 "image_concurrency": self.image_concurrency,
+                "multi_chapter_download_behavior": (
+                    self.multi_chapter_download_behavior
+                ),
             },
             "logging": {"level": self.log_level},
             "window": {
@@ -184,6 +193,10 @@ class AppSettings:
             ),
             image_concurrency=download.get(
                 "image_concurrency", defaults.image_concurrency
+            ),
+            multi_chapter_download_behavior=download.get(
+                "multi_chapter_download_behavior",
+                defaults.multi_chapter_download_behavior,
             ),
             log_level=logging.get("level", defaults.log_level),
             window_width=window.get("width", defaults.window_width),

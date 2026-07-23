@@ -1,7 +1,7 @@
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QDialog, QWidget
 
-from ..models import ChapterCatalogSnapshot
+from ..models import MAX_CHAPTERS_PER_TASK, ChapterCatalogSnapshot
 from ..tasks import InvalidAlbumId, normalize_album_id
 from .widgets.chapter_selection_dialog import ChapterSelectionDialog
 
@@ -139,6 +139,15 @@ class ChapterDownloadFlow(QObject):
                 dialog.deleteLater()
             if not selected_ids:
                 self.task_skipped.emit(album_id)
+                return
+            if len(selected_ids) > MAX_CHAPTERS_PER_TASK:
+                self.failed.emit(
+                    album_id,
+                    (
+                        f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章，"
+                        "请重新选择"
+                    ),
+                )
                 return
 
         snapshot = self.download_controller.add_task(

@@ -8,7 +8,14 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QSpinBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QSpinBox,
+    QToolButton,
+)
 
 from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.pages.settings_page import SettingsPage
@@ -51,6 +58,7 @@ class SettingsPageTests(unittest.TestCase):
             pdf_directory="Documents/PDF",
             max_concurrent_tasks=3,
             image_concurrency=24,
+            multi_chapter_download_behavior="queued",
             log_level="WARNING",
             window_width=1280,
             window_height=800,
@@ -80,6 +88,9 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(self.page.pdf_directory_input.text(), "Documents/PDF")
         self.assertEqual(self.page.max_concurrent_tasks_spin.value(), 3)
         self.assertEqual(self.page.image_concurrency_spin.value(), 24)
+        behavior_actions = self.page.multi_chapter_behavior_menu.actions()
+        self.assertTrue(behavior_actions[1].isChecked())
+        self.assertIn("同时 1 章", self.page.multi_chapter_behavior_button.text())
         self.assertEqual(self.page.log_level_combo.currentData(), "WARNING")
         self.assertEqual(self.page.startup_page_combo.currentData(), "library")
         favorites_index = self.page.startup_page_combo.findData("favorites")
@@ -99,6 +110,38 @@ class SettingsPageTests(unittest.TestCase):
             self.page.startup_page_combo.itemText(downloads_index),
             "搜索与下载",
         )
+
+    def test_multi_chapter_behavior_uses_exclusive_instant_popup_menu(self):
+        button = self.page.multi_chapter_behavior_button
+        menu = self.page.multi_chapter_behavior_menu
+
+        self.assertIsInstance(button, QToolButton)
+        self.assertIsInstance(menu, QMenu)
+        self.assertIs(button.menu(), menu)
+        self.assertEqual(
+            button.popupMode(),
+            QToolButton.ToolButtonPopupMode.InstantPopup,
+        )
+        actions = menu.actions()
+        self.assertEqual(
+            [action.text() for action in actions],
+            ["并行下载（同时 2 章）", "排队下载（同时 1 章）"],
+        )
+        self.assertEqual(
+            [action.data() for action in actions],
+            ["parallel", "queued"],
+        )
+        self.assertTrue(all(action.isCheckable() for action in actions))
+        self.assertTrue(actions[1].isChecked())
+
+        self.page.save_status_label.setText("saved")
+        actions[0].trigger()
+        self.app.processEvents()
+
+        self.assertTrue(actions[0].isChecked())
+        self.assertFalse(actions[1].isChecked())
+        self.assertIn("同时 2 章", button.text())
+        self.assertEqual(self.page.save_status_label.text(), "")
 
     def test_compact_steppers_have_separate_safe_click_targets(self):
         spin = self.page.max_concurrent_tasks_spin
@@ -203,6 +246,7 @@ class SettingsPageTests(unittest.TestCase):
         self.page.pdf_directory_input.setText("Archive/PDF")
         self.page.max_concurrent_tasks_spin.setValue(4)
         self.page.image_concurrency_spin.setValue(32)
+        self.page.multi_chapter_behavior_menu.actions()[0].trigger()
         self.page.log_level_combo.setCurrentIndex(
             self.page.log_level_combo.findData("DEBUG")
         )
@@ -221,6 +265,7 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(saved.pdf_directory, "Archive/PDF")
         self.assertEqual(saved.max_concurrent_tasks, 4)
         self.assertEqual(saved.image_concurrency, 32)
+        self.assertEqual(saved.multi_chapter_download_behavior, "parallel")
         self.assertEqual(saved.log_level, "DEBUG")
         self.assertEqual(saved.startup_page, "settings")
         self.assertEqual((saved.window_width, saved.window_height), (1440, 900))
@@ -286,6 +331,9 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(
             self.page.max_concurrent_tasks_spin.value(),
             AppSettings().max_concurrent_tasks,
+        )
+        self.assertTrue(
+            self.page.multi_chapter_behavior_menu.actions()[0].isChecked()
         )
         self.assertTrue(self.page.theme_button(Theme.LIGHT).isChecked())
 

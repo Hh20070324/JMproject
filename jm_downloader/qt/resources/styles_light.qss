@@ -507,6 +507,11 @@ QLabel#libraryState[state="busy"] {
     color: #236745;
 }
 
+QLabel#libraryState[state="legacy"] {
+    background: #fff4d6;
+    color: #8a5d16;
+}
+
 QWidget#libraryActions QToolButton {
     background: transparent;
     border: 1px solid #d7ddd9;
@@ -648,6 +653,52 @@ QToolButton#settingsStepButton:disabled,
 QToolButton#settingsComboButton:disabled {
     background: #f5f7f6;
     border-color: #e1e6e3;
+}
+
+QToolButton#multiChapterBehaviorButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    min-height: 34px;
+    padding: 0 10px;
+    text-align: left;
+}
+
+QToolButton#multiChapterBehaviorButton:hover,
+QToolButton#multiChapterBehaviorButton:focus,
+QToolButton#multiChapterBehaviorButton:open {
+    border-color: #2e7d57;
+}
+
+QToolButton#multiChapterBehaviorButton::menu-indicator {
+    image: none;
+    width: 0;
+}
+
+QMenu#multiChapterBehaviorMenu {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 4px;
+}
+
+QMenu#multiChapterBehaviorMenu::item {
+    min-height: 28px;
+    margin: 2px;
+    padding: 5px 28px 5px 12px;
+    border-radius: 5px;
+}
+
+QMenu#multiChapterBehaviorMenu::item:selected {
+    background: #dfeee6;
+    color: #174a32;
+}
+
+QMenu#multiChapterBehaviorMenu::item:checked {
+    color: #2e7d57;
+    font-weight: 600;
 }
 
 QWidget#accountStateStack,
@@ -1290,6 +1341,16 @@ QLabel#chapterDialogTitle {
 QLabel#chapterDialogMetadata,
 QLabel#chapterSelectionSummary {
     color: #65706a;
+}
+
+QLabel#chapterSelectionLimit {
+    color: #65706a;
+    font-size: 12px;
+}
+
+QLabel#chapterSelectionSummary[limitReached="true"] {
+    color: #9a5b12;
+    font-weight: 600;
 }
 
 QFrame#chapterDialogToolbar {

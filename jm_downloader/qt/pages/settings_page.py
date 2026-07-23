@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -133,6 +135,55 @@ class SettingsPage(SectionPage):
             "imageConcurrency",
         )
         self._add_row(section, "图片并发", images_control)
+
+        behavior_control = QWidget(section)
+        behavior_control.setObjectName("settingsComboControl")
+        behavior_layout = QHBoxLayout(behavior_control)
+        behavior_layout.setContentsMargins(0, 0, 0, 0)
+        behavior_layout.setSpacing(0)
+
+        self.multi_chapter_behavior_button = QToolButton(behavior_control)
+        self.multi_chapter_behavior_button.setObjectName(
+            "multiChapterBehaviorButton"
+        )
+        self.multi_chapter_behavior_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.multi_chapter_behavior_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        self.multi_chapter_behavior_button.setFixedSize(220, 36)
+        self.multi_chapter_behavior_button.setToolTip(
+            "选择多章漫画的章节下载方式"
+        )
+
+        self.multi_chapter_behavior_menu = QMenu(
+            self.multi_chapter_behavior_button
+        )
+        self.multi_chapter_behavior_menu.setObjectName(
+            "multiChapterBehaviorMenu"
+        )
+        self._multi_chapter_behavior_group = QActionGroup(self)
+        self._multi_chapter_behavior_group.setExclusive(True)
+        self._multi_chapter_behavior_actions: dict[str, QAction] = {}
+        for label, behavior in (
+            ("并行下载（同时 2 章）", "parallel"),
+            ("排队下载（同时 1 章）", "queued"),
+        ):
+            action = self.multi_chapter_behavior_menu.addAction(label)
+            action.setData(behavior)
+            action.setCheckable(True)
+            self._multi_chapter_behavior_group.addAction(action)
+            self._multi_chapter_behavior_actions[behavior] = action
+        self._multi_chapter_behavior_group.triggered.connect(
+            self._select_multi_chapter_behavior
+        )
+        self.multi_chapter_behavior_button.setMenu(
+            self.multi_chapter_behavior_menu
+        )
+        behavior_layout.addWidget(self.multi_chapter_behavior_button)
+        behavior_layout.addStretch(1)
+        self._add_row(section, "多章漫画下载行为", behavior_control)
 
     def _create_application_section(self, layout: QVBoxLayout) -> None:
         section = self._create_section(layout, "应用")
@@ -433,6 +484,7 @@ class SettingsPage(SectionPage):
         self.window_height_spin.valueChanged.connect(self._mark_dirty)
         self.log_level_combo.currentIndexChanged.connect(self._mark_dirty)
         self.startup_page_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._multi_chapter_behavior_group.triggered.connect(self._mark_dirty)
         self._theme_group.buttonClicked.connect(self._mark_dirty)
 
     def _mark_dirty(self, *_args) -> None:
@@ -501,6 +553,9 @@ class SettingsPage(SectionPage):
             ),
             max_concurrent_tasks=self.max_concurrent_tasks_spin.value(),
             image_concurrency=self.image_concurrency_spin.value(),
+            multi_chapter_download_behavior=(
+                self._selected_multi_chapter_behavior()
+            ),
             log_level=str(self.log_level_combo.currentData()),
             window_width=self.window_width_spin.value(),
             window_height=self.window_height_spin.value(),
@@ -526,6 +581,9 @@ class SettingsPage(SectionPage):
             self.pdf_directory_input.setText(str(settings.pdf_directory))
             self.max_concurrent_tasks_spin.setValue(settings.max_concurrent_tasks)
             self.image_concurrency_spin.setValue(settings.image_concurrency)
+            self._set_multi_chapter_behavior(
+                settings.multi_chapter_download_behavior
+            )
             self.window_width_spin.setValue(settings.window_width)
             self.window_height_spin.setValue(settings.window_height)
             self._select_combo(self.log_level_combo, settings.log_level)
@@ -546,6 +604,23 @@ class SettingsPage(SectionPage):
         except (TypeError, ValueError):
             theme = Theme.LIGHT
         self._theme_buttons[theme].setChecked(True)
+
+    def _select_multi_chapter_behavior(self, action: QAction) -> None:
+        self._set_multi_chapter_behavior(str(action.data()))
+
+    def _set_multi_chapter_behavior(self, behavior: str) -> None:
+        action = self._multi_chapter_behavior_actions.get(
+            behavior,
+            self._multi_chapter_behavior_actions["parallel"],
+        )
+        action.setChecked(True)
+        self.multi_chapter_behavior_button.setText(f"{action.text()} ▾")
+
+    def _selected_multi_chapter_behavior(self) -> str:
+        checked = self._multi_chapter_behavior_group.checkedAction()
+        if checked is None:
+            return "parallel"
+        return str(checked.data())
 
     def _on_save_succeeded(self, _settings: AppSettings) -> None:
         self._set_actions_enabled(True)

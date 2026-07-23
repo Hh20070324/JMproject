@@ -467,8 +467,8 @@ class LibraryPage(SectionPage):
             return
         labels = {
             "images": "全部图片",
-            "pdf": "PDF",
-            "all": "全部图片和 PDF",
+            "pdf": "全部受管 PDF",
+            "all": "全部图片和受管 PDF",
         }
         target = labels.get(kind)
         if target is None:

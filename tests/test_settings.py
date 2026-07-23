@@ -67,6 +67,7 @@ class AppSettingsTests(unittest.TestCase):
             pdf_directory="media/pdfs",
             max_concurrent_tasks=4,
             image_concurrency=24,
+            multi_chapter_download_behavior="queued",
             log_level="DEBUG",
             window_width=1280,
             window_height=800,
@@ -81,6 +82,26 @@ class AppSettingsTests(unittest.TestCase):
     def test_missing_groups_use_defaults(self):
         settings = AppSettings.from_dict({"schema_version": 1})
         self.assertEqual(settings, AppSettings())
+
+    def test_old_download_group_without_chapter_behavior_uses_default(self):
+        payload = AppSettings().to_dict()
+        del payload["download"]["multi_chapter_download_behavior"]
+
+        settings = AppSettings.from_dict(payload)
+
+        self.assertEqual(settings.multi_chapter_download_behavior, "parallel")
+        self.assertEqual(settings.schema_version, 1)
+
+    def test_queued_chapter_behavior_round_trips_in_schema_v1(self):
+        settings = replace(
+            AppSettings(),
+            multi_chapter_download_behavior="queued",
+        )
+
+        restored = AppSettings.from_dict(settings.to_dict())
+
+        self.assertEqual(restored, settings)
+        self.assertEqual(restored.schema_version, 1)
 
     def test_favorites_is_a_supported_startup_page(self):
         settings = replace(AppSettings(), startup_page="favorites")
@@ -99,6 +120,14 @@ class AppSettingsTests(unittest.TestCase):
             replace(AppSettings(), pictures_directory=" "),
             replace(AppSettings(), max_concurrent_tasks=0),
             replace(AppSettings(), image_concurrency=True),
+            replace(
+                AppSettings(),
+                multi_chapter_download_behavior="cpu",
+            ),
+            replace(
+                AppSettings(),
+                multi_chapter_download_behavior=[],
+            ),
             replace(AppSettings(), log_level="TRACE"),
             replace(AppSettings(), log_level=[]),
             replace(AppSettings(), window_width=759),
