@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 
-from .models import TaskStatus
+from .models import MAX_CHAPTERS_PER_TASK, TaskStatus
 from .settings import (
     AppPaths,
     DEFAULT_PATHS,
@@ -199,6 +199,10 @@ class StoredTask:
             raise TaskStoreValidationError("已选章节必须是非空数组")
         if len(values) != len(set(values)):
             raise TaskStoreValidationError("已选章节不能重复")
+        if len(values) > MAX_CHAPTERS_PER_TASK:
+            raise TaskStoreValidationError(
+                f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章"
+            )
         for value in values:
             if (
                 not isinstance(value, str)

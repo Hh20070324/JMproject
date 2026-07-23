@@ -164,7 +164,13 @@ class DownloadWorkerTests(unittest.TestCase):
                 album.tags = []
                 album.__len__.return_value = 1
                 photo = MagicMock(from_album=album, title="第一章")
+                photo.id = "301"
+                photo.photo_id = "301"
+                photo.album_index = 1
+                photo.name = "第一章"
                 photo.__len__.return_value = 2
+                album.is_album.return_value = True
+                album.__iter__.return_value = iter((photo,))
                 first_image = SimpleNamespace(
                     from_photo=photo,
                     filename="1.jpg",
@@ -180,6 +186,7 @@ class DownloadWorkerTests(unittest.TestCase):
                     skip=False,
                 )
                 active_downloader.before_album(album)
+                self.assertEqual(tuple(active_downloader.do_filter(album)), (photo,))
                 chapter_dir = project_root / "Pictures" / "123456" / "第一章"
                 active_downloader.before_photo(photo)
                 received_option.decide_image_filepath.side_effect = (

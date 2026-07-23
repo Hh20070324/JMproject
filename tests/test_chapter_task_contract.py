@@ -270,11 +270,15 @@ class ChapterDownloadWorkerContractTests(unittest.TestCase):
                     photo.id = photo_id
                     photo.photo_id = photo_id
                     photo.index = index
+                    photo.album_index = index
+                    photo.title = f"章节 {index}"
+                    photo.name = f"章节 {index}"
                     photo.__len__.return_value = 1
                     photos.append(photo)
                 album.__iter__.return_value = iter(photos)
                 album.__len__.return_value = len(photos)
 
+                active.before_album(album)
                 filtered = tuple(active.do_filter(album))
                 selected_seen.extend(photo.photo_id for photo in filtered)
                 raise RuntimeError("stop after filter contract")

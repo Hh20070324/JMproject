@@ -3,6 +3,9 @@ from enum import Enum
 from pathlib import Path
 
 
+MAX_CHAPTERS_PER_TASK = 10
+
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     FETCHING = "fetching"
@@ -50,6 +53,24 @@ class ChapterCatalogSnapshot:
     album_id: str
     title: str | None
     chapters: tuple[ChapterSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterManifestEntry:
+    photo_id: str
+    index: int
+    title: str
+    dir_name: str
+    page_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterManifest:
+    version: int
+    album_id: str
+    album_title: str
+    album_dir_name: str
+    chapters: tuple[ChapterManifestEntry, ...]
 
 
 @dataclass(frozen=True, slots=True)

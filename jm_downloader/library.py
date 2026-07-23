@@ -1,10 +1,14 @@
+from datetime import datetime
+import json
 import os
+import re
 import shutil
+import tempfile
 import threading
 import uuid
 from pathlib import Path
 
-from .models import LibraryItem
+from .models import ChapterManifest, ChapterManifestEntry, LibraryItem
 from .pdf import album_to_pdf, find_album_images, is_linked_directory, natural_key
 from .settings import AppPaths, DEFAULT_PATHS
 
@@ -15,6 +19,342 @@ class LibraryError(Exception):
 
 class LibraryNotFound(LibraryError):
     pass
+
+
+class ChapterManifestError(LibraryError):
+    pass
+
+
+class CorruptChapterManifest(ChapterManifestError):
+    pass
+
+
+class UnsupportedChapterManifestVersion(ChapterManifestError):
+    pass
+
+
+CHAPTER_MANIFEST_FILENAME = ".jm-chapters.json"
+CHAPTER_MANIFEST_SCHEMA_VERSION = 1
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_INVALID_COMPONENT = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+class ChapterManifestStore:
+    def __init__(self, paths: AppPaths = DEFAULT_PATHS):
+        self.paths = paths
+        self.paths.ensure_output_directories()
+
+    def load(self, album_id: str) -> ChapterManifest | None:
+        path = self._manifest_path(album_id)
+        if path.is_symlink():
+            raise ChapterManifestError("不支持链接形式的章节清单")
+        if not path.exists():
+            return None
+        if not path.is_file():
+            raise ChapterManifestError("章节清单路径无效")
+        try:
+            raw = path.read_bytes()
+        except OSError as error:
+            raise ChapterManifestError(f"无法读取章节清单：{error}") from error
+        try:
+            return self._decode(raw)
+        except UnsupportedChapterManifestVersion:
+            raise
+        except (UnicodeError, json.JSONDecodeError, ChapterManifestError) as error:
+            raise CorruptChapterManifest("章节清单内容已损坏") from error
+
+    def merge_and_save(self, incoming: ChapterManifest) -> ChapterManifest:
+        self._validate_manifest(incoming)
+        path = self._manifest_path(incoming.album_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._require_real_directory(path.parent)
+
+        existing = None
+        corrupt = False
+        if path.is_symlink():
+            raise ChapterManifestError("章节清单路径无效")
+        if path.exists():
+            if not path.is_file():
+                raise ChapterManifestError("章节清单路径无效")
+            try:
+                raw = path.read_bytes()
+            except OSError as error:
+                raise ChapterManifestError(
+                    f"无法读取章节清单：{error}"
+                ) from error
+            try:
+                existing = self._decode(raw)
+            except UnsupportedChapterManifestVersion:
+                raise
+            except (UnicodeError, json.JSONDecodeError, ChapterManifestError):
+                corrupt = True
+
+        merged = self._merge(existing, incoming)
+        if corrupt:
+            backup = self._next_corrupt_path(path)
+            try:
+                os.replace(path, backup)
+            except OSError as error:
+                raise ChapterManifestError(
+                    f"章节清单已损坏，且无法保留原文件：{error}"
+                ) from error
+
+        self._write_atomic(path, self._encode(merged))
+        return merged
+
+    def _manifest_path(self, album_id: str) -> Path:
+        album_id = str(album_id)
+        if not album_id or not album_id.isascii() or not album_id.isdigit():
+            raise ChapterManifestError("章节清单漫画编号无效")
+        pictures_root = self.paths.pictures.resolve()
+        album_root = self.paths.pictures / album_id
+        if is_linked_directory(album_root):
+            raise ChapterManifestError("不支持链接形式的漫画目录")
+        resolved = album_root.resolve()
+        if not resolved.is_relative_to(pictures_root):
+            raise ChapterManifestError("章节清单目录不在受管范围内")
+        return resolved / CHAPTER_MANIFEST_FILENAME
+
+    @classmethod
+    def _merge(
+        cls,
+        existing: ChapterManifest | None,
+        incoming: ChapterManifest,
+    ) -> ChapterManifest:
+        if existing is None:
+            return incoming
+        if existing.album_id != incoming.album_id:
+            raise ChapterManifestError("章节清单漫画编号不一致")
+
+        by_id = {chapter.photo_id: chapter for chapter in existing.chapters}
+        index_owner = {
+            chapter.index: chapter.photo_id for chapter in existing.chapters
+        }
+        for chapter in incoming.chapters:
+            previous = by_id.get(chapter.photo_id)
+            if previous is not None and (
+                previous.index != chapter.index
+                or previous.dir_name != chapter.dir_name
+            ):
+                raise ChapterManifestError("章节身份或目录发生变化")
+            owner = index_owner.get(chapter.index)
+            if owner is not None and owner != chapter.photo_id:
+                raise ChapterManifestError("章节序号发生冲突")
+            by_id[chapter.photo_id] = chapter
+            index_owner[chapter.index] = chapter.photo_id
+
+        merged = ChapterManifest(
+            version=CHAPTER_MANIFEST_SCHEMA_VERSION,
+            album_id=existing.album_id,
+            album_title=existing.album_title,
+            album_dir_name=existing.album_dir_name,
+            chapters=tuple(
+                sorted(by_id.values(), key=lambda chapter: chapter.index)
+            ),
+        )
+        cls._validate_manifest(merged)
+        return merged
+
+    @classmethod
+    def _decode(cls, raw: bytes) -> ChapterManifest:
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ChapterManifestError("章节清单根节点必须是对象")
+        if set(data) != {
+            "version",
+            "album_id",
+            "album_title",
+            "album_dir_name",
+            "chapters",
+        }:
+            raise ChapterManifestError("章节清单字段无效")
+        version = data.get("version")
+        if type(version) is not int:
+            raise ChapterManifestError("章节清单版本无效")
+        if version > CHAPTER_MANIFEST_SCHEMA_VERSION:
+            raise UnsupportedChapterManifestVersion(
+                f"章节清单版本 {version} 高于程序支持的版本"
+            )
+        if version != CHAPTER_MANIFEST_SCHEMA_VERSION:
+            raise ChapterManifestError("不支持的章节清单版本")
+        raw_chapters = data.get("chapters")
+        if not isinstance(raw_chapters, list):
+            raise ChapterManifestError("章节清单条目必须是数组")
+        chapters = []
+        for value in raw_chapters:
+            if not isinstance(value, dict) or set(value) != {
+                "photo_id",
+                "index",
+                "title",
+                "dir_name",
+                "page_count",
+            }:
+                raise ChapterManifestError("章节清单条目字段无效")
+            chapters.append(
+                ChapterManifestEntry(
+                    photo_id=value.get("photo_id"),
+                    index=value.get("index"),
+                    title=value.get("title"),
+                    dir_name=value.get("dir_name"),
+                    page_count=value.get("page_count"),
+                )
+            )
+        manifest = ChapterManifest(
+            version=version,
+            album_id=data.get("album_id"),
+            album_title=data.get("album_title"),
+            album_dir_name=data.get("album_dir_name"),
+            chapters=tuple(chapters),
+        )
+        cls._validate_manifest(manifest)
+        return manifest
+
+    @classmethod
+    def _encode(cls, manifest: ChapterManifest) -> bytes:
+        cls._validate_manifest(manifest)
+        data = {
+            "version": manifest.version,
+            "album_id": manifest.album_id,
+            "album_title": manifest.album_title,
+            "album_dir_name": manifest.album_dir_name,
+            "chapters": [
+                {
+                    "photo_id": chapter.photo_id,
+                    "index": chapter.index,
+                    "title": chapter.title,
+                    "dir_name": chapter.dir_name,
+                    "page_count": chapter.page_count,
+                }
+                for chapter in manifest.chapters
+            ],
+        }
+        return (
+            json.dumps(
+                data,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+
+    @classmethod
+    def _validate_manifest(cls, manifest: ChapterManifest) -> None:
+        if not isinstance(manifest, ChapterManifest):
+            raise ChapterManifestError("章节清单模型无效")
+        if manifest.version != CHAPTER_MANIFEST_SCHEMA_VERSION:
+            if (
+                type(manifest.version) is int
+                and manifest.version > CHAPTER_MANIFEST_SCHEMA_VERSION
+            ):
+                raise UnsupportedChapterManifestVersion(
+                    f"章节清单版本 {manifest.version} 高于程序支持的版本"
+                )
+            raise ChapterManifestError("章节清单版本无效")
+        if (
+            not isinstance(manifest.album_id, str)
+            or not manifest.album_id
+            or not manifest.album_id.isascii()
+            or not manifest.album_id.isdigit()
+        ):
+            raise ChapterManifestError("章节清单漫画编号无效")
+        cls._validate_text("漫画标题", manifest.album_title, allow_empty=False)
+        cls._validate_component(manifest.album_dir_name)
+        if not isinstance(manifest.chapters, tuple):
+            raise ChapterManifestError("章节清单条目必须是不可变数组")
+
+        seen_ids = set()
+        seen_indexes = set()
+        for chapter in manifest.chapters:
+            if not isinstance(chapter, ChapterManifestEntry):
+                raise ChapterManifestError("章节清单条目模型无效")
+            if (
+                not isinstance(chapter.photo_id, str)
+                or not chapter.photo_id
+                or not chapter.photo_id.isascii()
+                or not chapter.photo_id.isdigit()
+            ):
+                raise ChapterManifestError("章节编号无效")
+            if chapter.photo_id in seen_ids:
+                raise ChapterManifestError("章节编号不能重复")
+            seen_ids.add(chapter.photo_id)
+            if type(chapter.index) is not int or chapter.index < 1:
+                raise ChapterManifestError("章节序号无效")
+            if chapter.index in seen_indexes:
+                raise ChapterManifestError("章节序号不能重复")
+            seen_indexes.add(chapter.index)
+            cls._validate_text("章节标题", chapter.title, allow_empty=False)
+            if chapter.dir_name not in ("", f"第{chapter.index}章"):
+                raise ChapterManifestError("章节目录名无效")
+            if type(chapter.page_count) is not int or chapter.page_count < 1:
+                raise ChapterManifestError("章节页数无效")
+
+    @staticmethod
+    def _validate_text(label: str, value: str, *, allow_empty: bool) -> None:
+        if (
+            not isinstance(value, str)
+            or "\0" in value
+            or (not allow_empty and not value.strip())
+        ):
+            raise ChapterManifestError(f"{label}无效")
+
+    @staticmethod
+    def _validate_component(value: str) -> None:
+        if (
+            not isinstance(value, str)
+            or not value
+            or value in {".", ".."}
+            or value != value.strip(" .")
+            or _INVALID_COMPONENT.search(value)
+            or Path(value).name != value
+            or value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES
+        ):
+            raise ChapterManifestError("漫画目录名无效")
+
+    @staticmethod
+    def _require_real_directory(path: Path) -> None:
+        if not path.is_dir() or is_linked_directory(path):
+            raise ChapterManifestError("章节清单目录无效")
+
+    @staticmethod
+    def _next_corrupt_path(path: Path) -> Path:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base = path.with_name(f"{path.name}.corrupt-{stamp}")
+        candidate = base
+        counter = 1
+        while candidate.exists():
+            candidate = base.with_name(f"{base.name}-{counter}")
+            counter += 1
+        return candidate
+
+    @staticmethod
+    def _write_atomic(path: Path, payload: bytes) -> None:
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.replace(temp_path, path)
+            except OSError as error:
+                raise ChapterManifestError(
+                    f"无法写入章节清单：{error}"
+                ) from error
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 class LibraryService:

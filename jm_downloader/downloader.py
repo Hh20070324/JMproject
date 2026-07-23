@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,17 @@ from PIL import Image, UnidentifiedImageError
 
 from .jmcomic_client import serialized_client_construction
 from .jmcomic_logging import install_safe_jmcomic_logging
+from .library import (
+    ChapterManifestError,
+    ChapterManifestStore,
+    CorruptChapterManifest,
+    UnsupportedChapterManifestVersion,
+)
+from .models import (
+    MAX_CHAPTERS_PER_TASK,
+    ChapterManifest,
+    ChapterManifestEntry,
+)
 from .pdf import (
     PART_FILE_MARKER,
     PdfPublishAborted,
@@ -22,6 +34,60 @@ from .settings import AppPaths, DEFAULT_PATHS
 
 
 LOGGER = logging.getLogger("jm-downloader")
+MANAGED_PATH_LIMIT = 240
+_INVALID_WINDOWS_COMPONENT = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
+def sanitize_album_directory_name(
+    title: str | None,
+    album_id: str,
+    paths: AppPaths,
+) -> str:
+    album_id = str(album_id)
+    value = title if isinstance(title, str) else ""
+    value = _INVALID_WINDOWS_COMPONENT.sub("_", value)
+    value = value.strip(" .")
+    if not value:
+        value = album_id
+    if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+        value = f"_{value}"
+
+    pictures_root = str(paths.pictures.resolve())
+    pdf_root = str(paths.pdfs.resolve())
+    image_overhead = (
+        len(pictures_root)
+        + 1
+        + len(album_id)
+        + len("\\第999999章\\00000.jpg")
+    )
+    single_pdf_overhead = (
+        len(pdf_root)
+        + 1
+        + len(album_id)
+        + len("\\\\.pdf")
+    )
+    image_budget = MANAGED_PATH_LIMIT - image_overhead
+    pdf_budget = (MANAGED_PATH_LIMIT - single_pdf_overhead) // 2
+    budget = min(100, image_budget, pdf_budget)
+    if budget < 1:
+        raise ManagedPathError("configured output path is too long")
+    value = value[:budget].strip(" .")
+    if not value:
+        value = album_id[:budget].strip(" .")
+    if not value:
+        raise ManagedPathError("album directory name has no safe path budget")
+    if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+        value = f"_{value}"
+        value = value[:budget].strip(" .")
+    return value
 
 
 class DownloadStopped(Exception):
@@ -41,6 +107,10 @@ class ManagedPathError(DownloadIntegrityError):
 
 
 class SelectedChapterUnavailable(DownloadIntegrityError):
+    pass
+
+
+class LegacyChapterSelectionRequired(DownloadIntegrityError):
     pass
 
 
@@ -65,6 +135,7 @@ class DownloadWorker:
         paths: AppPaths = DEFAULT_PATHS,
         image_concurrency: int = 16,
         selected_chapter_ids: tuple[str, ...] | None = None,
+        multi_chapter_download_behavior: str = "parallel",
     ):
         self.album_id = str(album_id)
         self.on_progress = on_progress or (lambda *args: None)
@@ -78,6 +149,11 @@ class DownloadWorker:
         self.selected_chapter_ids = self._normalize_selected_chapter_ids(
             selected_chapter_ids
         )
+        if multi_chapter_download_behavior not in {"parallel", "queued"}:
+            raise ValueError(
+                "multi_chapter_download_behavior must be parallel or queued"
+            )
+        self.multi_chapter_download_behavior = multi_chapter_download_behavior
         self._stop_flag = threading.Event()
         self._thread = None
         self._total_photos = 0
@@ -89,14 +165,25 @@ class DownloadWorker:
         self._verified_images: set[Path] = set()
         self._active_downloader = None
         self._preview_path = None
+        self._manifest_store = ChapterManifestStore(paths)
+        self._pending_manifest: ChapterManifest | None = None
+        self._album_dir_name: str | None = None
+        self._album_title = f"JM {self.album_id}"
         self.paths.ensure_output_directories()
 
     def _make_option(self):
         install_safe_jmcomic_logging()
         option = jmcomic.create_option_by_file(str(self.paths.option_file))
         option.download.threading.image = self.image_concurrency
+        option.download.threading.photo = (
+            2 if self.multi_chapter_download_behavior == "parallel" else 1
+        )
         option.client.retry_times = self.REQUEST_RETRIES
         option.client.postman.meta_data.timeout = self.REQUEST_TIMEOUT_SECONDS
+        option.dir_rule = jmcomic.DirRule(
+            "Bd/Aid/Ajm_downloader_album_dir/Pjm_downloader_chapter_dir",
+            base_dir=str(self.paths.pictures),
+        )
         return option
 
     def fetch_info(self):
@@ -136,38 +223,21 @@ class DownloadWorker:
 
                 def do_filter(self, detail):
                     values = super().do_filter(detail)
-                    if owner.selected_chapter_ids is None:
-                        return values
                     is_album = getattr(detail, "is_album", None)
                     if not callable(is_album) or not is_album():
                         return values
-
-                    photos = tuple(values)
-                    selected = set(owner.selected_chapter_ids)
-                    filtered = tuple(
-                        photo
-                        for photo in photos
-                        if owner._photo_id(photo) in selected
+                    return owner._prepare_selected_photos(
+                        self,
+                        detail,
+                        tuple(values),
                     )
-                    found = {owner._photo_id(photo) for photo in filtered}
-                    if found != selected or len(filtered) != len(found):
-                        raise SelectedChapterUnavailable()
-
-                    total = 0
-                    for photo in filtered:
-                        if owner._stop_flag.is_set():
-                            raise DownloadStopped()
-                        self.client.check_photo(photo)
-                        total += len(photo)
-                    owner._total_photos = total
-                    owner._album_total_known = total > 0
-                    return filtered
 
                 def before_album(self, album):
+                    owner._prepare_album(album)
                     super().before_album(album)
                     owner._total_photos = getattr(album, "page_count", 0) or 0
                     owner._album_total_known = owner._total_photos > 0
-                    title = getattr(album, "title", None) or getattr(album, "name", None)
+                    title = owner._album_title
                     cover = getattr(album, "cover", None)
                     owner.on_info(owner.album_id, title, cover)
 
@@ -241,6 +311,11 @@ class DownloadWorker:
                 raise PdfPackagingError("PDF generator returned no output")
             if self._stop_flag.is_set():
                 return
+            if self._pending_manifest is None:
+                raise ChapterManifestError("没有可发布的章节清单")
+            self._manifest_store.merge_and_save(self._pending_manifest)
+            if self._stop_flag.is_set():
+                return
             self.on_complete(self.album_id, pdf_path)
         except (DownloadStopped, PdfPublishAborted):
             return
@@ -262,6 +337,135 @@ class DownloadWorker:
                     "Download stopped callback failed for JM %s",
                     self.album_id,
                 )
+
+    def _prepare_album(self, album) -> None:
+        try:
+            photo_count = len(album)
+        except (TypeError, ValueError) as error:
+            raise DownloadIntegrityError("album chapter count is invalid") from error
+        if type(photo_count) is not int or photo_count < 1:
+            raise DownloadIntegrityError("album has no chapters")
+        if self.selected_chapter_ids is None and photo_count > 1:
+            raise LegacyChapterSelectionRequired()
+
+        title = getattr(album, "title", None) or getattr(album, "name", None)
+        if not isinstance(title, str) or not title.strip():
+            title = f"JM {self.album_id}"
+        self._album_title = title
+
+        existing = None
+        try:
+            existing = self._manifest_store.load(self.album_id)
+        except UnsupportedChapterManifestVersion:
+            raise
+        except CorruptChapterManifest:
+            existing = None
+        self._album_dir_name = (
+            existing.album_dir_name
+            if existing is not None
+            else sanitize_album_directory_name(
+                self._album_title,
+                self.album_id,
+                self.paths,
+            )
+        )
+        setattr(
+            album,
+            "jm_downloader_album_dir",
+            self._album_dir_name,
+        )
+
+    def _prepare_selected_photos(
+        self,
+        active_downloader,
+        album,
+        photos: tuple,
+    ) -> tuple:
+        if not photos:
+            if self.selected_chapter_ids is not None:
+                raise SelectedChapterUnavailable()
+            raise DownloadIntegrityError("album has no chapters")
+        selected = (
+            None
+            if self.selected_chapter_ids is None
+            else set(self.selected_chapter_ids)
+        )
+        if selected is None:
+            filtered = photos
+        else:
+            filtered = tuple(
+                photo
+                for photo in photos
+                if self._photo_id(photo) in selected
+            )
+            found = {self._photo_id(photo) for photo in filtered}
+            if found != selected or len(filtered) != len(found):
+                raise SelectedChapterUnavailable()
+
+        photo_ids = [self._photo_id(photo) for photo in filtered]
+        if None in photo_ids or len(photo_ids) != len(set(photo_ids)):
+            raise SelectedChapterUnavailable()
+
+        actual_single_album = len(photos) == 1
+        total = 0
+        entries = []
+        seen_indexes = set()
+        for photo, photo_id in zip(filtered, photo_ids, strict=True):
+            if self._stop_flag.is_set():
+                raise DownloadStopped()
+            active_downloader.client.check_photo(photo)
+            index = self._photo_index(photo)
+            if index in seen_indexes:
+                raise SelectedChapterUnavailable()
+            seen_indexes.add(index)
+            try:
+                page_count = len(photo)
+            except (TypeError, ValueError) as error:
+                raise DownloadIntegrityError(
+                    "chapter page count is invalid"
+                ) from error
+            if type(page_count) is not int or page_count < 1:
+                raise DownloadIntegrityError("chapter has no images")
+            total += page_count
+            title = getattr(photo, "title", None) or getattr(photo, "name", None)
+            if not isinstance(title, str) or not title.strip():
+                title = f"第 {index} 章"
+            dir_name = "" if actual_single_album else f"第{index}章"
+            setattr(photo, "jm_downloader_chapter_dir", dir_name)
+            entries.append(
+                ChapterManifestEntry(
+                    photo_id=photo_id,
+                    index=index,
+                    title=title,
+                    dir_name=dir_name,
+                    page_count=page_count,
+                )
+            )
+
+        if self._album_dir_name is None:
+            raise DownloadIntegrityError("album directory is unavailable")
+        self._pending_manifest = ChapterManifest(
+            version=1,
+            album_id=self.album_id,
+            album_title=self._album_title,
+            album_dir_name=self._album_dir_name,
+            chapters=tuple(sorted(entries, key=lambda entry: entry.index)),
+        )
+        self._total_photos = total
+        self._album_total_known = total > 0
+        return filtered
+
+    @staticmethod
+    def _photo_index(photo) -> int:
+        value = getattr(photo, "album_index", None)
+        if type(value) is not int:
+            if isinstance(value, str) and value.isascii() and value.isdigit():
+                value = int(value)
+            else:
+                raise SelectedChapterUnavailable()
+        if value < 1:
+            raise SelectedChapterUnavailable()
+        return value
 
     def _download_image(self, downloader, image) -> None:
         final_path = self._managed_image_path(
@@ -406,6 +610,11 @@ class DownloadWorker:
             result.append(value)
         if not result:
             raise ValueError("selected_chapter_ids must not be empty")
+        if len(result) > MAX_CHAPTERS_PER_TASK:
+            raise ValueError(
+                f"selected_chapter_ids must contain at most "
+                f"{MAX_CHAPTERS_PER_TASK} chapters"
+            )
         return tuple(result)
 
     @staticmethod
@@ -472,8 +681,14 @@ class DownloadWorker:
 
     @staticmethod
     def _public_error_message(error: Exception) -> str:
+        if isinstance(error, LegacyChapterSelectionRequired):
+            return "旧任务未保存章节选择，请移除任务后重新选择"
         if isinstance(error, SelectedChapterUnavailable):
             return "所选章节已发生变化，请移除任务后重新选择"
+        if isinstance(error, UnsupportedChapterManifestVersion):
+            return "本地章节清单来自更高版本，当前程序无法继续"
+        if isinstance(error, ChapterManifestError):
+            return "章节清单无法保存，请点击继续重试"
         if isinstance(error, ManagedPathError):
             return "下载路径未通过安全检查，请检查目录设置"
         if isinstance(error, (ImageValidationError, DownloadIntegrityError)):

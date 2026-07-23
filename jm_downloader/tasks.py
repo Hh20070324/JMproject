@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .downloader import DownloadWorker
-from .models import TaskSnapshot, TaskStatus
+from .models import MAX_CHAPTERS_PER_TASK, TaskSnapshot, TaskStatus
 from .settings import AppPaths, DEFAULT_PATHS
 from .task_store import StoredTask, TaskStore, TaskStoreError
 
@@ -78,6 +78,10 @@ def normalize_selected_chapter_ids(
         result.append(value)
     if not result:
         raise InvalidChapterSelection("请至少选择一个章节")
+    if len(result) > MAX_CHAPTERS_PER_TASK:
+        raise InvalidChapterSelection(
+            f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章"
+        )
     return tuple(result)
 
 
