@@ -352,7 +352,7 @@ class LibraryController(QObject):
                 task.id,
                 task.album_id,
                 task.status.value,
-                str(task.pdf_path or ""),
+                str(task.pdf_directory or ""),
                 task.error or "",
             )
             for task in tasks

@@ -153,7 +153,7 @@ class TaskSnapshot:
     page: str
     preview_path: Path | None
     preview_revision: int
-    pdf_path: Path | None
+    pdf_directory: Path | None
     error: str | None
     cover_url: str | None
     selected_chapter_ids: tuple[str, ...] | None = None

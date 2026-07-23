@@ -324,7 +324,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                         page="4/10",
                         preview_path=Path(temp_dir) / "preview.jpg",
                         preview_revision=1,
-                        pdf_path=None,
+                        pdf_directory=None,
                         error=None,
                         cover_url=None,
                     ),

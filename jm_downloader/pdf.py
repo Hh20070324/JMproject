@@ -15,6 +15,10 @@ class PdfPublishAborted(Exception):
     pass
 
 
+class PdfSourcePathError(OSError):
+    """Raised when a chapter PDF source crosses a linked path boundary."""
+
+
 def natural_key(name: str):
     parts = re.split(r"(\d+)", name)
     return [(0, int(part)) if part.isdigit() else (1, part.lower()) for part in parts]
@@ -51,6 +55,48 @@ def album_to_pdf(
         album_path.name,
         album_path.parent,
         output_dir,
+        publish_guard=publish_guard,
+    )
+
+
+def chapter_to_pdf(
+    chapter_dir: str | Path,
+    out_path: str | Path,
+    publish_guard=None,
+):
+    """Build one PDF from the direct image children of one chapter directory."""
+
+    chapter_path = Path(chapter_dir)
+    if not chapter_path.is_dir():
+        raise PdfSourcePathError(f"章节图片目录无效: '{chapter_path}'")
+    _reject_linked_components(chapter_path)
+
+    resolved_chapter = chapter_path.resolve(strict=True)
+    image_files = []
+    for candidate in chapter_path.iterdir():
+        if (
+            PART_FILE_MARKER in candidate.name
+            or candidate.suffix.lower() not in IMAGE_EXTENSIONS
+        ):
+            continue
+        if _is_linked_path(candidate):
+            raise PdfSourcePathError(f"章节图片不能是链接: '{candidate}'")
+        if not candidate.is_file():
+            continue
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError as error:
+            raise PdfSourcePathError(
+                f"章节图片无法安全解析: '{candidate}'"
+            ) from error
+        if not resolved.is_file() or not resolved.is_relative_to(resolved_chapter):
+            raise PdfSourcePathError(f"章节图片超出目录边界: '{candidate}'")
+        image_files.append(resolved)
+
+    image_files.sort(key=lambda path: natural_key(path.name))
+    return _images_to_exact_pdf(
+        image_files,
+        Path(out_path),
         publish_guard=publish_guard,
     )
 
@@ -112,6 +158,10 @@ def find_album_images(album_path: Path) -> list[Path]:
 
 
 def is_linked_directory(path: Path) -> bool:
+    return _is_linked_path(path)
+
+
+def _is_linked_path(path: Path) -> bool:
     try:
         if path.is_symlink():
             return True
@@ -126,6 +176,17 @@ def is_linked_directory(path: Path) -> bool:
         return False
     except OSError:
         return True
+
+
+def _reject_linked_components(path: Path) -> None:
+    current = Path(os.path.abspath(path))
+    while True:
+        if _is_linked_path(current):
+            raise PdfSourcePathError(f"章节图片路径不能包含链接: '{current}'")
+        parent = current.parent
+        if parent == current:
+            return
+        current = parent
 
 
 def _is_image(path: Path) -> bool:
@@ -145,6 +206,21 @@ def _images_to_pdf(
     *,
     publish_guard=None,
 ):
+    destination = Path(output_dir) if output_dir else default_output_dir
+    pdf_path = destination / f"{pdf_name}.pdf"
+    return _images_to_exact_pdf(
+        image_files,
+        pdf_path,
+        publish_guard=publish_guard,
+    )
+
+
+def _images_to_exact_pdf(
+    image_files: list[Path],
+    pdf_path: Path,
+    *,
+    publish_guard=None,
+):
     if not image_files:
         print("没有找到可用于生成 PDF 的图片文件")
         return None
@@ -161,12 +237,11 @@ def _images_to_pdf(
                 image = image.convert("RGB")
             images.append(image)
 
-        destination = Path(output_dir) if output_dir else default_output_dir
+        destination = pdf_path.parent
         destination.mkdir(parents=True, exist_ok=True)
-        pdf_path = destination / f"{pdf_name}.pdf"
         descriptor, temp_name = tempfile.mkstemp(
             dir=destination,
-            prefix=f".{pdf_name}.",
+            prefix=f".{pdf_path.name}.",
             suffix=".pdf.part",
         )
         os.close(descriptor)

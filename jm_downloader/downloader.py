@@ -23,9 +23,11 @@ from .models import (
     ChapterManifestEntry,
 )
 from .pdf import (
+    IMAGE_EXTENSIONS,
     PART_FILE_MARKER,
     PdfPublishAborted,
-    album_to_pdf,
+    PdfSourcePathError,
+    chapter_to_pdf,
     find_album_images,
     is_linked_directory,
     natural_key,
@@ -302,13 +304,7 @@ class DownloadWorker:
             self._verify_download_result()
 
             self.on_progress(self.album_id, self.PDF_PCT, "打包 PDF", "")
-            pdf_path = album_to_pdf(
-                str(album_dir),
-                str(self.paths.pdfs),
-                publish_guard=lambda: not self._stop_flag.is_set(),
-            )
-            if not pdf_path:
-                raise PdfPackagingError("PDF generator returned no output")
+            pdf_directory = self._package_chapter_pdfs()
             if self._stop_flag.is_set():
                 return
             if self._pending_manifest is None:
@@ -316,7 +312,7 @@ class DownloadWorker:
             self._manifest_store.merge_and_save(self._pending_manifest)
             if self._stop_flag.is_set():
                 return
-            self.on_complete(self.album_id, pdf_path)
+            self.on_complete(self.album_id, str(pdf_directory))
         except (DownloadStopped, PdfPublishAborted):
             return
         except Exception as error:
@@ -558,6 +554,106 @@ class DownloadWorker:
             raise DownloadIntegrityError("not every expected image was verified")
         if any(not self._is_valid_image(path) for path in expected):
             raise DownloadIntegrityError("published image validation failed")
+
+    def _package_chapter_pdfs(self) -> Path:
+        manifest = self._pending_manifest
+        if manifest is None or not manifest.chapters:
+            raise ChapterManifestError("没有可用于打包的章节清单")
+
+        pdf_directory = self._prepare_pdf_directory(
+            manifest.album_dir_name
+        )
+        image_directory = (
+            self.paths.pictures
+            / self.album_id
+            / manifest.album_dir_name
+        )
+        for chapter in manifest.chapters:
+            if self._stop_flag.is_set():
+                raise DownloadStopped()
+            chapter_directory = (
+                image_directory / chapter.dir_name
+                if chapter.dir_name
+                else image_directory
+            )
+            try:
+                direct_images = tuple(
+                    candidate
+                    for candidate in chapter_directory.iterdir()
+                    if candidate.suffix.lower() in IMAGE_EXTENSIONS
+                    and self._is_valid_image(candidate)
+                )
+            except OSError as error:
+                raise PdfPackagingError(
+                    f"chapter {chapter.index} cannot be read"
+                ) from error
+            if len(direct_images) != chapter.page_count:
+                raise DownloadIntegrityError(
+                    f"chapter {chapter.index} image count does not match"
+                )
+            output_name = (
+                f"{chapter.dir_name}.pdf"
+                if chapter.dir_name
+                else f"{manifest.album_dir_name}.pdf"
+            )
+            output_path = pdf_directory / output_name
+            if output_path.is_symlink():
+                raise ManagedPathError("PDF output is a symbolic link")
+            try:
+                result = chapter_to_pdf(
+                    chapter_directory,
+                    output_path,
+                    publish_guard=lambda: not self._stop_flag.is_set(),
+                )
+            except PdfPublishAborted:
+                raise
+            except PdfSourcePathError as error:
+                raise ManagedPathError(
+                    f"chapter {chapter.index} path is unsafe"
+                ) from error
+            except Exception as error:
+                raise PdfPackagingError(
+                    f"PDF generation failed for chapter {chapter.index}"
+                ) from error
+            if result is None or Path(result).resolve() != output_path.resolve():
+                raise PdfPackagingError(
+                    f"PDF generator returned no output for chapter "
+                    f"{chapter.index}"
+                )
+        return pdf_directory
+
+    def _prepare_pdf_directory(self, album_dir_name: str) -> Path:
+        if is_linked_directory(self.paths.pdfs):
+            raise ManagedPathError("PDF root directory is a link")
+        pdf_root = self.paths.pdfs.resolve()
+        album_root = self.paths.pdfs / self.album_id
+        if is_linked_directory(album_root):
+            raise ManagedPathError("PDF album directory is a link")
+        album_root.mkdir(parents=True, exist_ok=True)
+        if is_linked_directory(album_root) or not album_root.is_dir():
+            raise ManagedPathError("PDF album directory is invalid")
+
+        pdf_directory = album_root / album_dir_name
+        if is_linked_directory(pdf_directory):
+            raise ManagedPathError("PDF title directory is a link")
+        pdf_directory.mkdir(parents=True, exist_ok=True)
+        if is_linked_directory(pdf_directory) or not pdf_directory.is_dir():
+            raise ManagedPathError("PDF title directory is invalid")
+
+        resolved = pdf_directory.resolve()
+        try:
+            relative = resolved.relative_to(pdf_root)
+        except ValueError as error:
+            raise ManagedPathError(
+                "PDF directory escapes the managed root"
+            ) from error
+        if (
+            len(relative.parts) != 2
+            or relative.parts[0] != self.album_id
+            or relative.parts[1] != album_dir_name
+        ):
+            raise ManagedPathError("PDF directory structure is invalid")
+        return resolved
 
     def _managed_image_path(self, candidate: Path) -> Path:
         if not candidate.is_absolute():

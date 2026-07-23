@@ -258,7 +258,7 @@ class DownloadTaskRow(QFrame):
                     and snapshot.preview_path is None
                 )
             )
-            and snapshot.pdf_path is not None
+            and snapshot.pdf_directory is not None
         )
 
     def set_preview(self, image: QImage, revision: int) -> None:

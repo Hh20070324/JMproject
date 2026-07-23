@@ -199,12 +199,12 @@ class TaskStateMachineTests(unittest.TestCase):
     def test_completion_callback_cannot_override_pause_intent(self):
         task = self.manager.add("1")
         worker = ControlledWorker.instances[0]
-        pdf = self.paths.pdfs / "1.pdf"
-        pdf.parent.mkdir(parents=True)
-        pdf.write_bytes(b"pdf")
+        pdf_directory = self.paths.pdfs / "1" / "测试漫画"
+        pdf_directory.mkdir(parents=True)
+        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
 
         self.manager.pause(task.id)
-        worker.emit_complete(pdf)
+        worker.emit_complete(pdf_directory)
 
         self.assertEqual(
             self.manager.get_task(task.id).status,

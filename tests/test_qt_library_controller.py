@@ -260,13 +260,13 @@ class LibraryControllerTests(unittest.TestCase):
         events = []
         self.controller.items_reset.connect(events.append)
         snapshot = self.manager.add("1")
-        pdf_path = self.paths.pdfs / "1.pdf"
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(b"pdf")
+        pdf_directory = self.paths.pdfs / "1" / "测试漫画"
+        pdf_directory.mkdir(parents=True, exist_ok=True)
+        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
 
         PassiveWorker.instances[0].callbacks["on_complete"](
             "1",
-            str(pdf_path),
+            str(pdf_directory),
         )
 
         self.assertTrue(self._wait_until(lambda: bool(events)))
@@ -286,10 +286,13 @@ class LibraryControllerTests(unittest.TestCase):
 
         for index in range(200):
             self.manager.broadcast({"type": "progress", "percent": index})
-        pdf_path = self.paths.pdfs / "1.pdf"
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(b"pdf")
-        PassiveWorker.instances[0].callbacks["on_complete"]("1", str(pdf_path))
+        pdf_directory = self.paths.pdfs / "1" / "测试漫画"
+        pdf_directory.mkdir(parents=True, exist_ok=True)
+        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
+        PassiveWorker.instances[0].callbacks["on_complete"](
+            "1",
+            str(pdf_directory),
+        )
 
         self.assertEqual(
             self.manager.get_task(snapshot.id).status,
@@ -308,10 +311,13 @@ class LibraryControllerTests(unittest.TestCase):
             self.manager.broadcast({"type": "progress", "percent": index})
 
         snapshot = self.manager.add("1")
-        pdf_path = self.paths.pdfs / "1.pdf"
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(b"pdf")
-        PassiveWorker.instances[0].callbacks["on_complete"]("1", str(pdf_path))
+        pdf_directory = self.paths.pdfs / "1" / "测试漫画"
+        pdf_directory.mkdir(parents=True, exist_ok=True)
+        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
+        PassiveWorker.instances[0].callbacks["on_complete"](
+            "1",
+            str(pdf_directory),
+        )
 
         self.assertEqual(
             self.manager.get_task(snapshot.id).status,

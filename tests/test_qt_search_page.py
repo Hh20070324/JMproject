@@ -290,7 +290,7 @@ def make_task_snapshot(task_id="task-1", album_id="1"):
         page="",
         preview_path=None,
         preview_revision=0,
-        pdf_path=None,
+        pdf_directory=None,
         error=None,
         cover_url=None,
     )

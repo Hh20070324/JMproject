@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .downloader import DownloadWorker
+from .library import ChapterManifestError, ChapterManifestStore
 from .models import MAX_CHAPTERS_PER_TASK, TaskSnapshot, TaskStatus
+from .pdf import is_linked_directory
 from .settings import AppPaths, DEFAULT_PATHS
 from .task_store import StoredTask, TaskStore, TaskStoreError
 
@@ -178,7 +180,7 @@ class TaskManager:
                 "chapter": "",
                 "page": "",
                 "error": None,
-                "pdf_path": None,
+                "pdf_directory": None,
                 "run_generation": 0,
                 "_cancel_deferred": False,
                 "_paths": self.paths,
@@ -497,18 +499,25 @@ class TaskManager:
         candidate = DownloadWorker.find_valid_preview(
             task_paths.pictures / album_id
         )
-        pdf_candidate = task_paths.pdfs / f"{album_id}.pdf"
-        if (
-            pdf_candidate.is_symlink()
-            or not pdf_candidate.is_file()
-            or not pdf_candidate.resolve().is_relative_to(
-                task_paths.pdfs.resolve()
-            )
-        ):
-            pdf_candidate = None
-        else:
-            pdf_candidate = pdf_candidate.resolve()
-        if candidate is None and pdf_candidate is None:
+        pdf_directory = None
+        try:
+            manifest = ChapterManifestStore(task_paths).load(album_id)
+        except ChapterManifestError:
+            manifest = None
+        if manifest is not None:
+            try:
+                pdf_directory = self._validate_pdf_directory(
+                    task_paths,
+                    album_id,
+                    (
+                        task_paths.pdfs
+                        / album_id
+                        / manifest.album_dir_name
+                    ),
+                )
+            except ValueError:
+                pdf_directory = None
+        if candidate is None and pdf_directory is None:
             return None
         with self._lock:
             task = self._find_locked(task_id)
@@ -518,8 +527,10 @@ class TaskManager:
             task.update(
                 _preview_path=str(candidate) if candidate is not None else None,
                 preview_revision=revision,
-                pdf_path=(
-                    str(pdf_candidate) if pdf_candidate is not None else None
+                pdf_directory=(
+                    str(pdf_directory)
+                    if pdf_directory is not None
+                    else None
                 ),
             )
         self.broadcast(
@@ -528,7 +539,7 @@ class TaskManager:
                 "id": task_id,
                 "preview_path": candidate,
                 "preview_revision": revision,
-                "pdf_path": pdf_candidate,
+                "pdf_directory": pdf_directory,
             }
         )
         return candidate
@@ -640,7 +651,7 @@ class TaskManager:
     @staticmethod
     def _snapshot_locked(task: dict) -> TaskSnapshot:
         preview = task.get("_preview_path")
-        pdf = task.get("pdf_path")
+        pdf_directory = task.get("pdf_directory")
         return TaskSnapshot(
             id=task["id"],
             album_id=task["album_id"],
@@ -651,7 +662,9 @@ class TaskManager:
             page=task.get("page", ""),
             preview_path=Path(preview) if preview else None,
             preview_revision=int(task.get("preview_revision", 0)),
-            pdf_path=Path(pdf) if pdf else None,
+            pdf_directory=(
+                Path(pdf_directory) if pdf_directory else None
+            ),
             error=task.get("error"),
             cover_url=task.get("cover_url"),
             selected_chapter_ids=task.get("selected_chapter_ids"),
@@ -675,7 +688,7 @@ class TaskManager:
             "chapter": stored.chapter,
             "page": stored.page,
             "error": stored.error if status == TaskStatus.FAILED else None,
-            "pdf_path": None,
+            "pdf_directory": None,
             "run_generation": 0,
             "_cancel_deferred": False,
             "_paths": stored.to_paths(self.paths.root),
@@ -722,8 +735,8 @@ class TaskManager:
         def on_progress(_album_id, percent, chapter, page):
             self._on_progress(task_id, generation, percent, chapter, page)
 
-        def on_complete(_album_id, pdf_path):
-            self._on_complete(task_id, generation, pdf_path)
+        def on_complete(_album_id, pdf_directory):
+            self._on_complete(task_id, generation, pdf_directory)
 
         def on_error(_album_id, error):
             self._on_error(task_id, generation, error)
@@ -797,24 +810,22 @@ class TaskManager:
         self._queue_persist()
 
     def _on_complete(
-        self, task_id: str, generation: int, pdf_path: str
+        self, task_id: str, generation: int, pdf_directory: str
     ) -> None:
         with self._lock:
             task = self._find_active_generation_locked(task_id, generation)
             if task is None:
                 return
             task_paths = task["_paths"]
-        path = Path(pdf_path)
-        if not path.is_absolute():
-            path = task_paths.root / path
-        path = path.resolve()
-        if not path.is_relative_to(task_paths.pdfs.resolve()):
-            self._on_error(
-                task_id, generation, "PDF 输出路径不在受管目录中"
+            album_id = task["album_id"]
+        try:
+            path = self._validate_pdf_directory(
+                task_paths,
+                album_id,
+                pdf_directory,
             )
-            return
-        if not path.is_file():
-            self._on_error(task_id, generation, "PDF 文件不存在")
+        except ValueError as error:
+            self._on_error(task_id, generation, str(error))
             return
         with self._lock:
             task = self._find_active_generation_locked(task_id, generation)
@@ -823,7 +834,7 @@ class TaskManager:
             task.update(
                 status=TaskStatus.COMPLETED.value,
                 progress=100,
-                pdf_path=str(path),
+                pdf_directory=str(path),
             )
             album_id = task["album_id"]
             self._retire_worker_locked(task_id, generation)
@@ -832,11 +843,58 @@ class TaskManager:
                 "type": "completed",
                 "id": task_id,
                 "album_id": album_id,
-                "pdf_path": path,
+                "pdf_directory": path,
             }
         )
         self._queue_persist()
         self.schedule()
+
+    @staticmethod
+    def _validate_pdf_directory(
+        task_paths: AppPaths,
+        album_id: str,
+        value: str | Path,
+    ) -> Path:
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = task_paths.root / candidate
+
+        if is_linked_directory(task_paths.pdfs):
+            raise ValueError("PDF 输出路径未通过安全检查")
+        pdf_root = task_paths.pdfs.resolve()
+        resolved = candidate.resolve()
+        try:
+            relative = resolved.relative_to(pdf_root)
+        except ValueError as error:
+            raise ValueError("PDF 输出路径不在受管目录中") from error
+        if len(relative.parts) != 2 or relative.parts[0] != album_id:
+            raise ValueError("PDF 输出路径不在受管目录中")
+
+        album_root = task_paths.pdfs / album_id
+        if (
+            is_linked_directory(album_root)
+            or is_linked_directory(candidate)
+        ):
+            raise ValueError("PDF 输出路径未通过安全检查")
+        if not candidate.is_dir():
+            raise ValueError("PDF 储存文件夹不存在")
+
+        has_pdf = False
+        try:
+            for entry in candidate.iterdir():
+                if (
+                    entry.suffix.lower() == ".pdf"
+                    and entry.is_file()
+                    and not entry.is_symlink()
+                    and entry.resolve().is_relative_to(resolved)
+                ):
+                    has_pdf = True
+                    break
+        except OSError as error:
+            raise ValueError("PDF 储存文件夹无法读取") from error
+        if not has_pdf:
+            raise ValueError("PDF 文件不存在")
+        return resolved
 
     def _on_preview(
         self, task_id: str, generation: int, preview_path: str

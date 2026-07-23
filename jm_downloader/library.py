@@ -438,6 +438,51 @@ class LibraryService:
                 raise LibraryNotFound("PDF 不存在")
             return pdf_path
 
+    def get_pdf_directory(self, album_id: str) -> Path:
+        with self._lock:
+            self._require_album_id(album_id)
+            try:
+                manifest = ChapterManifestStore(self.paths).load(album_id)
+            except ChapterManifestError as error:
+                raise LibraryNotFound("章节清单不可用") from error
+            if manifest is None:
+                raise LibraryNotFound("章节清单不存在")
+
+            if is_linked_directory(self.paths.pdfs):
+                raise LibraryNotFound("不支持链接形式的 PDF 根目录")
+            album_root = self.paths.pdfs / album_id
+            target = album_root / manifest.album_dir_name
+            if (
+                is_linked_directory(album_root)
+                or is_linked_directory(target)
+                or not target.is_dir()
+            ):
+                raise LibraryNotFound("PDF 储存文件夹不存在")
+            resolved = target.resolve()
+            try:
+                relative = resolved.relative_to(self.paths.pdfs.resolve())
+            except ValueError as error:
+                raise LibraryNotFound("PDF 目录不在受管范围内") from error
+            if (
+                len(relative.parts) != 2
+                or relative.parts[0] != album_id
+                or relative.parts[1] != manifest.album_dir_name
+            ):
+                raise LibraryNotFound("PDF 目录结构无效")
+            try:
+                has_pdf = any(
+                    path.suffix.lower() == ".pdf"
+                    and path.is_file()
+                    and not path.is_symlink()
+                    and path.resolve().is_relative_to(resolved)
+                    for path in target.iterdir()
+                )
+            except OSError as error:
+                raise LibraryNotFound("PDF 储存文件夹无法读取") from error
+            if not has_pdf:
+                raise LibraryNotFound("PDF 不存在")
+            return resolved
+
     def rebuild_pdf(self, album_id: str) -> str:
         with self._lock:
             self._require_album_id(album_id)
@@ -535,7 +580,12 @@ class LibraryService:
                 if not target.is_dir():
                     raise LibraryNotFound("图片目录不存在")
             elif kind == "pdf":
-                target = self.get_pdf(album_id)
+                try:
+                    target = self.get_pdf_directory(album_id)
+                except LibraryNotFound:
+                    # Phase 3 removes this compatibility fallback when the
+                    # local-library scanner fully switches to nested PDFs.
+                    target = self.get_pdf(album_id)
             else:
                 raise LibraryError("不支持的打开类型")
 

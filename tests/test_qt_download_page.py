@@ -96,7 +96,7 @@ def make_snapshot(
         "page": "",
         "preview_path": None,
         "preview_revision": 0,
-        "pdf_path": None,
+        "pdf_directory": None,
         "error": None,
         "cover_url": None,
     }
@@ -183,7 +183,7 @@ class DownloadPageTests(unittest.TestCase):
             progress=100,
             preview_path=Path(self.temp_dir.name) / "1.jpg",
             preview_revision=1,
-            pdf_path=Path(self.temp_dir.name) / "1.pdf",
+            pdf_directory=Path(self.temp_dir.name) / "pdfs",
         )
         self.controller.tasks = [completed]
         self.controller.tasks_reset.emit([completed])

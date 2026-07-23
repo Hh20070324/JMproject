@@ -110,11 +110,11 @@ class TaskRecoveryBaselineTests(unittest.TestCase):
 
     def test_completed_task_is_not_restored(self):
         task = self.manager.add("123456")
-        pdf_path = self.paths.pdfs / "123456.pdf"
-        pdf_path.parent.mkdir(parents=True)
-        pdf_path.write_bytes(b"pdf")
+        pdf_directory = self.paths.pdfs / "123456" / "测试漫画"
+        pdf_directory.mkdir(parents=True)
+        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
         worker = ControlledWorker.instances[0]
-        worker.emit_complete(pdf_path)
+        worker.emit_complete(pdf_directory)
         self.assertEqual(
             self.manager.get_task(task.id).status,
             TaskStatus.COMPLETED,

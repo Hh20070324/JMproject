@@ -187,7 +187,12 @@ class DownloadWorkerTests(unittest.TestCase):
                 )
                 active_downloader.before_album(album)
                 self.assertEqual(tuple(active_downloader.do_filter(album)), (photo,))
-                chapter_dir = project_root / "Pictures" / "123456" / "第一章"
+                chapter_dir = (
+                    project_root
+                    / "Pictures"
+                    / "123456"
+                    / "测试漫画"
+                )
                 active_downloader.before_photo(photo)
                 received_option.decide_image_filepath.side_effect = (
                     lambda image: str(chapter_dir / image.filename)
@@ -207,10 +212,17 @@ class DownloadWorkerTests(unittest.TestCase):
                 active_downloader.after_photo(photo)
                 active_downloader.after_album(album)
 
-            expected_pdf = project_root / "PDFs" / "123456.pdf"
+            expected_pdf_directory = (
+                project_root / "PDFs" / "123456" / "测试漫画"
+            )
+            expected_pdf = expected_pdf_directory / "测试漫画.pdf"
             with (
                 patch.object(downloader.jmcomic, "download_album", side_effect=fake_download),
-                patch.object(downloader, "album_to_pdf", return_value=str(expected_pdf)) as make_pdf,
+                patch.object(
+                    downloader,
+                    "chapter_to_pdf",
+                    return_value=str(expected_pdf),
+                ) as make_pdf,
             ):
                 worker.run()
 
@@ -219,8 +231,8 @@ class DownloadWorkerTests(unittest.TestCase):
             self.assertEqual(
                 pdf_args,
                 (
-                    str(project_root / "Pictures" / "123456"),
-                    str(project_root / "PDFs"),
+                    project_root / "Pictures" / "123456" / "测试漫画",
+                    expected_pdf,
                 ),
             )
             self.assertTrue(pdf_kwargs["publish_guard"]())
@@ -234,7 +246,13 @@ class DownloadWorkerTests(unittest.TestCase):
                 [Path(event[1][1]).name for event in preview_events],
                 ["2.jpg", "1.jpg"],
             )
-            self.assertEqual(events[-2], ("complete", ("123456", str(expected_pdf))))
+            self.assertEqual(
+                events[-2],
+                (
+                    "complete",
+                    ("123456", str(expected_pdf_directory.resolve())),
+                ),
+            )
             self.assertEqual(events[-1], ("stopped", ("123456",)))
 
     def test_run_reports_download_errors(self):
@@ -293,7 +311,7 @@ class DownloadWorkerTests(unittest.TestCase):
                     "download_album",
                     side_effect=fake_download,
                 ),
-                patch.object(downloader, "album_to_pdf") as make_pdf,
+                patch.object(downloader, "chapter_to_pdf") as make_pdf,
             ):
                 worker.run()
 

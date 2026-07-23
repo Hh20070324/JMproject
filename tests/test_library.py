@@ -4,7 +4,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jm_downloader.library import LibraryError, LibraryNotFound, LibraryService
+from jm_downloader.library import (
+    ChapterManifestStore,
+    LibraryError,
+    LibraryNotFound,
+    LibraryService,
+)
+from jm_downloader.models import ChapterManifest, ChapterManifestEntry
 from jm_downloader.settings import AppPaths
 
 
@@ -125,6 +131,32 @@ class LibraryServiceTests(unittest.TestCase):
             self.library.open_location("123", "pdf")
 
         startfile.assert_called_once_with(pdf_path)
+
+    def test_open_pdf_prefers_new_managed_directory(self):
+        manifest = ChapterManifest(
+            version=1,
+            album_id="123",
+            album_title="测试漫画",
+            album_dir_name="测试漫画",
+            chapters=(
+                ChapterManifestEntry(
+                    "301",
+                    1,
+                    "第一章",
+                    "第1章",
+                    1,
+                ),
+            ),
+        )
+        ChapterManifestStore(self.paths).merge_and_save(manifest)
+        pdf_directory = self.paths.pdfs / "123" / "测试漫画"
+        pdf_directory.mkdir(parents=True)
+        (pdf_directory / "第1章.pdf").write_bytes(b"pdf")
+
+        with patch("jm_downloader.library.os.startfile", create=True) as startfile:
+            self.library.open_location("123", "pdf")
+
+        startfile.assert_called_once_with(pdf_directory.resolve())
 
     def _write(self, relative_path: str, content: bytes):
         path = self.paths.root / relative_path

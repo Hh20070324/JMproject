@@ -48,8 +48,8 @@ class ControlledWorker:
         self.callbacks["on_error"](self.album_id, message)
         self.finish()
 
-    def emit_complete(self, pdf_path):
-        self.callbacks["on_complete"](self.album_id, str(pdf_path))
+    def emit_complete(self, pdf_directory):
+        self.callbacks["on_complete"](self.album_id, str(pdf_directory))
         self.finish()
 
     def emit_stopped(self):

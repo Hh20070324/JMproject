@@ -3,7 +3,13 @@ import threading
 import unittest
 from pathlib import Path
 
-from jm_downloader.models import TaskSnapshot, TaskStatus
+from jm_downloader.library import ChapterManifestStore
+from jm_downloader.models import (
+    ChapterManifest,
+    ChapterManifestEntry,
+    TaskSnapshot,
+    TaskStatus,
+)
 from jm_downloader.settings import AppPaths
 from jm_downloader.tasks import (
     InvalidAlbumId,
@@ -48,6 +54,12 @@ class TaskManagerTests(unittest.TestCase):
     def tearDown(self):
         self.manager.shutdown(timeout=0)
         self.temp_dir.cleanup()
+
+    def _pdf_directory(self, album_id: str) -> Path:
+        directory = self.paths.pdfs / album_id / "测试漫画"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "第1章.pdf").write_bytes(b"pdf")
+        return directory
 
     def test_add_rejects_non_numeric_album_ids(self):
         with self.assertRaisesRegex(InvalidAlbumId, "车号只能包含数字"):
@@ -110,11 +122,12 @@ class TaskManagerTests(unittest.TestCase):
     def test_completed_worker_schedules_next_pending_task(self):
         for album_id in ("1", "2", "3"):
             self.manager.add(album_id)
-        pdf_path = self.paths.pdfs / "1.pdf"
-        pdf_path.parent.mkdir(parents=True)
-        pdf_path.write_bytes(b"pdf")
+        pdf_directory = self._pdf_directory("1")
 
-        WaitingWorker.instances[0].callbacks["on_complete"]("1", str(pdf_path))
+        WaitingWorker.instances[0].callbacks["on_complete"](
+            "1",
+            str(pdf_directory),
+        )
 
         self.assertEqual(len(WaitingWorker.instances), 3)
         self.assertEqual(
@@ -124,16 +137,16 @@ class TaskManagerTests(unittest.TestCase):
 
     def test_worker_cannot_complete_with_missing_pdf(self):
         task = self.manager.add("1")
-        missing_pdf = self.paths.pdfs / "missing.pdf"
+        missing_pdf_directory = self.paths.pdfs / "1" / "missing"
 
         WaitingWorker.instances[0].callbacks["on_complete"](
-            "1", str(missing_pdf)
+            "1", str(missing_pdf_directory)
         )
 
         snapshot = self.manager.get_task(task.id)
         self.assertEqual(snapshot.status, TaskStatus.FAILED)
-        self.assertEqual(snapshot.error, "PDF 文件不存在")
-        self.assertIsNone(snapshot.pdf_path)
+        self.assertEqual(snapshot.error, "PDF 储存文件夹不存在")
+        self.assertIsNone(snapshot.pdf_directory)
 
     def test_stale_worker_callback_does_not_replace_retry_generation(self):
         task = self.manager.add("1")
@@ -271,30 +284,36 @@ class TaskManagerTests(unittest.TestCase):
         self.assertIsNone(snapshot.preview_path)
         self.assertEqual(snapshot.preview_revision, 0)
 
-    def test_completed_event_and_snapshot_use_local_managed_pdf(self):
+    def test_completed_event_and_snapshot_use_local_managed_pdf_directory(self):
         task = self.manager.add("123456")
-        pdf_path = self.paths.pdfs / "123456.pdf"
-        pdf_path.parent.mkdir(parents=True)
-        pdf_path.write_bytes(b"pdf")
+        pdf_directory = self._pdf_directory("123456")
         listener = self.manager.add_listener()
         self.addCleanup(self.manager.remove_listener, listener)
 
         WaitingWorker.instances[0].callbacks["on_complete"](
-            "123456", str(pdf_path)
+            "123456", str(pdf_directory)
         )
 
         event = listener.get_nowait()
         self.manager.remove_listener(listener)
-        self.assertEqual(event["pdf_path"], pdf_path.resolve())
+        self.assertEqual(
+            event["pdf_directory"],
+            pdf_directory.resolve(),
+        )
         self.assertNotIn("pdf", event)
+        self.assertNotIn("pdf_path", event)
         snapshot = self.manager.get_task(task.id)
-        self.assertEqual(snapshot.pdf_path, pdf_path.resolve())
+        self.assertEqual(
+            snapshot.pdf_directory,
+            pdf_directory.resolve(),
+        )
         self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
 
     def test_pdf_outside_managed_directory_fails_task(self):
         task = self.manager.add("123456")
-        outside_path = self.paths.root / "outside.pdf"
-        outside_path.write_bytes(b"pdf")
+        outside_path = self.paths.root / "outside"
+        outside_path.mkdir()
+        (outside_path / "chapter.pdf").write_bytes(b"pdf")
 
         WaitingWorker.instances[0].callbacks["on_complete"](
             "123456", str(outside_path)
@@ -303,7 +322,39 @@ class TaskManagerTests(unittest.TestCase):
         snapshot = self.manager.get_task(task.id)
         self.assertEqual(snapshot.status, TaskStatus.FAILED)
         self.assertEqual(snapshot.error, "PDF 输出路径不在受管目录中")
-        self.assertIsNone(snapshot.pdf_path)
+        self.assertIsNone(snapshot.pdf_directory)
+
+    def test_restore_preview_recovers_pdf_directory_from_manifest(self):
+        task = self.manager.add("123456")
+        WaitingWorker.instances[0].callbacks["on_error"](
+            "123456",
+            "retry later",
+        )
+        manifest = ChapterManifest(
+            version=1,
+            album_id="123456",
+            album_title="测试漫画",
+            album_dir_name="测试漫画",
+            chapters=(
+                ChapterManifestEntry(
+                    "301",
+                    1,
+                    "第一章",
+                    "第1章",
+                    1,
+                ),
+            ),
+        )
+        ChapterManifestStore(self.paths).merge_and_save(manifest)
+        pdf_directory = self._pdf_directory("123456")
+
+        self.assertIsNone(self.manager.restore_preview(task.id))
+
+        snapshot = self.manager.get_task(task.id)
+        self.assertEqual(
+            snapshot.pdf_directory,
+            pdf_directory.resolve(),
+        )
 
 
 if __name__ == "__main__":
