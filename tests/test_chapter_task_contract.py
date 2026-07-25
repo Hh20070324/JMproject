@@ -214,6 +214,12 @@ class ChapterTaskContractTests(unittest.TestCase):
             self.assertIsNone(
                 migrated["tasks"][0]["selected_chapter_ids"]
             )
+
+            manager.resume(restored[0].id)
+            self.assertEqual(len(CapturingWorker.instances), 1)
+            self.assertIsNone(
+                CapturingWorker.instances[0].selected_chapter_ids
+            )
         finally:
             manager.shutdown(timeout=2)
 

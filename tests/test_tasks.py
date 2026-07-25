@@ -1,3 +1,5 @@
+import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -148,6 +150,55 @@ class TaskManagerTests(unittest.TestCase):
         self.assertEqual(snapshot.error, "PDF 储存文件夹不存在")
         self.assertIsNone(snapshot.pdf_directory)
 
+    def test_worker_cannot_complete_after_pdf_is_removed_externally(self):
+        task = self.manager.add("1")
+        pdf_directory = self._pdf_directory("1")
+        (pdf_directory / "第1章.pdf").unlink()
+
+        WaitingWorker.instances[0].callbacks["on_complete"](
+            "1",
+            str(pdf_directory),
+        )
+
+        snapshot = self.manager.get_task(task.id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertEqual(snapshot.error, "PDF 文件不存在")
+        self.assertIsNone(snapshot.pdf_directory)
+
+    @unittest.skipUnless(os.name == "nt", "Windows junction test")
+    def test_worker_cannot_complete_through_pdf_directory_junction(self):
+        task = self.manager.add("1")
+        album_root = self.paths.pdfs / "1"
+        target = album_root / "real-title"
+        target.mkdir(parents=True)
+        sentinel = target / "第1章.pdf"
+        sentinel.write_bytes(b"keep")
+        junction = album_root / "测试漫画"
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        try:
+            WaitingWorker.instances[0].callbacks["on_complete"](
+                "1",
+                str(junction),
+            )
+
+            snapshot = self.manager.get_task(task.id)
+            self.assertEqual(snapshot.status, TaskStatus.FAILED)
+            self.assertEqual(
+                snapshot.error,
+                "PDF 输出路径未通过安全检查",
+            )
+            self.assertIsNone(snapshot.pdf_directory)
+            self.assertEqual(sentinel.read_bytes(), b"keep")
+        finally:
+            if junction.exists():
+                os.rmdir(junction)
+
     def test_stale_worker_callback_does_not_replace_retry_generation(self):
         task = self.manager.add("1")
         original = WaitingWorker.instances[0]
@@ -160,6 +211,23 @@ class TaskManagerTests(unittest.TestCase):
         snapshot = self.manager.get_task(task.id)
         self.assertEqual(snapshot.status, TaskStatus.FETCHING)
         self.assertIsNone(snapshot.error)
+        self.assertTrue(self.manager.shutdown(timeout=1))
+        self.assertTrue(replacement.stopped)
+        self.assertIsNotNone(replacement.wait_timeout)
+
+    def test_stale_worker_completion_does_not_complete_retry_generation(self):
+        task = self.manager.add("1")
+        original = WaitingWorker.instances[0]
+        original.callbacks["on_error"]("1", "first failure")
+
+        self.manager.retry(task.id)
+        replacement = WaitingWorker.instances[1]
+        pdf_directory = self._pdf_directory("1")
+        original.callbacks["on_complete"]("1", str(pdf_directory))
+
+        snapshot = self.manager.get_task(task.id)
+        self.assertEqual(snapshot.status, TaskStatus.FETCHING)
+        self.assertIsNone(snapshot.pdf_directory)
         self.assertTrue(self.manager.shutdown(timeout=1))
         self.assertTrue(replacement.stopped)
         self.assertIsNotNone(replacement.wait_timeout)

@@ -681,11 +681,18 @@ class FavoritesPage(SectionPage):
         self._favorites_snapshot = snapshot
         if snapshot is not None:
             self._update_sort_selection(snapshot.order_by)
+        self._filter_timer.stop()
         self._filtered_snapshot = None
         self._filter_generation = None
         self._favorites_error_code = ""
         self._set_favorites_error("")
         self._rebuild_folder_options()
+        if (
+            snapshot is not None
+            and snapshot.synced_at_utc is not None
+            and self.keyword_input.text().strip()
+        ):
+            self._submit_filter()
         self._render_controls()
         self._render_favorites()
 

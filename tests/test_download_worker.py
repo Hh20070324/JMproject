@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 from PIL import Image
 
 from jm_downloader import downloader
+from jm_downloader.models import ChapterManifest, ChapterManifestEntry
 from jm_downloader.settings import AppPaths
 
 
@@ -320,6 +321,68 @@ class DownloadWorkerTests(unittest.TestCase):
             errors,
             ["图片不完整或已损坏，请点击继续重试"],
         )
+
+    def test_manifest_publish_failure_keeps_downloaded_files_and_fails_task(self):
+        errors = []
+        completions = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = AppPaths(Path(temp_dir))
+            image = paths.pictures / "123456" / "测试漫画" / "1.jpg"
+            image.parent.mkdir(parents=True)
+            self._write_image(image)
+            pdf_directory = paths.pdfs / "123456" / "测试漫画"
+            pdf_directory.mkdir(parents=True)
+            chapter_pdf = pdf_directory / "测试漫画.pdf"
+            chapter_pdf.write_bytes(b"published-pdf")
+            option = Mock()
+            option.dir_rule = Mock()
+            worker = downloader.DownloadWorker(
+                "123456",
+                on_complete=lambda *args: completions.append(args),
+                on_error=lambda _album_id, message: errors.append(message),
+                paths=paths,
+            )
+            worker._make_option = Mock(return_value=option)
+            worker._pending_manifest = ChapterManifest(
+                version=1,
+                album_id="123456",
+                album_title="测试漫画",
+                album_dir_name="测试漫画",
+                chapters=(
+                    ChapterManifestEntry(
+                        "301",
+                        1,
+                        "第一章",
+                        "",
+                        1,
+                    ),
+                ),
+            )
+
+            with (
+                patch.object(downloader.jmcomic, "download_album"),
+                patch.object(worker, "_verify_download_result"),
+                patch.object(
+                    worker,
+                    "_package_chapter_pdfs",
+                    return_value=pdf_directory.resolve(),
+                ),
+                patch.object(
+                    worker._manifest_store,
+                    "merge_and_save",
+                    side_effect=downloader.ChapterManifestError("locked"),
+                ),
+                self.assertLogs("jm-downloader", logging.ERROR),
+            ):
+                worker.run()
+
+            self.assertEqual(
+                errors,
+                ["章节清单无法保存，请点击继续重试"],
+            )
+            self.assertEqual(completions, [])
+            self.assertTrue(image.is_file())
+            self.assertEqual(chapter_pdf.read_bytes(), b"published-pdf")
 
     @staticmethod
     def _write_image(path: Path):

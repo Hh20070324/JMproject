@@ -107,6 +107,63 @@ class V28DownloadPdfTests(unittest.TestCase):
         self.assertFalse((output / "第2章.pdf").exists())
         self.assertIsNone(worker._manifest_store.load("789"))
 
+    def test_cancelled_packaging_keeps_first_pdf_and_retry_converges(self):
+        chapters = (
+            ChapterManifestEntry("701", 1, "第一章", "第1章", 1),
+            ChapterManifestEntry("702", 2, "第二章", "第2章", 1),
+        )
+        worker = self._worker_with_manifest(
+            "700",
+            "取消后继续",
+            chapters,
+        )
+        for chapter_name in ("第1章", "第2章"):
+            self._write_image(
+                self.paths.pictures
+                / "700"
+                / "取消后继续"
+                / chapter_name
+                / "1.jpg"
+            )
+        original = downloader.chapter_to_pdf
+
+        def stop_after_first(chapter_dir, out_path, publish_guard=None):
+            result = original(
+                chapter_dir,
+                out_path,
+                publish_guard=publish_guard,
+            )
+            worker.stop()
+            return result
+
+        with (
+            patch.object(
+                downloader,
+                "chapter_to_pdf",
+                side_effect=stop_after_first,
+            ),
+            self.assertRaises(downloader.DownloadStopped),
+        ):
+            worker._package_chapter_pdfs()
+
+        output = self.paths.pdfs / "700" / "取消后继续"
+        self.assertTrue((output / "第1章.pdf").is_file())
+        self.assertFalse((output / "第2章.pdf").exists())
+        self.assertEqual(tuple(output.glob("*.part")), ())
+        self.assertIsNone(worker._manifest_store.load("700"))
+
+        retry = self._worker_with_manifest(
+            "700",
+            "取消后继续",
+            chapters,
+        )
+        result = retry._package_chapter_pdfs()
+
+        self.assertEqual(result, output.resolve())
+        self.assertTrue((output / "第1章.pdf").is_file())
+        self.assertTrue((output / "第2章.pdf").is_file())
+        self.assertEqual(tuple(output.glob("*.part")), ())
+
     def test_stale_extra_image_is_rejected_before_pdf_publish(self):
         worker = self._worker_with_manifest(
             "999",

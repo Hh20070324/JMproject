@@ -124,6 +124,36 @@ class TaskStoreTests(unittest.TestCase):
         self.assertEqual(self.store.load(), [])
         self.assertIsNotNone(self.store.last_recovery_backup)
 
+    def test_oversized_chapter_selection_is_backed_up_as_corruption(self):
+        task = self._task(
+            status=TaskStatus.PAUSED,
+            selected_chapter_ids=("1",),
+        ).to_dict()
+        task["selected_chapter_ids"] = [
+            str(index) for index in range(1, 12)
+        ]
+        raw = (
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "tasks": [task],
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        self.paths.tasks_file.write_bytes(raw)
+
+        self.assertEqual(self.store.load(), [])
+
+        backup = self.store.last_recovery_backup
+        self.assertIsNotNone(backup)
+        self.assertEqual(backup.read_bytes(), raw)
+        restored = json.loads(
+            self.paths.tasks_file.read_text(encoding="utf-8")
+        )
+        self.assertEqual(restored, {"schema_version": 2, "tasks": []})
+
     def test_failed_atomic_replace_preserves_previous_file(self):
         original = self._task()
         self.store.save((original,))

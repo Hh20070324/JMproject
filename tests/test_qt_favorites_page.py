@@ -634,6 +634,76 @@ class FavoritesPageTests(unittest.TestCase):
         )
         self.assertEqual(self.page.favorites_summary.text(), "共 1 条")
 
+    def test_active_keyword_is_resubmitted_when_a_new_snapshot_arrives(self):
+        original = FavoritesSnapshot(
+            "2026-07-16T12:45:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "全部收藏",
+                    (FavoriteItemSnapshot("1", "Alpha old"),),
+                ),
+            ),
+        )
+        refreshed = FavoritesSnapshot(
+            "2026-07-16T12:50:00Z",
+            (
+                FavoriteFolderSnapshot(
+                    "0",
+                    "全部收藏",
+                    (FavoriteItemSnapshot("2", "Alpha new"),),
+                ),
+            ),
+        )
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.page._on_favorites_snapshot(original)
+        self.page.keyword_input.setText("alpha")
+        self.page._filter_timer.stop()
+        self.favorites_controller.filter_items.side_effect = (10, 11)
+
+        self.page._submit_filter()
+        self.page._on_filter_result(
+            10,
+            FavoritesFilterSnapshot(
+                "0",
+                "alpha",
+                original.folders[0].items,
+            ),
+        )
+        self.assertEqual(
+            [card.snapshot.album_id for card in self.page.favorite_cards],
+            ["1"],
+        )
+
+        self.page._on_favorites_snapshot(refreshed)
+
+        self.assertEqual(self.page._filter_generation, 11)
+        self.assertEqual(
+            self.favorites_controller.filter_items.call_args_list[-1].args,
+            ("0", "alpha"),
+        )
+        self.assertIs(
+            self.page.favorites_stack.currentWidget(),
+            self.page.favorite_loading_state,
+        )
+        self.assertEqual(self.page.favorites_summary.text(), "正在筛选…")
+
+        self.page._on_filter_result(
+            11,
+            FavoritesFilterSnapshot(
+                "0",
+                "alpha",
+                refreshed.folders[0].items,
+            ),
+        )
+        self.assertEqual(
+            [card.snapshot.album_id for card in self.page.favorite_cards],
+            ["2"],
+        )
+        self.assertEqual(self.page.favorites_summary.text(), "共 1 条")
+
     def test_card_move_uses_single_target_dialog(self):
         snapshot = FavoritesSnapshot(
             "2026-07-16T12:45:00Z",
