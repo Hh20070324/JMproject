@@ -93,6 +93,22 @@ class ControlledLibrary:
     def delete_all(self, album_id):
         return self._mutate("delete_all", album_id)
 
+    def delete_chapter(self, album_id, photo_id, kind, *, expected=None):
+        self.calls.append(
+            (
+                f"delete_chapter_{kind}",
+                album_id,
+                photo_id,
+                expected,
+                threading.current_thread(),
+            )
+        )
+        self.operation_started.set()
+        self.operation_release.wait(timeout=3)
+        if self.operation_error is not None:
+            raise self.operation_error
+        return {"photo_id": photo_id, "kind": kind}
+
     def _mutate(self, command, album_id):
         self.calls.append((command, album_id, threading.current_thread()))
         self.operation_started.set()
@@ -229,6 +245,54 @@ class LibraryControllerTests(unittest.TestCase):
         self.assertEqual(errors, [("delete_pdf", "1", "PDF 文件被占用")])
         self.assertEqual(self.controller.busy_album_ids(), frozenset())
         self.assertFalse(self.manager.is_library_operation_active("1"))
+
+    def test_chapter_delete_reserves_album_and_returns_background_result(self):
+        expected = object()
+        outcomes = []
+        self.controller.operation_completed.connect(
+            lambda command, album_id, result: outcomes.append(
+                (command, album_id, result)
+            )
+        )
+
+        self.controller.delete_chapter(
+            "1",
+            "301",
+            "images",
+            expected,
+        )
+        self.assertTrue(self._wait_until(lambda: bool(outcomes)))
+
+        self.assertEqual(
+            outcomes,
+            [
+                (
+                    "delete_chapter_images",
+                    "1",
+                    {"photo_id": "301", "kind": "images"},
+                )
+            ],
+        )
+        call = self.library.calls[0]
+        self.assertEqual(call[:4], ("delete_chapter_images", "1", "301", expected))
+        self.assertIsNot(call[4], threading.main_thread())
+        self.assertFalse(self.manager.is_library_operation_active("1"))
+
+    def test_active_download_rejects_chapter_delete_before_worker_starts(self):
+        self.manager.add("1")
+        errors = []
+        self.controller.command_failed.connect(
+            lambda command, album_id, message: errors.append(
+                (command, album_id, message)
+            )
+        )
+
+        self.controller.delete_chapter("1", "301", "all", None)
+
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0][:2], ("delete_chapter_all", "1"))
+        self.assertIn("暂不可修改", errors[0][2])
+        self.assertEqual(self.library.calls, [])
 
     def test_batch_delete_is_serial_and_continues_after_one_failure(self):
         calls = []

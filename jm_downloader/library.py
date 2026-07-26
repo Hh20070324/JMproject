@@ -14,6 +14,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .models import (
     ChapterImageStatus,
+    ChapterDeleteResult,
     ChapterManifest,
     ChapterManifestEntry,
     ChapterOperationFailure,
@@ -1263,6 +1264,8 @@ class LibraryService:
     @staticmethod
     def _remove_empty_directories(directories) -> None:
         for directory in reversed(tuple(directories)):
+            if directory is None:
+                continue
             try:
                 directory.rmdir()
             except OSError:
@@ -1286,17 +1289,292 @@ class LibraryService:
                     ) from error
                 if manifest is None:
                     raise LibraryError("章节清单已发生变化，未删除图片")
-                minimal = ChapterManifest(
-                    version=manifest.version,
-                    album_id=manifest.album_id,
-                    album_title=manifest.album_title,
-                    album_dir_name=manifest.album_dir_name,
-                    chapters=(),
-                )
-                self._delete_managed_images(album_dir, minimal)
+                self._delete_managed_images(album_dir, manifest)
                 return
 
             self._delete_directory(album_dir, label="图片")
+
+    def delete_chapter(
+        self,
+        album_id: str,
+        photo_id: str,
+        kind: str,
+        *,
+        expected: LibraryChapterSnapshot | None = None,
+    ) -> ChapterDeleteResult:
+        """Delete one manifest chapter through a staged local transaction."""
+
+        with self._lock:
+            self._require_album_id(album_id)
+            photo_id = str(photo_id)
+            kind = str(kind)
+            if kind not in {"images", "package", "all"}:
+                raise LibraryError("不支持的章节删除类型")
+            try:
+                store = ChapterManifestStore(self.paths)
+                manifest = store.load(album_id)
+            except ChapterManifestError as error:
+                raise LibraryError(
+                    "章节清单不可用，未删除章节内容"
+                ) from error
+            if manifest is None:
+                raise LibraryNotFound("没有可用的章节清单")
+            chapter = next(
+                (
+                    value
+                    for value in manifest.chapters
+                    if value.photo_id == photo_id
+                ),
+                None,
+            )
+            if chapter is None:
+                raise LibraryNotFound("章节已不在当前清单中")
+
+            album_dir = self._album_directory(
+                self.paths.pictures,
+                album_id,
+            )
+            package_album_dir = self._album_directory(
+                self.paths.pdfs,
+                album_id,
+            )
+            title_dir, image_directory = self._chapter_delete_image_path(
+                album_dir,
+                manifest,
+                chapter,
+            )
+            package_dir, package_paths = self._chapter_delete_package_paths(
+                package_album_dir,
+                manifest,
+                chapter,
+            )
+            current = self._check_chapter(
+                album_id,
+                manifest,
+                chapter,
+                title_dir,
+                package_dir,
+            )
+            if expected is not None:
+                if (
+                    not isinstance(expected, LibraryChapterSnapshot)
+                    or expected.album_id != album_id
+                    or expected.photo_id != photo_id
+                    or expected != current
+                ):
+                    raise LibraryError(
+                        "章节内容已发生变化，请重新检查后再删除"
+                    )
+
+            images = (
+                self._chapter_delete_images(image_directory)
+                if image_directory is not None
+                else ()
+            )
+            if kind == "images":
+                if not images:
+                    raise LibraryNotFound("章节图片不存在")
+                targets = list(images)
+            elif kind == "package":
+                if chapter.package_format == "images":
+                    raise LibraryError("仅图片章节没有打包产物")
+                if not package_paths:
+                    raise LibraryNotFound("章节打包产物不存在")
+                targets = list(package_paths)
+            else:
+                targets = [*images, *package_paths]
+
+            remaining = tuple(
+                value
+                for value in manifest.chapters
+                if value.photo_id != photo_id
+            )
+            remove_album = kind == "all" and not remaining
+            if remove_album:
+                manifest_path = store._manifest_path(album_id)
+                if (
+                    manifest_path.is_symlink()
+                    or not manifest_path.is_file()
+                ):
+                    raise LibraryError("章节清单已发生变化，未删除章节")
+                targets.append(manifest_path)
+
+            staged = self._stage_chapter_targets(
+                targets,
+                label=f"chapter-{kind}",
+            )
+            try:
+                if kind == "all" and remaining:
+                    store.replace_exact(
+                        replace(manifest, chapters=remaining)
+                    )
+                elif kind != "all":
+                    # Rewriting the unchanged manifest makes the file and
+                    # manifest portions one rollback boundary.
+                    store.replace_exact(manifest)
+            except (OSError, ChapterManifestError) as error:
+                rollback_errors = self._rollback_staged(staged)
+                if rollback_errors:
+                    raise LibraryError(
+                        "删除章节失败，且无法完整回滚："
+                        + "; ".join(rollback_errors)
+                    ) from error
+                raise LibraryError(f"删除章节失败：{error}") from error
+
+            cleanup_errors = self._discard_staged_targets(staged)
+            if remove_album:
+                self._remove_empty_directories(
+                    (
+                        album_dir,
+                        title_dir,
+                        image_directory,
+                        package_album_dir,
+                        package_dir,
+                    )
+                )
+            elif image_directory is not None:
+                self._remove_empty_directories((image_directory,))
+            if cleanup_errors:
+                raise LibraryError(
+                    "章节内容已移出本地库，但临时文件清理失败："
+                    + "; ".join(cleanup_errors)
+                )
+            return ChapterDeleteResult(
+                album_id=album_id,
+                photo_id=photo_id,
+                kind=kind,
+                deleted_image_count=len(images)
+                if kind in {"images", "all"}
+                else 0,
+                deleted_package_count=len(package_paths)
+                if kind in {"package", "all"}
+                else 0,
+                album_removed=remove_album,
+            )
+
+    def _chapter_delete_image_path(
+        self,
+        album_dir: Path,
+        manifest: ChapterManifest,
+        chapter: ChapterManifestEntry,
+    ) -> tuple[Path | None, Path | None]:
+        raw_title = album_dir / manifest.album_dir_name
+        if is_linked_directory(raw_title):
+            raise LibraryError("章节图片目录不能是链接")
+        if raw_title.exists() and not raw_title.is_dir():
+            raise LibraryError("章节图片目录结构无效")
+        title_dir = self._safe_child_directory(
+            album_dir,
+            manifest.album_dir_name,
+        )
+        if title_dir is None:
+            return None, None
+        raw_chapter = (
+            title_dir
+            if not chapter.dir_name
+            else title_dir / chapter.dir_name
+        )
+        if is_linked_directory(raw_chapter):
+            raise LibraryError("章节图片目录不能是链接")
+        if raw_chapter.exists() and not raw_chapter.is_dir():
+            raise LibraryError("章节图片目录结构无效")
+        return (
+            title_dir,
+            self._chapter_image_directory(title_dir, chapter),
+        )
+
+    def _chapter_delete_package_paths(
+        self,
+        package_album_dir: Path,
+        manifest: ChapterManifest,
+        chapter: ChapterManifestEntry,
+    ) -> tuple[Path | None, tuple[Path, ...]]:
+        raw_package_dir = package_album_dir / manifest.album_dir_name
+        if is_linked_directory(raw_package_dir):
+            raise LibraryError("章节打包目录不能是链接")
+        if raw_package_dir.exists() and not raw_package_dir.is_dir():
+            raise LibraryError("章节打包目录结构无效")
+        package_dir = self._safe_child_directory(
+            package_album_dir,
+            manifest.album_dir_name,
+        )
+        if package_dir is None:
+            return None, ()
+        name = chapter.dir_name or manifest.album_dir_name
+        paths = []
+        for suffix in ("pdf", "cbz"):
+            candidate = package_dir / f"{name}.{suffix}"
+            if is_linked_directory(candidate):
+                raise LibraryError("章节打包产物不能是链接")
+            if not candidate.exists():
+                continue
+            if not candidate.is_file():
+                raise LibraryError("章节打包产物路径无效")
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError as error:
+                raise LibraryError(
+                    "章节打包产物无法安全解析"
+                ) from error
+            if resolved.parent != package_dir:
+                raise LibraryError("章节打包产物超出受管范围")
+            paths.append(resolved)
+        return package_dir, tuple(paths)
+
+    def _chapter_delete_images(
+        self,
+        image_directory: Path,
+    ) -> tuple[Path, ...]:
+        try:
+            children = tuple(image_directory.iterdir())
+        except OSError as error:
+            raise LibraryError(
+                "无法安全检查章节图片目录"
+            ) from error
+        if any(is_linked_directory(path) for path in children):
+            raise LibraryError("章节图片目录包含链接，未执行删除")
+        return self._list_direct_images(image_directory)
+
+    @staticmethod
+    def _stage_chapter_targets(
+        targets,
+        *,
+        label: str,
+    ) -> list[tuple[Path, Path]]:
+        staged = []
+        token = uuid.uuid4().hex
+        try:
+            for original in targets:
+                original = Path(original)
+                staged_path = original.with_name(
+                    f".{original.name}.{token}.{label}.delete"
+                )
+                os.replace(original, staged_path)
+                staged.append((staged_path, original))
+        except OSError as error:
+            rollback_errors = LibraryService._rollback_staged(staged)
+            if rollback_errors:
+                raise LibraryError(
+                    "删除章节失败，且无法完整回滚："
+                    + "; ".join(rollback_errors)
+                ) from error
+            raise LibraryError(f"删除章节失败：{error}") from error
+        return staged
+
+    @staticmethod
+    def _discard_staged_targets(
+        staged: list[tuple[Path, Path]],
+    ) -> list[str]:
+        errors = []
+        for staged_path, _original in staged:
+            try:
+                if staged_path.is_dir():
+                    shutil.rmtree(staged_path)
+                else:
+                    staged_path.unlink()
+            except OSError as error:
+                errors.append(str(error))
+        return errors
 
     def delete_pdf(self, album_id: str) -> None:
         self.delete_packaged_artifacts(album_id)
@@ -1742,7 +2020,7 @@ class LibraryService:
     def _delete_managed_images(
         self,
         album_dir: Path,
-        minimal: ChapterManifest,
+        manifest: ChapterManifest,
     ) -> None:
         token = uuid.uuid4().hex
         staged = album_dir.with_name(
@@ -1755,7 +2033,7 @@ class LibraryService:
 
         try:
             album_dir.mkdir()
-            ChapterManifestStore(self.paths).replace_exact(minimal)
+            ChapterManifestStore(self.paths).replace_exact(manifest)
         except (OSError, ChapterManifestError) as error:
             rollback_errors = []
             try:

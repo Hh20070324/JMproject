@@ -65,15 +65,16 @@ class LibraryServiceTests(unittest.TestCase):
         self.assertEqual(item.layout, LibraryLayout.MANAGED)
         self.assertFalse(item.has_images)
         self.assertTrue(item.has_pdf)
-        self.assertEqual(item.chapter_count, 0)
-        self.assertEqual(manifest.chapters, ())
+        self.assertEqual(item.chapter_count, 1)
+        self.assertEqual(len(manifest.chapters), 1)
         self.assertEqual(whole_pdf.read_bytes(), b"keep")
 
         self.library.delete_pdf("123")
         self.assertFalse((self.paths.pdfs / "123").exists())
         self.assertEqual(whole_pdf.read_bytes(), b"keep")
-        with self.assertRaises(LibraryNotFound):
-            self.library.get_item("123")
+        item = self.library.get_item("123")
+        self.assertEqual(item.layout, LibraryLayout.MANAGED)
+        self.assertEqual(item.chapter_count, 1)
 
     def test_delete_all_removes_only_nested_managed_roots(self):
         self._save_manifest()

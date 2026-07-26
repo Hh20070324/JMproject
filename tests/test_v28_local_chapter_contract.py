@@ -392,15 +392,16 @@ class LibraryLayoutContractTests(unittest.TestCase):
         item = self.service.get_item("123")
         self.assertFalse(item.has_images)
         self.assertTrue(item.has_pdf)
-        self.assertEqual(item.chapter_count, 0)
+        self.assertEqual(item.chapter_count, 2)
         self.assertEqual(legacy.read_bytes(), b"keep-me")
 
         self.service.delete_pdf("123")
         self.assertFalse((self.paths.pdfs / "123").exists())
         self.assertEqual(legacy.read_bytes(), b"keep-me")
 
-        with self.assertRaises(library.LibraryNotFound):
-            self.service.get_item("123")
+        item = self.service.get_item("123")
+        self.assertEqual(item.layout, models.LibraryLayout.MANAGED)
+        self.assertEqual(item.chapter_count, 2)
 
     def test_delete_all_rolls_back_both_managed_directories(self):
         self.manifests.merge_and_save(_manifest())

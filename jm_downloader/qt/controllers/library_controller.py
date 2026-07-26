@@ -63,6 +63,7 @@ class LibraryController(QObject):
     busy_albums_changed = Signal(object)
     active_albums_changed = Signal(object)
     operation_succeeded = Signal(str, str)
+    operation_completed = Signal(str, str, object)
     command_failed = Signal(str, str, str)
     batch_delete_finished = Signal(str, object, object)
 
@@ -70,6 +71,9 @@ class LibraryController(QObject):
         "delete_images",
         "delete_pdf",
         "delete_all",
+        "delete_chapter_images",
+        "delete_chapter_package",
+        "delete_chapter_all",
     }
     ACTIVE_STATUSES = {
         TaskStatus.PENDING,
@@ -170,6 +174,38 @@ class LibraryController(QObject):
             )
             return
         self._start_mutation(command, album_id)
+
+    @Slot(str, str, str, object)
+    def delete_chapter(
+        self,
+        album_id: str,
+        photo_id: str,
+        kind: str,
+        expected=None,
+    ) -> None:
+        kind = str(kind)
+        command = {
+            "images": "delete_chapter_images",
+            "package": "delete_chapter_package",
+            "all": "delete_chapter_all",
+        }.get(kind)
+        if command is None:
+            self.command_failed.emit(
+                "delete_chapter",
+                str(album_id),
+                "不支持的章节删除类型",
+            )
+            return
+        self._start_mutation(
+            command,
+            album_id,
+            function=lambda reserved_album_id: self.library.delete_chapter(
+                reserved_album_id,
+                str(photo_id),
+                kind,
+                expected=expected,
+            ),
+        )
 
     @Slot(object, str)
     def batch_delete(self, album_ids, kind: str) -> bool:
@@ -307,7 +343,13 @@ class LibraryController(QObject):
             self._set_loading(False)
             self._report_error("refresh", "", error)
 
-    def _start_mutation(self, command: str, album_id: str) -> None:
+    def _start_mutation(
+        self,
+        command: str,
+        album_id: str,
+        *,
+        function: Callable[[str], object] | None = None,
+    ) -> None:
         if self._disposed:
             return
         album_id = str(album_id)
@@ -326,11 +368,14 @@ class LibraryController(QObject):
         self._requested_scan_id = self._next_request_id()
         self._refresh_pending = False
 
-        method = {
-            "delete_images": self.library.delete_images,
-            "delete_pdf": self.library.delete_pdf,
-            "delete_all": self.library.delete_all,
-        }[command]
+        if function is None:
+            method = {
+                "delete_images": self.library.delete_images,
+                "delete_pdf": self.library.delete_pdf,
+                "delete_all": self.library.delete_all,
+            }[command]
+        else:
+            method = function
 
         def execute():
             try:
@@ -411,6 +456,7 @@ class LibraryController(QObject):
             self._report_error(command, album_id, error)
         else:
             self.operation_succeeded.emit(command, album_id)
+            self.operation_completed.emit(command, album_id, result)
         self.refresh()
 
     def _finish_scan(self, request_id: int, result, error) -> None:

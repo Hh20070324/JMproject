@@ -156,7 +156,7 @@ class V28LibraryLayoutTests(unittest.TestCase):
             self.service.delete_images("123")
         self.assertEqual(image.read_bytes(), b"image")
 
-    def test_managed_delete_images_rolls_back_when_minimal_manifest_fails(self):
+    def test_managed_delete_images_rolls_back_when_manifest_write_fails(self):
         original = self.manifests.merge_and_save(self._manifest())
         image = self._write(
             "Pictures/123/固定目录/第1章/1.jpg",

@@ -177,6 +177,16 @@ class ChapterRebuildResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ChapterDeleteResult:
+    album_id: str
+    photo_id: str
+    kind: str
+    deleted_image_count: int
+    deleted_package_count: int
+    album_removed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterManifest:
     version: int
     album_id: str
