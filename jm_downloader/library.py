@@ -11,11 +11,15 @@ from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 
 from .models import (
+    ChapterImageStatus,
     ChapterManifest,
     ChapterManifestEntry,
+    ChapterPackageStatus,
+    LibraryChapterSnapshot,
     LibraryItem,
     LibraryLayout,
 )
+from .packaging import cbz_file_intact
 from .pdf import (
     IMAGE_EXTENSIONS,
     PART_FILE_MARKER,
@@ -23,6 +27,7 @@ from .pdf import (
     find_album_images,
     is_linked_directory,
     natural_key,
+    pdf_file_readable,
 )
 from .settings import AppPaths, DEFAULT_PATHS
 
@@ -48,7 +53,7 @@ class UnsupportedChapterManifestVersion(ChapterManifestError):
 
 
 CHAPTER_MANIFEST_FILENAME = ".jm-chapters.json"
-CHAPTER_MANIFEST_SCHEMA_VERSION = 2
+CHAPTER_MANIFEST_SCHEMA_VERSION = 3
 _WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -215,7 +220,7 @@ class ChapterManifestStore:
             raise UnsupportedChapterManifestVersion(
                 f"章节清单版本 {version} 高于程序支持的版本"
             )
-        if version not in {1, CHAPTER_MANIFEST_SCHEMA_VERSION}:
+        if version not in {1, 2, CHAPTER_MANIFEST_SCHEMA_VERSION}:
             raise ChapterManifestError("不支持的章节清单版本")
         raw_chapters = data.get("chapters")
         if not isinstance(raw_chapters, list):
@@ -233,6 +238,8 @@ class ChapterManifestStore:
                 expected_fields.update(
                     {"image_format", "downloaded_at_utc"}
                 )
+            if version >= 3:
+                expected_fields.add("package_format")
             if not isinstance(value, dict) or set(value) != expected_fields:
                 raise ChapterManifestError("章节清单条目字段无效")
             chapters.append(
@@ -244,6 +251,7 @@ class ChapterManifestStore:
                     page_count=value.get("page_count"),
                     image_format=value.get("image_format"),
                     downloaded_at_utc=value.get("downloaded_at_utc"),
+                    package_format=value.get("package_format"),
                 )
             )
         manifest = ChapterManifest(
@@ -274,6 +282,7 @@ class ChapterManifestStore:
                     "page_count": chapter.page_count,
                     "image_format": chapter.image_format,
                     "downloaded_at_utc": chapter.downloaded_at_utc,
+                    "package_format": chapter.package_format,
                 }
                 for chapter in manifest.chapters
             ],
@@ -340,6 +349,8 @@ class ChapterManifestStore:
                 raise ChapterManifestError("章节页数无效")
             if chapter.image_format not in {None, "jpg", "png"}:
                 raise ChapterManifestError("章节图片格式无效")
+            if chapter.package_format not in {None, "pdf", "cbz", "images"}:
+                raise ChapterManifestError("章节打包格式无效")
             if chapter.downloaded_at_utc is not None:
                 if (
                     not isinstance(chapter.downloaded_at_utc, str)
@@ -359,7 +370,8 @@ class ChapterManifestStore:
     def _upgrade_manifest(manifest: ChapterManifest) -> ChapterManifest:
         if (
             isinstance(manifest, ChapterManifest)
-            and manifest.version == 1
+            and type(manifest.version) is int
+            and 1 <= manifest.version < CHAPTER_MANIFEST_SCHEMA_VERSION
         ):
             return ChapterManifest(
                 version=CHAPTER_MANIFEST_SCHEMA_VERSION,
@@ -503,6 +515,239 @@ class LibraryService:
                 completed.add(chapter.photo_id)
             return frozenset(completed)
 
+    def check_chapters(
+        self,
+        album_id: str,
+    ) -> tuple[LibraryChapterSnapshot, ...]:
+        """Offline per-chapter status for one managed album.
+
+        Reads only manifest-declared managed paths, never touches the
+        network, and never writes the manifest back.  Each chapter is
+        checked independently so one failure cannot hide the others.
+        """
+
+        with self._lock:
+            self._require_album_id(album_id)
+            album_dir = self._album_directory(self.paths.pictures, album_id)
+            pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
+            try:
+                manifest = ChapterManifestStore(self.paths).load(album_id)
+            except ChapterManifestError as error:
+                raise LibraryError(
+                    "章节清单不可用，无法检查章节"
+                ) from error
+            if manifest is None:
+                raise LibraryNotFound("没有可用的章节清单")
+            title_dir = self._safe_child_directory(
+                album_dir,
+                manifest.album_dir_name,
+            )
+            package_dir = self._safe_child_directory(
+                pdf_album_dir,
+                manifest.album_dir_name,
+            )
+            snapshots = []
+            for chapter in sorted(
+                manifest.chapters,
+                key=lambda value: value.index,
+            ):
+                try:
+                    snapshots.append(
+                        self._check_chapter(
+                            album_id,
+                            manifest,
+                            chapter,
+                            title_dir,
+                            package_dir,
+                        )
+                    )
+                except (LibraryError, OSError):
+                    snapshots.append(
+                        self._chapter_check_failed(album_id, chapter)
+                    )
+            return tuple(snapshots)
+
+    def _check_chapter(
+        self,
+        album_id: str,
+        manifest: ChapterManifest,
+        chapter: ChapterManifestEntry,
+        title_dir: Path | None,
+        package_dir: Path | None,
+    ) -> LibraryChapterSnapshot:
+        image_directory = self._chapter_image_directory(title_dir, chapter)
+        images: tuple[Path, ...] = ()
+        listing_failed = False
+        if image_directory is not None:
+            try:
+                images = self._list_direct_images(image_directory)
+            except LibraryNotFound:
+                listing_failed = True
+        valid_count = sum(
+            1 for path in images if self._is_valid_image_file(path)
+        )
+
+        problem_codes = []
+        if listing_failed:
+            image_status = ChapterImageStatus.DAMAGED
+            problem_codes.append("check_error")
+        elif image_directory is None or len(images) < chapter.page_count:
+            image_status = ChapterImageStatus.MISSING
+            problem_codes.append("images_missing")
+        elif (
+            len(images) != chapter.page_count
+            or valid_count != len(images)
+            or not self._images_match_format(images, chapter.image_format)
+        ):
+            image_status = ChapterImageStatus.DAMAGED
+            problem_codes.append("images_damaged")
+        else:
+            image_status = ChapterImageStatus.COMPLETE
+
+        pdf_path = self._chapter_package_path(
+            package_dir,
+            manifest,
+            chapter,
+            "pdf",
+        )
+        cbz_path = self._chapter_package_path(
+            package_dir,
+            manifest,
+            chapter,
+            "cbz",
+        )
+        pdf_exists = pdf_path is not None and pdf_path.is_file()
+        cbz_exists = cbz_path is not None and cbz_path.is_file()
+
+        package_format = chapter.package_format
+        suggested = None
+        package_path = None
+        if package_format is None:
+            package_status = ChapterPackageStatus.UNKNOWN
+            if pdf_exists and not cbz_exists:
+                suggested = "pdf"
+            elif cbz_exists and not pdf_exists:
+                suggested = "cbz"
+            problem_codes.append("format_unknown")
+        elif package_format == "images":
+            package_status = ChapterPackageStatus.NOT_APPLICABLE
+        else:
+            package_path = pdf_path if package_format == "pdf" else cbz_path
+            exists = pdf_exists if package_format == "pdf" else cbz_exists
+            if not exists:
+                package_status = ChapterPackageStatus.MISSING
+                problem_codes.append("package_missing")
+            else:
+                intact = (
+                    pdf_file_readable(package_path)
+                    if package_format == "pdf"
+                    else cbz_file_intact(package_path, chapter.page_count)
+                )
+                if intact:
+                    package_status = ChapterPackageStatus.COMPLETE
+                else:
+                    package_status = ChapterPackageStatus.DAMAGED
+                    problem_codes.append("package_damaged")
+
+        return LibraryChapterSnapshot(
+            album_id=album_id,
+            photo_id=chapter.photo_id,
+            index=chapter.index,
+            title=chapter.title,
+            image_directory=image_directory,
+            package_path=package_path if package_path is not None else None,
+            page_count=chapter.page_count,
+            valid_image_count=valid_count,
+            image_status=image_status,
+            package_format=package_format,
+            package_status=package_status,
+            downloaded_at_utc=chapter.downloaded_at_utc,
+            can_rebuild=(
+                image_status is ChapterImageStatus.COMPLETE
+                and package_format in {"pdf", "cbz"}
+                and package_status
+                in {
+                    ChapterPackageStatus.MISSING,
+                    ChapterPackageStatus.DAMAGED,
+                }
+            ),
+            can_redownload=(
+                image_status is not ChapterImageStatus.COMPLETE
+            ),
+            can_delete_images=(
+                image_status is not ChapterImageStatus.MISSING
+            ),
+            can_delete_package=(
+                package_format != "images" and (pdf_exists or cbz_exists)
+            ),
+            can_delete_all=True,
+            suggested_package_format=suggested,
+            problem_codes=tuple(problem_codes),
+        )
+
+    @staticmethod
+    def _chapter_check_failed(
+        album_id: str,
+        chapter: ChapterManifestEntry,
+    ) -> LibraryChapterSnapshot:
+        return LibraryChapterSnapshot(
+            album_id=album_id,
+            photo_id=chapter.photo_id,
+            index=chapter.index,
+            title=chapter.title,
+            image_directory=None,
+            package_path=None,
+            page_count=chapter.page_count,
+            valid_image_count=0,
+            image_status=ChapterImageStatus.DAMAGED,
+            package_format=chapter.package_format,
+            package_status=ChapterPackageStatus.UNKNOWN,
+            downloaded_at_utc=chapter.downloaded_at_utc,
+            can_rebuild=False,
+            can_redownload=True,
+            can_delete_images=False,
+            can_delete_package=False,
+            can_delete_all=True,
+            suggested_package_format=None,
+            problem_codes=("check_error",),
+        )
+
+    def _chapter_image_directory(
+        self,
+        title_dir: Path | None,
+        chapter: ChapterManifestEntry,
+    ) -> Path | None:
+        if title_dir is None:
+            return None
+        if not chapter.dir_name:
+            return title_dir
+        return self._safe_child_directory(title_dir, chapter.dir_name)
+
+    @staticmethod
+    def _chapter_package_path(
+        package_dir: Path | None,
+        manifest: ChapterManifest,
+        chapter: ChapterManifestEntry,
+        suffix: str,
+    ) -> Path | None:
+        if package_dir is None:
+            return None
+        name = chapter.dir_name or manifest.album_dir_name
+        candidate = package_dir / f"{name}.{suffix}"
+        if is_linked_directory(candidate):
+            return None
+        if not candidate.exists():
+            return candidate
+        if not candidate.is_file():
+            return None
+        try:
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            return None
+        if resolved.parent != package_dir:
+            return None
+        return resolved
+
     def get_item(self, album_id: str) -> LibraryItem:
         with self._lock:
             self._require_album_id(album_id)
@@ -546,6 +791,35 @@ class LibraryService:
                         pdf_files=pdf_files,
                         cbz_directory=cbz_directory,
                         cbz_files=cbz_files,
+                        downloaded_at_utc=(
+                            self._manifest_downloaded_at(manifest)
+                            or self._directory_downloaded_at(
+                                album_dir,
+                                pdf_album_dir,
+                            )
+                        ),
+                    )
+                if (
+                    manifest.chapters
+                    and not self._list_images(album_dir)
+                    and not self._list_pdf_files(pdf_album_dir)
+                    and not self._list_package_files(pdf_album_dir, ".cbz")
+                ):
+                    # Decision 2.6: images were deleted while the chapter
+                    # records were kept.  The album stays visible and
+                    # manageable only when no unmanaged files drifted into
+                    # its roots; drifted files keep the conservative
+                    # legacy/unverified branches below.
+                    return self._item_from_files(
+                        album_id=album_id,
+                        title=manifest.album_title,
+                        layout=LibraryLayout.MANAGED,
+                        chapter_count=len(manifest.chapters),
+                        images=(),
+                        pdf_directory=None,
+                        pdf_files=(),
+                        cbz_directory=None,
+                        cbz_files=(),
                         downloaded_at_utc=(
                             self._manifest_downloaded_at(manifest)
                             or self._directory_downloaded_at(

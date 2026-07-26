@@ -52,6 +52,20 @@ class LibraryLayout(str, Enum):
     UNVERIFIED = "unverified"
 
 
+class ChapterImageStatus(str, Enum):
+    COMPLETE = "complete"
+    MISSING = "missing"
+    DAMAGED = "damaged"
+
+
+class ChapterPackageStatus(str, Enum):
+    COMPLETE = "complete"
+    MISSING = "missing"
+    DAMAGED = "damaged"
+    NOT_APPLICABLE = "not_applicable"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class TaskConfig:
     download_engine: str = "async"
@@ -110,6 +124,32 @@ class ChapterManifestEntry:
     page_count: int
     image_format: str | None = None
     downloaded_at_utc: str | None = None
+    package_format: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryChapterSnapshot:
+    """Immutable offline status of one managed chapter for the library UI."""
+
+    album_id: str
+    photo_id: str
+    index: int
+    title: str
+    image_directory: Path | None
+    package_path: Path | None
+    page_count: int
+    valid_image_count: int
+    image_status: ChapterImageStatus
+    package_format: str | None
+    package_status: ChapterPackageStatus
+    downloaded_at_utc: str | None
+    can_rebuild: bool
+    can_redownload: bool
+    can_delete_images: bool
+    can_delete_package: bool
+    can_delete_all: bool
+    suggested_package_format: str | None = None
+    problem_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

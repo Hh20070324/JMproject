@@ -19,6 +19,30 @@ class PdfSourcePathError(OSError):
     """Raised when a chapter PDF source crosses a linked path boundary."""
 
 
+def pdf_file_readable(path: str | Path) -> bool:
+    """Lightweight offline PDF readability check.
+
+    Confirms a regular file with a PDF header and an EOF marker near the
+    end.  It does not prove every page renders correctly.
+    """
+
+    candidate = Path(path)
+    try:
+        if _is_linked_path(candidate) or not candidate.is_file():
+            return False
+        size = candidate.stat().st_size
+        if size < 8:
+            return False
+        with candidate.open("rb") as handle:
+            if handle.read(5) != b"%PDF-":
+                return False
+            handle.seek(max(0, size - 1024))
+            tail = handle.read()
+        return b"%%EOF" in tail
+    except OSError:
+        return False
+
+
 def natural_key(name: str):
     parts = re.split(r"(\d+)", name)
     return [(0, int(part)) if part.isdigit() else (1, part.lower()) for part in parts]

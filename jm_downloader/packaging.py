@@ -1,5 +1,5 @@
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tempfile
 import zipfile
 
@@ -10,6 +10,39 @@ from .pdf import (
     is_linked_directory,
     natural_key,
 )
+
+
+def cbz_file_intact(path: str | Path, expected_images: int) -> bool:
+    """Offline CBZ structural check.
+
+    The archive must be a readable regular file whose non-directory entry
+    count matches ``expected_images`` and whose entry names stay inside
+    the archive (no absolute or parent-escaping names).
+    """
+
+    candidate = Path(path)
+    if type(expected_images) is not int or expected_images < 1:
+        raise ValueError("expected_images must be a positive integer")
+    try:
+        if is_linked_directory(candidate) or not candidate.is_file():
+            return False
+        with zipfile.ZipFile(candidate) as archive:
+            if archive.testzip() is not None:
+                return False
+            names = [
+                name
+                for name in archive.namelist()
+                if not name.endswith("/")
+            ]
+            if len(names) != expected_images:
+                return False
+            for name in names:
+                pure = PurePosixPath(name)
+                if pure.is_absolute() or ".." in pure.parts:
+                    return False
+        return True
+    except (OSError, zipfile.BadZipFile):
+        return False
 
 
 def chapter_to_cbz(

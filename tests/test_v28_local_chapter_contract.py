@@ -155,7 +155,10 @@ class ChapterManifestContractTests(unittest.TestCase):
     def test_manifest_round_trip_and_partial_merge_are_atomic(self):
         first = _manifest(chapters=(_chapter("301", 1, "第一章", "第1章", 2),))
         published = self.store.merge_and_save(first)
-        self.assertEqual(published, replace(first, version=2))
+        self.assertEqual(
+            published,
+            replace(first, version=library.CHAPTER_MANIFEST_SCHEMA_VERSION),
+        )
 
         second = _manifest(
             title="远端新标题",

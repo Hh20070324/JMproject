@@ -80,6 +80,8 @@ def _manifest_payload(
                 "downloaded_at_utc": "2026-01-01T00:00:00Z",
             }
         )
+    if version >= 3:
+        chapter["package_format"] = "pdf"
     if chapter_fields:
         chapter.update(chapter_fields)
     return {
@@ -175,6 +177,7 @@ class V291ManifestFreezeTests(unittest.TestCase):
                     page_count=3,
                     image_format="png",
                     downloaded_at_utc="2026-01-02T03:04:05Z",
+                    package_format="cbz",
                 ),
             ),
         )
@@ -185,18 +188,18 @@ class V291ManifestFreezeTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual(
-            set(raw["chapters"][0]),
-            {
-                "photo_id",
-                "index",
-                "title",
-                "dir_name",
-                "page_count",
-                "image_format",
-                "downloaded_at_utc",
-            },
-        )
+        expected = {
+            "photo_id",
+            "index",
+            "title",
+            "dir_name",
+            "page_count",
+            "image_format",
+            "downloaded_at_utc",
+        }
+        if raw["version"] >= 3:
+            expected.add("package_format")
+        self.assertEqual(set(raw["chapters"][0]), expected)
         loaded = self.store.load("123")
         self.assertEqual(loaded.chapters, incoming.chapters)
 

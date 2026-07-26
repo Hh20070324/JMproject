@@ -1032,6 +1032,7 @@ class DownloadWorker:
                 replace(
                     chapter,
                     image_format=self.task_config.image_format,
+                    package_format=self.task_config.package_format,
                     downloaded_at_utc=completed_at,
                 )
                 for chapter in manifest.chapters
