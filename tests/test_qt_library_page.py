@@ -122,7 +122,7 @@ class LibraryPageTests(unittest.TestCase):
 
         self.assertEqual(
             self.controller.calls,
-            [("open", "30", "images"), ("open", "30", "pdf")],
+            [("open", "30", "images"), ("open", "30", "package")],
         )
         self.controller.active = frozenset({"30"})
         self.controller.active_albums_changed.emit(self.controller.active)

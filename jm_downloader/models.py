@@ -107,6 +107,8 @@ class ChapterManifestEntry:
     title: str
     dir_name: str
     page_count: int
+    image_format: str | None = None
+    downloaded_at_utc: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +205,7 @@ class TaskSnapshot:
     cover_url: str | None
     selected_chapter_ids: tuple[str, ...] | None = None
     config: TaskConfig = TaskConfig()
+    cbz_directory: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +219,9 @@ class LibraryItem:
     preview_path: Path | None
     pdf_directory: Path | None
     pdf_size: int
+    cbz_directory: Path | None = None
+    cbz_size: int = 0
+    downloaded_at_utc: str | None = None
 
     @property
     def has_images(self) -> bool:
@@ -224,3 +230,7 @@ class LibraryItem:
     @property
     def has_pdf(self) -> bool:
         return self.pdf_directory is not None
+
+    @property
+    def has_cbz(self) -> bool:
+        return self.cbz_directory is not None

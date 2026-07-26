@@ -139,7 +139,7 @@ class V28LibraryLayoutTests(unittest.TestCase):
         )
         manifest_path.parent.mkdir(parents=True)
         payload = {
-            "version": 2,
+            "version": 3,
             "album_id": "123",
             "album_title": "未来标题",
             "album_dir_name": "未来目录",

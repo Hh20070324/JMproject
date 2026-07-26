@@ -46,7 +46,7 @@ class UnsupportedChapterManifestVersion(ChapterManifestError):
 
 
 CHAPTER_MANIFEST_FILENAME = ".jm-chapters.json"
-CHAPTER_MANIFEST_SCHEMA_VERSION = 1
+CHAPTER_MANIFEST_SCHEMA_VERSION = 2
 _WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -83,6 +83,7 @@ class ChapterManifestStore:
             raise CorruptChapterManifest("章节清单内容已损坏") from error
 
     def merge_and_save(self, incoming: ChapterManifest) -> ChapterManifest:
+        incoming = self._upgrade_manifest(incoming)
         self._validate_manifest(incoming)
         path = self._manifest_path(incoming.album_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +130,7 @@ class ChapterManifestStore:
         identity but clearing every chapter is the desired state.
         """
 
+        manifest = self._upgrade_manifest(manifest)
         self._validate_manifest(manifest)
         path = self._manifest_path(manifest.album_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,20 +213,25 @@ class ChapterManifestStore:
             raise UnsupportedChapterManifestVersion(
                 f"章节清单版本 {version} 高于程序支持的版本"
             )
-        if version != CHAPTER_MANIFEST_SCHEMA_VERSION:
+        if version not in {1, CHAPTER_MANIFEST_SCHEMA_VERSION}:
             raise ChapterManifestError("不支持的章节清单版本")
         raw_chapters = data.get("chapters")
         if not isinstance(raw_chapters, list):
             raise ChapterManifestError("章节清单条目必须是数组")
         chapters = []
         for value in raw_chapters:
-            if not isinstance(value, dict) or set(value) != {
+            expected_fields = {
                 "photo_id",
                 "index",
                 "title",
                 "dir_name",
                 "page_count",
-            }:
+            }
+            if version >= 2:
+                expected_fields.update(
+                    {"image_format", "downloaded_at_utc"}
+                )
+            if not isinstance(value, dict) or set(value) != expected_fields:
                 raise ChapterManifestError("章节清单条目字段无效")
             chapters.append(
                 ChapterManifestEntry(
@@ -233,10 +240,12 @@ class ChapterManifestStore:
                     title=value.get("title"),
                     dir_name=value.get("dir_name"),
                     page_count=value.get("page_count"),
+                    image_format=value.get("image_format"),
+                    downloaded_at_utc=value.get("downloaded_at_utc"),
                 )
             )
         manifest = ChapterManifest(
-            version=version,
+            version=CHAPTER_MANIFEST_SCHEMA_VERSION,
             album_id=data.get("album_id"),
             album_title=data.get("album_title"),
             album_dir_name=data.get("album_dir_name"),
@@ -247,6 +256,7 @@ class ChapterManifestStore:
 
     @classmethod
     def _encode(cls, manifest: ChapterManifest) -> bytes:
+        manifest = cls._upgrade_manifest(manifest)
         cls._validate_manifest(manifest)
         data = {
             "version": manifest.version,
@@ -260,6 +270,8 @@ class ChapterManifestStore:
                     "title": chapter.title,
                     "dir_name": chapter.dir_name,
                     "page_count": chapter.page_count,
+                    "image_format": chapter.image_format,
+                    "downloaded_at_utc": chapter.downloaded_at_utc,
                 }
                 for chapter in manifest.chapters
             ],
@@ -324,6 +336,37 @@ class ChapterManifestStore:
                 raise ChapterManifestError("章节目录名无效")
             if type(chapter.page_count) is not int or chapter.page_count < 1:
                 raise ChapterManifestError("章节页数无效")
+            if chapter.image_format not in {None, "jpg", "png"}:
+                raise ChapterManifestError("章节图片格式无效")
+            if chapter.downloaded_at_utc is not None:
+                if (
+                    not isinstance(chapter.downloaded_at_utc, str)
+                    or not chapter.downloaded_at_utc.endswith("Z")
+                ):
+                    raise ChapterManifestError("章节下载时间无效")
+                try:
+                    datetime.fromisoformat(
+                        chapter.downloaded_at_utc[:-1] + "+00:00"
+                    )
+                except ValueError as error:
+                    raise ChapterManifestError(
+                        "章节下载时间无效"
+                    ) from error
+
+    @staticmethod
+    def _upgrade_manifest(manifest: ChapterManifest) -> ChapterManifest:
+        if (
+            isinstance(manifest, ChapterManifest)
+            and manifest.version == 1
+        ):
+            return ChapterManifest(
+                version=CHAPTER_MANIFEST_SCHEMA_VERSION,
+                album_id=manifest.album_id,
+                album_title=manifest.album_title,
+                album_dir_name=manifest.album_dir_name,
+                chapters=manifest.chapters,
+            )
+        return manifest
 
     @staticmethod
     def _validate_text(label: str, value: str, *, allow_empty: bool) -> None:
@@ -432,7 +475,11 @@ class LibraryService:
                     pdf_album_dir,
                     manifest,
                 )
-                if managed_images or pdf_files:
+                cbz_directory, cbz_files = self._managed_cbz(
+                    pdf_album_dir,
+                    manifest,
+                )
+                if managed_images or pdf_files or cbz_files:
                     return self._item_from_files(
                         album_id=album_id,
                         title=manifest.album_title,
@@ -441,6 +488,11 @@ class LibraryService:
                         images=managed_images,
                         pdf_directory=pdf_directory,
                         pdf_files=pdf_files,
+                        cbz_directory=cbz_directory,
+                        cbz_files=cbz_files,
+                        downloaded_at_utc=self._manifest_downloaded_at(
+                            manifest
+                        ),
                     )
                 # A valid manifest whose declared image layout has drifted is
                 # not rebound to a guessed title path.  The remaining disk
@@ -457,10 +509,15 @@ class LibraryService:
                     images=images,
                     pdf_directory=None,
                     pdf_files=(),
+                    cbz_directory=None,
+                    cbz_files=(),
                 )
 
             pdf_files = self._list_pdf_files(pdf_album_dir)
-            if not pdf_files:
+            cbz_files = self._list_package_files(
+                pdf_album_dir, ".cbz"
+            )
+            if not pdf_files and not cbz_files:
                 raise LibraryNotFound("未找到该漫画")
             return self._item_from_files(
                 album_id=album_id,
@@ -468,8 +525,10 @@ class LibraryService:
                 layout=LibraryLayout.UNVERIFIED,
                 chapter_count=0,
                 images=(),
-                pdf_directory=pdf_album_dir,
+                pdf_directory=pdf_album_dir if pdf_files else None,
                 pdf_files=pdf_files,
+                cbz_directory=pdf_album_dir if cbz_files else None,
+                cbz_files=cbz_files,
             )
 
     @staticmethod
@@ -482,10 +541,14 @@ class LibraryService:
         images,
         pdf_directory: Path | None,
         pdf_files,
+        cbz_directory: Path | None,
+        cbz_files,
+        downloaded_at_utc: str | None = None,
     ) -> LibraryItem:
         try:
             image_size = sum(path.stat().st_size for path in images)
             pdf_size = sum(path.stat().st_size for path in pdf_files)
+            cbz_size = sum(path.stat().st_size for path in cbz_files)
         except OSError as error:
             raise LibraryNotFound(
                 "本地漫画文件已发生变化，请刷新后重试"
@@ -500,6 +563,9 @@ class LibraryService:
             preview_path=images[0] if images else None,
             pdf_directory=pdf_directory,
             pdf_size=pdf_size,
+            cbz_directory=cbz_directory,
+            cbz_size=cbz_size,
+            downloaded_at_utc=downloaded_at_utc,
         )
 
     def get_preview(self, album_id: str) -> Path:
@@ -566,14 +632,17 @@ class LibraryService:
             self._delete_directory(album_dir, label="图片")
 
     def delete_pdf(self, album_id: str) -> None:
+        self.delete_packaged_artifacts(album_id)
+
+    def delete_packaged_artifacts(self, album_id: str) -> None:
         with self._lock:
             self._require_album_id(album_id)
             item = self.get_item(album_id)
-            if not item.has_pdf:
-                raise LibraryNotFound("PDF 储存文件夹不存在")
+            if not item.has_pdf and not item.has_cbz:
+                raise LibraryNotFound("打包产物文件夹不存在")
             pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
             self._reject_linked_tree(pdf_album_dir)
-            self._delete_directory(pdf_album_dir, label="PDF")
+            self._delete_directory(pdf_album_dir, label="打包产物")
 
     def delete_all(self, album_id: str) -> None:
         with self._lock:
@@ -628,6 +697,10 @@ class LibraryService:
                 if item.pdf_directory is None:
                     raise LibraryNotFound("PDF 储存文件夹不存在")
                 target = item.pdf_directory
+            elif kind in {"cbz", "package"}:
+                target = item.cbz_directory or item.pdf_directory
+                if target is None:
+                    raise LibraryNotFound("打包产物文件夹不存在")
             else:
                 raise LibraryError("不支持的打开类型")
 
@@ -731,6 +804,33 @@ class LibraryService:
             return None, ()
         return target, pdf_files
 
+    def _managed_cbz(
+        self,
+        pdf_album_dir: Path,
+        manifest: ChapterManifest,
+    ) -> tuple[Path | None, tuple[Path, ...]]:
+        target = self._safe_child_directory(
+            pdf_album_dir,
+            manifest.album_dir_name,
+        )
+        if target is None:
+            return None, ()
+        cbz_files = self._list_direct_packages(target, ".cbz")
+        if not cbz_files:
+            return None, ()
+        return target, cbz_files
+
+    @staticmethod
+    def _manifest_downloaded_at(
+        manifest: ChapterManifest,
+    ) -> str | None:
+        values = [
+            chapter.downloaded_at_utc
+            for chapter in manifest.chapters
+            if chapter.downloaded_at_utc is not None
+        ]
+        return max(values) if values else None
+
     @staticmethod
     def _safe_child_directory(parent: Path, name: str) -> Path | None:
         if not parent.is_dir():
@@ -775,16 +875,23 @@ class LibraryService:
 
     @staticmethod
     def _list_direct_pdfs(directory: Path) -> tuple[Path, ...]:
+        return LibraryService._list_direct_packages(directory, ".pdf")
+
+    @staticmethod
+    def _list_direct_packages(
+        directory: Path,
+        suffix: str,
+    ) -> tuple[Path, ...]:
         try:
             candidates = tuple(directory.iterdir())
         except OSError as error:
             raise LibraryNotFound(
                 "本地 PDF 文件已发生变化，请刷新后重试"
             ) from error
-        pdf_files = []
+        package_files = []
         for candidate in candidates:
             if (
-                candidate.suffix.lower() != ".pdf"
+                candidate.suffix.lower() != suffix
                 or PART_FILE_MARKER in candidate.name
                 or is_linked_directory(candidate)
                 or not candidate.is_file()
@@ -795,11 +902,18 @@ class LibraryService:
             except OSError:
                 continue
             if resolved.parent == directory:
-                pdf_files.append(resolved)
-        pdf_files.sort(key=lambda path: natural_key(path.name))
-        return tuple(pdf_files)
+                package_files.append(resolved)
+        package_files.sort(key=lambda path: natural_key(path.name))
+        return tuple(package_files)
 
     def _list_pdf_files(self, album_dir: Path) -> tuple[Path, ...]:
+        return self._list_package_files(album_dir, ".pdf")
+
+    def _list_package_files(
+        self,
+        album_dir: Path,
+        suffix: str,
+    ) -> tuple[Path, ...]:
         if not album_dir.is_dir() or is_linked_directory(album_dir):
             return ()
         try:
@@ -807,7 +921,7 @@ class LibraryService:
         except OSError:
             return ()
 
-        pdf_files = []
+        package_files = []
         walk_errors = []
         for root, directories, filenames in os.walk(
             album_dir,
@@ -840,7 +954,7 @@ class LibraryService:
             for name in filenames:
                 candidate = root_path / name
                 if (
-                    candidate.suffix.lower() != ".pdf"
+                    candidate.suffix.lower() != suffix
                     or PART_FILE_MARKER in candidate.name
                     or is_linked_directory(candidate)
                     or not candidate.is_file()
@@ -851,18 +965,18 @@ class LibraryService:
                 except OSError:
                     continue
                 if resolved.is_relative_to(resolved_album):
-                    pdf_files.append(resolved)
+                    package_files.append(resolved)
         if walk_errors:
             raise LibraryNotFound(
                 "本地 PDF 文件已发生变化，请刷新后重试"
             ) from walk_errors[0]
-        pdf_files.sort(
+        package_files.sort(
             key=lambda path: tuple(
                 natural_key(part)
                 for part in path.relative_to(resolved_album).parts
             )
         )
-        return tuple(pdf_files)
+        return tuple(package_files)
 
     def _list_images(self, album_dir: Path) -> list[Path]:
         if not album_dir.is_dir():

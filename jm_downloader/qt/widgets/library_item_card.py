@@ -106,11 +106,11 @@ class LibraryItemCard(QFrame):
         self.open_pdf_button = self._make_icon_button(
             actions,
             "libraryOpenPdfButton",
-            "使用文件资源管理器打开本漫画 PDF 储存文件夹",
+            "使用文件资源管理器打开本漫画打包产物文件夹",
             svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
-            lambda: self.open_requested.emit(self.item.album_id, "pdf")
+            lambda: self.open_requested.emit(self.item.album_id, "package")
         )
         actions_layout.addWidget(self.open_pdf_button)
 
@@ -136,7 +136,7 @@ class LibraryItemCard(QFrame):
         self.delete_menu.setObjectName("libraryDeleteMenu")
         self.delete_images_action = QAction("删除全部图片", self.delete_menu)
         self.delete_pdf_action = QAction(
-            "删除全部受管 PDF",
+            "删除全部打包产物",
             self.delete_menu,
         )
         self.delete_all_action = QAction("删除全部", self.delete_menu)
@@ -193,21 +193,36 @@ class LibraryItemCard(QFrame):
             self.chapter_meta.setText("章节信息未知")
         else:
             self.chapter_meta.setText(f"章节 {item.chapter_count} 个")
+        package_labels = []
+        if item.has_pdf:
+            package_labels.append(
+                f"PDF {format_file_size(item.pdf_size)}"
+            )
+        if item.has_cbz:
+            package_labels.append(
+                f"CBZ {format_file_size(item.cbz_size)}"
+            )
         self.pdf_meta.setText(
-            f"PDF · {format_file_size(item.pdf_size)}"
-            if item.has_pdf
-            else "PDF · 未生成"
+            "打包 · " + " / ".join(package_labels)
+            if package_labels
+            else "打包 · 未生成"
         )
         self.open_images_button.setVisible(item.has_images)
-        self.open_pdf_button.setVisible(item.has_pdf)
+        self.open_pdf_button.setVisible(item.has_pdf or item.has_cbz)
         self.open_pdf_button.setEnabled(
-            item.pdf_directory is not None
-            and item.pdf_directory.is_dir()
+            (
+                item.pdf_directory is not None
+                and item.pdf_directory.is_dir()
+            )
+            or (
+                item.cbz_directory is not None
+                and item.cbz_directory.is_dir()
+            )
         )
         self.rebuild_button.setVisible(False)
         self.rebuild_button.setText("重建 PDF" if item.has_pdf else "生成 PDF")
         self.delete_images_action.setVisible(item.has_images)
-        self.delete_pdf_action.setVisible(item.has_pdf)
+        self.delete_pdf_action.setVisible(item.has_pdf or item.has_cbz)
         self._sync_activity()
         if not item.has_images:
             self.reset_preview()
@@ -222,7 +237,9 @@ class LibraryItemCard(QFrame):
         self.rebuild_button.setEnabled(not locked)
         self.delete_button.setEnabled(not locked)
         self.delete_images_action.setEnabled(not locked and self.item.has_images)
-        self.delete_pdf_action.setEnabled(not locked and self.item.has_pdf)
+        self.delete_pdf_action.setEnabled(
+            not locked and (self.item.has_pdf or self.item.has_cbz)
+        )
         self.delete_all_action.setEnabled(not locked)
 
         if self._busy:

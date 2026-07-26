@@ -194,6 +194,7 @@ class TaskManager:
                 "page": "",
                 "error": None,
                 "pdf_directory": None,
+                "cbz_directory": None,
                 "run_generation": 0,
                 "_cancel_deferred": False,
                 "_paths": self.paths,
@@ -514,6 +515,7 @@ class TaskManager:
             task_paths.pictures / album_id
         )
         pdf_directory = None
+        cbz_directory = None
         try:
             manifest = ChapterManifestStore(task_paths).load(album_id)
         except ChapterManifestError:
@@ -531,7 +533,21 @@ class TaskManager:
                 )
             except ValueError:
                 pdf_directory = None
-        if candidate is None and pdf_directory is None:
+            try:
+                cbz_directory = self._validate_package_directory(
+                    task_paths,
+                    album_id,
+                    task_paths.pdfs / album_id / manifest.album_dir_name,
+                    ".cbz",
+                    required=False,
+                )
+            except ValueError:
+                cbz_directory = None
+        if (
+            candidate is None
+            and pdf_directory is None
+            and cbz_directory is None
+        ):
             return None
         with self._lock:
             task = self._find_locked(task_id)
@@ -546,6 +562,11 @@ class TaskManager:
                     if pdf_directory is not None
                     else None
                 ),
+                cbz_directory=(
+                    str(cbz_directory)
+                    if cbz_directory is not None
+                    else None
+                ),
             )
         self.broadcast(
             {
@@ -554,6 +575,7 @@ class TaskManager:
                 "preview_path": candidate,
                 "preview_revision": revision,
                 "pdf_directory": pdf_directory,
+                "cbz_directory": cbz_directory,
             }
         )
         return candidate
@@ -668,6 +690,7 @@ class TaskManager:
     def _snapshot_locked(task: dict) -> TaskSnapshot:
         preview = task.get("_preview_path")
         pdf_directory = task.get("pdf_directory")
+        cbz_directory = task.get("cbz_directory")
         return TaskSnapshot(
             id=task["id"],
             album_id=task["album_id"],
@@ -685,6 +708,9 @@ class TaskManager:
             cover_url=task.get("cover_url"),
             selected_chapter_ids=task.get("selected_chapter_ids"),
             config=task["config"],
+            cbz_directory=(
+                Path(cbz_directory) if cbz_directory else None
+            ),
         )
 
     def _restore_task(self, stored: StoredTask) -> dict:
@@ -706,6 +732,7 @@ class TaskManager:
             "page": stored.page,
             "error": stored.error if status == TaskStatus.FAILED else None,
             "pdf_directory": None,
+            "cbz_directory": None,
             "run_generation": 0,
             "_cancel_deferred": False,
             "_paths": stored.to_paths(self.paths.root),
@@ -753,8 +780,8 @@ class TaskManager:
         def on_progress(_album_id, percent, chapter, page):
             self._on_progress(task_id, generation, percent, chapter, page)
 
-        def on_complete(_album_id, pdf_directory):
-            self._on_complete(task_id, generation, pdf_directory)
+        def on_complete(_album_id, artifact_directory):
+            self._on_complete(task_id, generation, artifact_directory)
 
         def on_error(_album_id, error):
             self._on_error(task_id, generation, error)
@@ -828,7 +855,10 @@ class TaskManager:
         self._queue_persist()
 
     def _on_complete(
-        self, task_id: str, generation: int, pdf_directory: str
+        self,
+        task_id: str,
+        generation: int,
+        artifact_directory: str | None,
     ) -> None:
         with self._lock:
             task = self._find_active_generation_locked(task_id, generation)
@@ -836,12 +866,19 @@ class TaskManager:
                 return
             task_paths = task["_paths"]
             album_id = task["album_id"]
+            package_format = task["config"].package_format
         try:
-            path = self._validate_pdf_directory(
-                task_paths,
-                album_id,
-                pdf_directory,
-            )
+            if package_format == "images":
+                if artifact_directory not in {None, ""}:
+                    raise ValueError("仅图片任务返回了意外打包目录")
+                path = None
+            else:
+                path = self._validate_package_directory(
+                    task_paths,
+                    album_id,
+                    artifact_directory,
+                    ".pdf" if package_format == "pdf" else ".cbz",
+                )
         except ValueError as error:
             self._on_error(task_id, generation, str(error))
             return
@@ -852,7 +889,12 @@ class TaskManager:
             task.update(
                 status=TaskStatus.COMPLETED.value,
                 progress=100,
-                pdf_directory=str(path),
+                pdf_directory=(
+                    str(path) if package_format == "pdf" else None
+                ),
+                cbz_directory=(
+                    str(path) if package_format == "cbz" else None
+                ),
             )
             album_id = task["album_id"]
             self._retire_worker_locked(task_id, generation)
@@ -861,7 +903,12 @@ class TaskManager:
                 "type": "completed",
                 "id": task_id,
                 "album_id": album_id,
-                "pdf_directory": path,
+                "pdf_directory": (
+                    path if package_format == "pdf" else None
+                ),
+                "cbz_directory": (
+                    path if package_format == "cbz" else None
+                ),
             }
         )
         self._queue_persist()
@@ -873,6 +920,26 @@ class TaskManager:
         album_id: str,
         value: str | Path,
     ) -> Path:
+        return TaskManager._validate_package_directory(
+            task_paths,
+            album_id,
+            value,
+            ".pdf",
+        )
+
+    @staticmethod
+    def _validate_package_directory(
+        task_paths: AppPaths,
+        album_id: str,
+        value: str | Path | None,
+        suffix: str,
+        *,
+        required: bool = True,
+    ) -> Path | None:
+        if value is None:
+            if required:
+                raise ValueError("打包产物目录不存在")
+            return None
         candidate = Path(value)
         if not candidate.is_absolute():
             candidate = task_paths.root / candidate
@@ -897,21 +964,27 @@ class TaskManager:
         if not candidate.is_dir():
             raise ValueError("PDF 储存文件夹不存在")
 
-        has_pdf = False
+        has_artifact = False
         try:
             for entry in candidate.iterdir():
                 if (
-                    entry.suffix.lower() == ".pdf"
+                    entry.suffix.lower() == suffix
                     and entry.is_file()
                     and not entry.is_symlink()
                     and entry.resolve().is_relative_to(resolved)
                 ):
-                    has_pdf = True
+                    has_artifact = True
                     break
         except OSError as error:
             raise ValueError("PDF 储存文件夹无法读取") from error
-        if not has_pdf:
-            raise ValueError("PDF 文件不存在")
+        if not has_artifact:
+            if not required:
+                return None
+            raise ValueError(
+                "PDF 文件不存在"
+                if suffix == ".pdf"
+                else "CBZ 文件不存在"
+            )
         return resolved
 
     def _on_preview(

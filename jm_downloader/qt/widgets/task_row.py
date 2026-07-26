@@ -165,11 +165,11 @@ class DownloadTaskRow(QFrame):
         self.open_pdf_button = self._make_action(
             actions,
             "openPdfButton",
-            "使用文件资源管理器打开本漫画 PDF 储存文件夹",
+            "使用文件资源管理器打开本漫画打包产物文件夹",
             svg_icon("document"),
         )
         self.open_pdf_button.clicked.connect(
-            lambda: self.open_requested.emit(self.snapshot.id, "pdf")
+            lambda: self.open_requested.emit(self.snapshot.id, "package")
         )
         actions_layout.addWidget(self.open_pdf_button)
 
@@ -252,11 +252,20 @@ class DownloadTaskRow(QFrame):
         )
         self.open_pdf_button.setVisible(
             snapshot.status in (TaskStatus.FAILED, TaskStatus.COMPLETED)
-            and snapshot.pdf_directory is not None
+            and (
+                snapshot.pdf_directory is not None
+                or snapshot.cbz_directory is not None
+            )
         )
         self.open_pdf_button.setEnabled(
-            snapshot.pdf_directory is not None
-            and snapshot.pdf_directory.is_dir()
+            (
+                snapshot.pdf_directory is not None
+                and snapshot.pdf_directory.is_dir()
+            )
+            or (
+                snapshot.cbz_directory is not None
+                and snapshot.cbz_directory.is_dir()
+            )
         )
 
     def set_preview(self, image: QImage, revision: int) -> None:
@@ -276,7 +285,11 @@ class DownloadTaskRow(QFrame):
         if snapshot.status == TaskStatus.FAILED:
             return snapshot.error or "未知错误"
         if snapshot.status == TaskStatus.COMPLETED:
-            return "图片与 PDF 已保存到本地"
+            if snapshot.config.package_format == "pdf":
+                return "图片与 PDF 已保存到本地"
+            if snapshot.config.package_format == "cbz":
+                return "图片与 CBZ 已保存到本地"
+            return "图片已保存到本地"
         if snapshot.status == TaskStatus.PENDING:
             return "等待空闲下载位置"
         if snapshot.status == TaskStatus.PAUSED:

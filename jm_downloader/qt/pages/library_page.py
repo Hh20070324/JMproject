@@ -34,7 +34,7 @@ class LibraryPage(SectionPage):
     FILTERS = (
         ("all", "全部"),
         ("images", "有图片"),
-        ("pdf", "有 PDF"),
+        ("pdf", "有打包产物"),
     )
 
     def __init__(
@@ -352,7 +352,10 @@ class LibraryPage(SectionPage):
             and (
                 selected == "all"
                 or (selected == "images" and item.has_images)
-                or (selected == "pdf" and item.has_pdf)
+                or (
+                    selected == "pdf"
+                    and (item.has_pdf or item.has_cbz)
+                )
             )
         ]
         self._visible_ids = tuple(item.album_id for item in visible)
@@ -363,8 +366,14 @@ class LibraryPage(SectionPage):
     def _reflow_cards(self, force: bool = False) -> None:
         available = max(1, self.scroll_area.viewport().width() - 8)
         card_width = max(
-            (row.minimumSizeHint().width() for row in self._rows.values()),
-            default=340,
+            340,
+            max(
+                (
+                    row.minimumSizeHint().width()
+                    for row in self._rows.values()
+                ),
+                default=340,
+            ),
         )
         two_column_width = card_width * 2 + self.library_grid.horizontalSpacing()
         columns = 2 if available >= two_column_width else 1
@@ -467,8 +476,8 @@ class LibraryPage(SectionPage):
             return
         labels = {
             "images": "全部图片",
-            "pdf": "全部受管 PDF",
-            "all": "全部图片和受管 PDF",
+            "pdf": "全部打包产物（PDF 与 CBZ）",
+            "all": "全部图片和打包产物",
         }
         target = labels.get(kind)
         if target is None:

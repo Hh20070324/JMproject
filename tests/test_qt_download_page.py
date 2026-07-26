@@ -200,7 +200,7 @@ class DownloadPageTests(unittest.TestCase):
         row.open_pdf_button.click()
         self.assertEqual(
             self.controller.opened,
-            [(completed.id, "images"), (completed.id, "pdf")],
+            [(completed.id, "images"), (completed.id, "package")],
         )
 
         failed_with_pdf = replace(

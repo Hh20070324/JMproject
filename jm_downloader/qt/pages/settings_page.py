@@ -183,6 +183,64 @@ class SettingsPage(SectionPage):
         route_layout.addStretch(1)
         self._add_row(section, "API 路线", route_control)
 
+        package_control = QWidget(section)
+        package_layout = QHBoxLayout(package_control)
+        package_layout.setContentsMargins(0, 0, 0, 0)
+        self.package_format_button = QToolButton(package_control)
+        self.package_format_button.setObjectName("packageFormatButton")
+        self.package_format_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.package_format_button.setFixedSize(220, 36)
+        self.package_format_menu = QMenu(self.package_format_button)
+        self._package_format_group = QActionGroup(self)
+        self._package_format_group.setExclusive(True)
+        self._package_format_actions = {}
+        for label, value in (
+            ("分章 PDF", "pdf"),
+            ("分章 CBZ", "cbz"),
+            ("仅图片", "images"),
+        ):
+            action = self.package_format_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._package_format_group.addAction(action)
+            self._package_format_actions[value] = action
+        self._package_format_group.triggered.connect(
+            self._select_package_format
+        )
+        self.package_format_button.setMenu(self.package_format_menu)
+        package_layout.addWidget(self.package_format_button)
+        package_layout.addStretch(1)
+        self._add_row(section, "保存方式", package_control)
+
+        image_format_control = QWidget(section)
+        image_format_layout = QHBoxLayout(image_format_control)
+        image_format_layout.setContentsMargins(0, 0, 0, 0)
+        self.image_format_button = QToolButton(image_format_control)
+        self.image_format_button.setObjectName("imageFormatButton")
+        self.image_format_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.image_format_button.setFixedSize(220, 36)
+        self.image_format_menu = QMenu(self.image_format_button)
+        self._image_format_group = QActionGroup(self)
+        self._image_format_group.setExclusive(True)
+        self._image_format_actions = {}
+        for label, value in (("JPG", "jpg"), ("PNG", "png")):
+            action = self.image_format_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._image_format_group.addAction(action)
+            self._image_format_actions[value] = action
+        self._image_format_group.triggered.connect(
+            self._select_image_format
+        )
+        self.image_format_button.setMenu(self.image_format_menu)
+        image_format_layout.addWidget(self.image_format_button)
+        image_format_layout.addStretch(1)
+        self._add_row(section, "图片格式", image_format_control)
+
         self.max_concurrent_tasks_spin = QSpinBox(section)
         self.max_concurrent_tasks_spin.setObjectName("settingsSpinBox")
         self.max_concurrent_tasks_spin.setRange(1, 8)
@@ -556,6 +614,8 @@ class SettingsPage(SectionPage):
         self._multi_chapter_behavior_group.triggered.connect(self._mark_dirty)
         self._download_engine_group.triggered.connect(self._mark_dirty)
         self._api_route_group.triggered.connect(self._mark_dirty)
+        self._package_format_group.triggered.connect(self._mark_dirty)
+        self._image_format_group.triggered.connect(self._mark_dirty)
         self._theme_group.buttonClicked.connect(self._mark_dirty)
 
     def _mark_dirty(self, *_args) -> None:
@@ -629,6 +689,8 @@ class SettingsPage(SectionPage):
             ),
             download_engine=self._selected_download_engine(),
             api_route=self._selected_api_route(),
+            download_package_format=self._selected_package_format(),
+            download_image_format=self._selected_image_format(),
             log_level=str(self.log_level_combo.currentData()),
             window_width=self.window_width_spin.value(),
             window_height=self.window_height_spin.value(),
@@ -659,6 +721,8 @@ class SettingsPage(SectionPage):
             )
             self._set_download_engine(settings.download_engine)
             self._set_api_route(settings.api_route)
+            self._set_package_format(settings.download_package_format)
+            self._set_image_format(settings.download_image_format)
             self.window_width_spin.setValue(settings.window_width)
             self.window_height_spin.setValue(settings.window_height)
             self._select_combo(self.log_level_combo, settings.log_level)
@@ -748,6 +812,36 @@ class SettingsPage(SectionPage):
     def _on_route_test_failed(self, _route: str, message: str) -> None:
         self.test_api_route_button.setEnabled(True)
         self.save_status_label.setText(message)
+
+    def _select_package_format(self, action: QAction) -> None:
+        self._set_package_format(str(action.data()))
+
+    def _set_package_format(self, value: str) -> None:
+        action = self._package_format_actions.get(
+            value,
+            self._package_format_actions["pdf"],
+        )
+        action.setChecked(True)
+        self.package_format_button.setText(f"{action.text()} ▾")
+
+    def _selected_package_format(self) -> str:
+        checked = self._package_format_group.checkedAction()
+        return str(checked.data()) if checked is not None else "pdf"
+
+    def _select_image_format(self, action: QAction) -> None:
+        self._set_image_format(str(action.data()))
+
+    def _set_image_format(self, value: str) -> None:
+        action = self._image_format_actions.get(
+            value,
+            self._image_format_actions["jpg"],
+        )
+        action.setChecked(True)
+        self.image_format_button.setText(f"{action.text()} ▾")
+
+    def _selected_image_format(self) -> str:
+        checked = self._image_format_group.checkedAction()
+        return str(checked.data()) if checked is not None else "jpg"
 
     def _on_save_succeeded(self, _settings: AppSettings) -> None:
         self._set_actions_enabled(True)

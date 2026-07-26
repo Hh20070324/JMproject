@@ -1,9 +1,13 @@
 import asyncio
+from dataclasses import replace
+from datetime import datetime, timezone
 import logging
 import os
 import re
+import shutil
 import tempfile
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -14,6 +18,7 @@ from common import suffix_not_equal
 from .jmcomic_client import serialized_client_construction
 from .jmcomic_logging import install_safe_jmcomic_logging
 from .library import (
+    CHAPTER_MANIFEST_SCHEMA_VERSION,
     ChapterManifestError,
     ChapterManifestStore,
     CorruptChapterManifest,
@@ -26,6 +31,7 @@ from .models import (
     TaskConfig,
 )
 from .option_config import apply_api_route
+from .packaging import chapter_to_cbz
 from .pdf import (
     IMAGE_EXTENSIONS,
     PART_FILE_MARKER,
@@ -143,6 +149,7 @@ class DownloadWorker:
         selected_chapter_ids: tuple[str, ...] | None = None,
         multi_chapter_download_behavior: str = "parallel",
         task_config: TaskConfig | None = None,
+        force_redownload_chapter_ids: tuple[str, ...] = (),
     ):
         self.album_id = str(album_id)
         self.on_progress = on_progress or (lambda *args: None)
@@ -174,6 +181,11 @@ class DownloadWorker:
         self.selected_chapter_ids = self._normalize_selected_chapter_ids(
             selected_chapter_ids
         )
+        self.force_redownload_chapter_ids = (
+            self._normalize_force_redownload_chapter_ids(
+                force_redownload_chapter_ids
+            )
+        )
         self.multi_chapter_download_behavior = (
             task_config.multi_chapter_download_behavior
         )
@@ -192,6 +204,7 @@ class DownloadWorker:
         self._pending_manifest: ChapterManifest | None = None
         self._album_dir_name: str | None = None
         self._album_title = f"JM {self.album_id}"
+        self._replacement_backups: list[tuple[Path, Path]] = []
         self.paths.ensure_output_directories()
 
     def _make_option(self):
@@ -201,6 +214,7 @@ class DownloadWorker:
         option.download.threading.photo = (
             2 if self.multi_chapter_download_behavior == "parallel" else 1
         )
+        option.download.image.suffix = f".{self.task_config.image_format}"
         apply_api_route(option, self.task_config.api_route)
         option.client.retry_times = self.REQUEST_RETRIES
         option.client.postman.meta_data.timeout = self.REQUEST_TIMEOUT_SECONDS
@@ -372,9 +386,20 @@ class DownloadWorker:
                 return
 
             self._verify_download_result()
+            self._mark_manifest_downloaded()
+            self._commit_replacements()
 
-            self.on_progress(self.album_id, self.PDF_PCT, "打包 PDF", "")
-            pdf_directory = self._package_chapter_pdfs()
+            artifact_directory = None
+            if self.task_config.package_format == "pdf":
+                self.on_progress(
+                    self.album_id, self.PDF_PCT, "打包 PDF", ""
+                )
+                artifact_directory = self._package_chapter_pdfs()
+            elif self.task_config.package_format == "cbz":
+                self.on_progress(
+                    self.album_id, self.PDF_PCT, "打包 CBZ", ""
+                )
+                artifact_directory = self._package_chapter_cbz()
             if self._stop_flag.is_set():
                 return
             if self._pending_manifest is None:
@@ -382,7 +407,14 @@ class DownloadWorker:
             self._manifest_store.merge_and_save(self._pending_manifest)
             if self._stop_flag.is_set():
                 return
-            self.on_complete(self.album_id, str(pdf_directory))
+            self.on_complete(
+                self.album_id,
+                (
+                    str(artifact_directory)
+                    if artifact_directory is not None
+                    else None
+                ),
+            )
         except (DownloadStopped, PdfPublishAborted):
             return
         except Exception as error:
@@ -396,6 +428,7 @@ class DownloadWorker:
                 self._public_error_message(error),
             )
         finally:
+            self._rollback_replacements()
             try:
                 self.on_stopped(self.album_id)
             except Exception:
@@ -505,13 +538,14 @@ class DownloadWorker:
                     title=title,
                     dir_name=dir_name,
                     page_count=page_count,
+                    image_format=self.task_config.image_format,
                 )
             )
 
         if self._album_dir_name is None:
             raise DownloadIntegrityError("album directory is unavailable")
         self._pending_manifest = ChapterManifest(
-            version=1,
+            version=CHAPTER_MANIFEST_SCHEMA_VERSION,
             album_id=self.album_id,
             album_title=self._album_title,
             album_dir_name=self._album_dir_name,
@@ -519,6 +553,7 @@ class DownloadWorker:
         )
         self._total_photos = total
         self._album_total_known = total > 0
+        self._stage_forced_chapters()
         return filtered
 
     async def _prepare_selected_photos_async(
@@ -587,13 +622,14 @@ class DownloadWorker:
                     title=title,
                     dir_name=dir_name,
                     page_count=page_count,
+                    image_format=self.task_config.image_format,
                 )
             )
 
         if self._album_dir_name is None:
             raise DownloadIntegrityError("album directory is unavailable")
         self._pending_manifest = ChapterManifest(
-            version=1,
+            version=CHAPTER_MANIFEST_SCHEMA_VERSION,
             album_id=self.album_id,
             album_title=self._album_title,
             album_dir_name=self._album_dir_name,
@@ -601,6 +637,7 @@ class DownloadWorker:
         )
         self._total_photos = total
         self._album_total_known = total > 0
+        self._stage_forced_chapters()
         return filtered
 
     @staticmethod
@@ -862,6 +899,145 @@ class DownloadWorker:
                 )
         return pdf_directory
 
+    def _package_chapter_cbz(self) -> Path:
+        manifest = self._pending_manifest
+        if manifest is None or not manifest.chapters:
+            raise ChapterManifestError("没有可用于打包的章节清单")
+        output_directory = self._prepare_pdf_directory(
+            manifest.album_dir_name
+        )
+        image_directory = (
+            self.paths.pictures
+            / self.album_id
+            / manifest.album_dir_name
+        )
+        for chapter in manifest.chapters:
+            if self._stop_flag.is_set():
+                raise DownloadStopped()
+            chapter_directory = (
+                image_directory / chapter.dir_name
+                if chapter.dir_name
+                else image_directory
+            )
+            output_name = (
+                f"{chapter.dir_name}.cbz"
+                if chapter.dir_name
+                else f"{manifest.album_dir_name}.cbz"
+            )
+            output_path = output_directory / output_name
+            try:
+                chapter_to_cbz(
+                    chapter_directory,
+                    output_path,
+                    publish_guard=lambda: not self._stop_flag.is_set(),
+                )
+            except PdfPublishAborted:
+                raise
+            except PdfSourcePathError as error:
+                raise ManagedPathError(
+                    f"chapter {chapter.index} path is unsafe"
+                ) from error
+            except Exception as error:
+                raise PdfPackagingError(
+                    f"CBZ generation failed for chapter {chapter.index}"
+                ) from error
+        return output_directory
+
+    def _stage_forced_chapters(self) -> None:
+        manifest = self._pending_manifest
+        if (
+            manifest is None
+            or not self.force_redownload_chapter_ids
+            or self._replacement_backups
+        ):
+            return
+        forced = set(self.force_redownload_chapter_ids)
+        selected = {chapter.photo_id for chapter in manifest.chapters}
+        if not forced.issubset(selected):
+            raise SelectedChapterUnavailable()
+        album_root = (self.paths.pictures / self.album_id).resolve()
+        image_root = album_root / manifest.album_dir_name
+        staged = []
+        try:
+            for chapter in manifest.chapters:
+                if chapter.photo_id not in forced:
+                    continue
+                original = (
+                    image_root / chapter.dir_name
+                    if chapter.dir_name
+                    else image_root
+                )
+                if not original.exists():
+                    continue
+                if (
+                    not original.is_dir()
+                    or is_linked_directory(original)
+                    or not original.resolve().is_relative_to(album_root)
+                ):
+                    raise ManagedPathError(
+                        "existing chapter path is unsafe"
+                    )
+                backup = album_root / (
+                    f".jm-replace-{chapter.photo_id}-{uuid.uuid4().hex}"
+                )
+                os.replace(original, backup)
+                staged.append((original, backup))
+        except Exception:
+            self._replacement_backups.extend(staged)
+            self._rollback_replacements()
+            raise
+        self._replacement_backups.extend(staged)
+
+    def _commit_replacements(self) -> None:
+        for _original, backup in tuple(self._replacement_backups):
+            if backup.exists():
+                shutil.rmtree(backup)
+        self._replacement_backups.clear()
+
+    def _rollback_replacements(self) -> None:
+        backups = tuple(reversed(self._replacement_backups))
+        self._replacement_backups.clear()
+        for original, backup in backups:
+            if not backup.exists():
+                continue
+            try:
+                if original.exists():
+                    if (
+                        not original.is_dir()
+                        or is_linked_directory(original)
+                    ):
+                        LOGGER.error(
+                            "Unsafe replacement path prevented rollback: %s",
+                            original,
+                        )
+                        continue
+                    shutil.rmtree(original)
+                os.replace(backup, original)
+            except OSError:
+                LOGGER.exception(
+                    "Failed to restore chapter replacement for JM %s",
+                    self.album_id,
+                )
+
+    def _mark_manifest_downloaded(self) -> None:
+        manifest = self._pending_manifest
+        if manifest is None:
+            raise ChapterManifestError("没有可发布的章节清单")
+        completed_at = datetime.now(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        self._pending_manifest = replace(
+            manifest,
+            chapters=tuple(
+                replace(
+                    chapter,
+                    image_format=self.task_config.image_format,
+                    downloaded_at_utc=completed_at,
+                )
+                for chapter in manifest.chapters
+            ),
+        )
+
     def _prepare_pdf_directory(self, album_dir_name: str) -> Path:
         if is_linked_directory(self.paths.pdfs):
             raise ManagedPathError("PDF root directory is a link")
@@ -952,6 +1128,16 @@ class DownloadWorker:
                 f"{MAX_CHAPTERS_PER_TASK} chapters"
             )
         return tuple(result)
+
+    @classmethod
+    def _normalize_force_redownload_chapter_ids(
+        cls,
+        values,
+    ) -> tuple[str, ...]:
+        if values in (None, ()):
+            return ()
+        normalized = cls._normalize_selected_chapter_ids(values)
+        return normalized or ()
 
     @staticmethod
     def _photo_id(photo) -> str | None:
