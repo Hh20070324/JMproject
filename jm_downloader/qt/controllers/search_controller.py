@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ...models import SearchMode, SearchPageSnapshot, SearchRequest
+from ...protected_store import ProtectedStoreError
+from ...search_history import SearchHistoryStore
 from ...search import (
     SearchError,
     SearchNotFound,
@@ -151,6 +153,8 @@ class SearchController(QObject):
     search_failed = Signal(int, str, str, bool)
     validation_failed = Signal(str, str)
     busy_changed = Signal(bool)
+    history_changed = Signal(object)
+    history_failed = Signal(str)
 
     def __init__(
         self,
@@ -158,6 +162,7 @@ class SearchController(QObject):
         parent=None,
         worker_count: int = DEFAULT_WORKER_COUNT,
         result_interval_ms: int = DEFAULT_RESULT_INTERVAL_MS,
+        history_store: SearchHistoryStore | None = None,
     ):
         super().__init__(parent)
         if type(worker_count) is not int or not 1 <= worker_count <= MAX_WORKER_COUNT:
@@ -166,6 +171,10 @@ class SearchController(QObject):
             raise ValueError("result_interval_ms must be a positive integer")
 
         self.service = service if service is not None else SearchService()
+        self.history_store = history_store
+        self._history = (
+            history_store.load() if history_store is not None else ()
+        )
         self._mailbox = _MetadataMailbox(self.service)
         self._workers: tuple[threading.Thread, ...] = ()
         self._generation = 0
@@ -224,6 +233,39 @@ class SearchController(QObject):
     @property
     def pending_request_count(self) -> int:
         return self._mailbox.pending_count()
+
+    def history_entries(self, kind: str | None = None) -> tuple:
+        if kind is None:
+            return self._history
+        return tuple(
+            entry for entry in self._history if entry.kind == kind
+        )
+
+    def remove_history(self, kind: str, text: str) -> bool:
+        if self.history_store is None:
+            return False
+        try:
+            updated = self.history_store.remove(kind, text)
+        except ProtectedStoreError as error:
+            self.history_failed.emit(str(error))
+            return False
+        if updated != self._history:
+            self._history = updated
+            self.history_changed.emit(updated)
+        return True
+
+    def clear_history(self) -> bool:
+        if self.history_store is None:
+            return False
+        try:
+            self.history_store.clear()
+        except ProtectedStoreError as error:
+            self.history_failed.emit(str(error))
+            return False
+        if self._history:
+            self._history = ()
+            self.history_changed.emit(())
+        return True
 
     @Slot(object)
     def submit(
@@ -330,6 +372,8 @@ class SearchController(QObject):
 
             self._current_request = outcome.snapshot.request
             self._current_snapshot = outcome.snapshot
+            if not outcome.job.is_page_change:
+                self._record_history(outcome.snapshot.request)
             signal = (
                 self.results_ready
                 if outcome.snapshot.items
@@ -340,6 +384,24 @@ class SearchController(QObject):
                 outcome.snapshot,
                 outcome.job.is_page_change,
             )
+
+    def _record_history(self, request: SearchRequest) -> None:
+        if self.history_store is None:
+            return
+        kind = (
+            "jm_id"
+            if request.mode is SearchMode.EXACT_ID
+            else "keyword"
+        )
+        try:
+            self._history = self.history_store.record(
+                kind,
+                request.query,
+            )
+        except ProtectedStoreError as error:
+            self.history_failed.emit(str(error))
+            return
+        self.history_changed.emit(self._history)
 
     def _set_busy(self, busy: bool) -> None:
         busy = bool(busy)

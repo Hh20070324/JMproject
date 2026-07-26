@@ -21,6 +21,7 @@ CRYPTPROTECT_UI_FORBIDDEN = 0x1
 
 ACCOUNT_MAX_PLAINTEXT_BYTES = 256 * 1024
 FAVORITES_MAX_PLAINTEXT_BYTES = 32 * 1024 * 1024
+SEARCH_HISTORY_MAX_PLAINTEXT_BYTES = 64 * 1024
 DPAPI_MAX_OVERHEAD_BYTES = 64 * 1024
 
 
@@ -63,6 +64,7 @@ class DataProtectionError(ProtectedStoreError):
 class ProtectedStoreKind(Enum):
     ACCOUNT = "account"
     FAVORITES = "favorites"
+    SEARCH_HISTORY = "search_history"
 
 
 class DataProtector(Protocol):
@@ -213,6 +215,13 @@ _STORE_SPECS = {
         frozenset({1, 2}),
         FAVORITES_MAX_PLAINTEXT_BYTES,
     ),
+    ProtectedStoreKind.SEARCH_HISTORY: _StoreSpec(
+        ProtectedStoreKind.SEARCH_HISTORY,
+        "search_history.dat",
+        1,
+        frozenset({1}),
+        SEARCH_HISTORY_MAX_PLAINTEXT_BYTES,
+    ),
 }
 
 
@@ -252,15 +261,31 @@ class ProtectedStore:
     ) -> "ProtectedStore":
         return cls(ProtectedStoreKind.FAVORITES, paths, protector)
 
+    @classmethod
+    def search_history(
+        cls,
+        paths: AppPaths = DEFAULT_PATHS,
+        protector: DataProtector | None = None,
+    ) -> "ProtectedStore":
+        return cls(
+            ProtectedStoreKind.SEARCH_HISTORY,
+            paths,
+            protector,
+        )
+
     @property
     def kind(self) -> ProtectedStoreKind:
         return self.spec.kind
 
     @property
     def path(self) -> Path:
-        if self.kind is ProtectedStoreKind.ACCOUNT:
-            return self.paths.account_file
-        return self.paths.favorites_file
+        return {
+            ProtectedStoreKind.ACCOUNT: self.paths.account_file,
+            ProtectedStoreKind.FAVORITES: self.paths.favorites_file,
+            ProtectedStoreKind.SEARCH_HISTORY: (
+                self.paths.search_history_file
+            ),
+        }[self.kind]
 
     @property
     def max_plaintext_bytes(self) -> int:
@@ -598,6 +623,7 @@ __all__ = [
     "CurrentUserDpapi",
     "DataProtectionError",
     "FAVORITES_MAX_PLAINTEXT_BYTES",
+    "SEARCH_HISTORY_MAX_PLAINTEXT_BYTES",
     "ProtectedStore",
     "ProtectedStoreDeleteError",
     "ProtectedStoreError",

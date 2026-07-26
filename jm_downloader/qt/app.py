@@ -19,7 +19,9 @@ from ..favorites import FavoritesService
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
 from ..option_config import ApiRouteState
+from ..protected_store import ProtectedStore
 from ..search import SearchService
+from ..search_history import SearchHistoryStore
 from ..settings import AppPaths, AppSettings, DEFAULT_PATHS, SettingsError
 from ..task_store import TaskStore, TaskStoreError
 from ..tasks import TaskManager
@@ -232,7 +234,12 @@ def run_qt_app(
             paths=paths,
             api_route_provider=api_route_state.get,
         )
-        search_controller = SearchController(search_service)
+        search_controller = SearchController(
+            search_service,
+            history_store=SearchHistoryStore(
+                ProtectedStore.search_history(paths)
+            ),
+        )
         chapter_catalog_controller = ChapterCatalogController(
             search_service,
             downloaded_detector=library.completed_chapter_ids,

@@ -36,10 +36,12 @@ class SettingsPage(SectionPage):
         theme_manager: ThemeManager | None = None,
         parent=None,
         settings_controller: SettingsController | None = None,
+        search_controller=None,
     ):
         super().__init__("设置", "settingsPage", parent)
         self._theme_manager = theme_manager
         self._controller = settings_controller
+        self._search_controller = search_controller
         self._loading = False
 
         self.settings_scroll = QScrollArea(self.content)
@@ -378,6 +380,47 @@ class SettingsPage(SectionPage):
         size_layout.addStretch(1)
         self._add_row(section, "窗口尺寸", size_control)
 
+        history_control = QWidget(section)
+        history_layout = QHBoxLayout(history_control)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        history_layout.setSpacing(8)
+        self.clear_search_history_button = QPushButton(
+            "清除搜索历史",
+            history_control,
+        )
+        self.clear_search_history_button.setObjectName(
+            "clearSearchHistoryButton"
+        )
+        self.clear_search_history_button.setIcon(svg_icon("trash"))
+        self.clear_search_history_button.setFixedSize(132, 36)
+        self.clear_search_history_button.clicked.connect(
+            self._clear_search_history
+        )
+        history_layout.addWidget(self.clear_search_history_button)
+        self.search_history_status = QLabel(history_control)
+        self.search_history_status.setObjectName(
+            "searchHistoryStatus"
+        )
+        history_layout.addWidget(self.search_history_status)
+        history_layout.addStretch(1)
+        self._add_row(section, "搜索历史", history_control)
+        if (
+            self._search_controller is not None
+            and hasattr(self._search_controller, "history_entries")
+        ):
+            self._search_controller.history_changed.connect(
+                self._update_search_history_status
+            )
+            self._search_controller.history_failed.connect(
+                self._on_search_history_failed
+            )
+            self._update_search_history_status(
+                self._search_controller.history_entries()
+            )
+        else:
+            self.clear_search_history_button.setEnabled(False)
+            self.search_history_status.setText("不可用")
+
     def _create_theme_section(self, layout: QVBoxLayout) -> None:
         section = self._create_section(layout, "主题模式")
 
@@ -601,6 +644,34 @@ class SettingsPage(SectionPage):
         if not selected:
             return
         editor.setText(self._portable_directory(Path(selected)))
+
+    def _clear_search_history(self) -> None:
+        if self._search_controller is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "清除搜索历史",
+            "确定删除全部搜索历史吗？此操作无法撤销。",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self._search_controller.clear_history():
+            self.search_history_status.setText("已清除")
+
+    def _update_search_history_status(self, entries) -> None:
+        count = len(tuple(entries))
+        self.clear_search_history_button.setEnabled(count > 0)
+        self.search_history_status.setText(
+            f"已保存 {count} 条" if count else "暂无记录"
+        )
+
+    def _on_search_history_failed(self, message: str) -> None:
+        self.search_history_status.setText(
+            message or "搜索历史操作失败"
+        )
 
     def _connect_dirty_signals(self) -> None:
         self.pictures_directory_input.textChanged.connect(self._mark_dirty)

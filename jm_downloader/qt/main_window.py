@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
                 theme_manager,
                 self,
                 settings_controller=settings_controller,
+                search_controller=search_controller,
             ),
         }
 

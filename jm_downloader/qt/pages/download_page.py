@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -32,6 +32,7 @@ from ..chapter_download_flow import ChapterDownloadFlow
 from ..icons import arrow_icon, search_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
 from ..widgets.search_result_card import SearchResultCard
+from ..widgets.search_history_menu import SearchHistoryMenu
 from ..widgets.favorite_folder_dialogs import FavoriteTargetDialog
 from ..widgets.task_row import DownloadTaskRow
 from ..widgets.thumbnail_loader import ThumbnailLoader
@@ -112,6 +113,7 @@ class DownloadPage(SectionPage):
             self._cover_loader.cover_failed.connect(self._on_cover_failed)
 
         self._create_search_bar()
+        self._create_search_history_menus()
         self._create_search_mode_row()
 
         self.view_tabs = QTabBar(self.content)
@@ -501,6 +503,21 @@ class DownloadPage(SectionPage):
         controller.search_failed.connect(self._on_search_failed)
         controller.validation_failed.connect(self._on_search_validation_failed)
         controller.busy_changed.connect(self._on_search_busy_changed)
+        if hasattr(controller, "history_changed"):
+            controller.history_changed.connect(self._on_history_changed)
+        if hasattr(controller, "history_failed"):
+            controller.history_failed.connect(self._on_history_failed)
+
+    def _create_search_history_menus(self) -> None:
+        self.keyword_history_menu = SearchHistoryMenu(self)
+        self.jm_history_menu = SearchHistoryMenu(self)
+        for editor, menu in (
+            (self.general_search_input, self.keyword_history_menu),
+            (self.jm_id_search_input, self.jm_history_menu),
+        ):
+            editor.installEventFilter(self)
+            menu.entry_selected.connect(self._use_history_entry)
+            menu.delete_requested.connect(self._delete_history_entry)
 
     def _connect_favorites_controller(self) -> None:
         controller = self._favorites_controller
@@ -559,7 +576,72 @@ class DownloadPage(SectionPage):
             and event.type() == QEvent.Type.Resize
         ):
             QTimer.singleShot(0, self._reflow_cards)
+        if watched in (
+            self.general_search_input,
+            self.jm_id_search_input,
+        ) and event.type() in (
+            QEvent.Type.FocusIn,
+            QEvent.Type.MouseButtonPress,
+        ):
+            QTimer.singleShot(
+                0,
+                lambda editor=watched: self._show_history(editor),
+            )
         return super().eventFilter(watched, event)
+
+    def _show_history(self, editor: QLineEdit) -> None:
+        if self._disposed or self._search_controller is None:
+            return
+        if editor is self.jm_id_search_input:
+            kind = "jm_id"
+            menu = self.jm_history_menu
+        else:
+            kind = "keyword"
+            menu = self.keyword_history_menu
+        history_entries = getattr(
+            self._search_controller,
+            "history_entries",
+            None,
+        )
+        if history_entries is None:
+            return
+        entries = history_entries(kind)
+        menu.set_entries(entries)
+        if not entries:
+            return
+        menu.setMinimumWidth(editor.width())
+        menu.popup(editor.mapToGlobal(QPoint(0, editor.height())))
+
+    def _use_history_entry(self, entry) -> None:
+        if entry.kind == "jm_id":
+            self.jm_id_search_input.setText(entry.text)
+            self._submit_exact_search()
+        else:
+            self.general_search_input.setText(entry.text)
+            self._submit_general_search()
+
+    def _delete_history_entry(self, entry) -> None:
+        if self._search_controller is None:
+            return
+        remove_history = getattr(
+            self._search_controller,
+            "remove_history",
+            None,
+        )
+        if remove_history is not None:
+            remove_history(entry.kind, entry.text)
+
+    def _on_history_changed(self, _entries) -> None:
+        if self.keyword_history_menu.isVisible():
+            self._show_history(self.general_search_input)
+        if self.jm_history_menu.isVisible():
+            self._show_history(self.jm_id_search_input)
+
+    def _on_history_failed(self, message: str) -> None:
+        self._set_summary_error(True)
+        self.results_summary.setText(
+            message or "搜索历史暂时无法保存"
+        )
 
     def _select_search_mode(self, mode: SearchMode) -> None:
         self._search_mode = mode
