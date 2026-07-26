@@ -66,6 +66,7 @@ class UnsupportedChapterManifestVersion(ChapterManifestError):
 
 CHAPTER_MANIFEST_FILENAME = ".jm-chapters.json"
 CHAPTER_MANIFEST_SCHEMA_VERSION = 3
+_MANAGED_PATH_LIMIT = 240
 _WINDOWS_RESERVED_NAMES = {
     "CON",
     "PRN",
@@ -1363,13 +1364,35 @@ class LibraryService:
             ):
                 raise LibraryError("旧版目录已发生变化，请重新识别")
 
-    @staticmethod
-    def _migration_album_dir_name(title: str, album_id: str) -> str:
-        value = fix_windir_name(title).strip(" .")[:100].strip(" .")
+    def _migration_album_dir_name(self, title: str, album_id: str) -> str:
+        pictures_root = str(self.paths.pictures.resolve())
+        package_root = str(self.paths.pdfs.resolve())
+        image_overhead = (
+            len(pictures_root)
+            + 1
+            + len(album_id)
+            + len("\\第999999章\\00000.jpg")
+        )
+        single_package_overhead = (
+            len(package_root)
+            + 1
+            + len(album_id)
+            + len("\\\\.pdf")
+        )
+        budget = min(
+            100,
+            _MANAGED_PATH_LIMIT - image_overhead,
+            (_MANAGED_PATH_LIMIT - single_package_overhead) // 2,
+        )
+        if budget < 1:
+            raise LibraryError("当前存储路径过长，无法安全迁移旧版章节")
+        value = fix_windir_name(title).strip(" .")[:budget].strip(" .")
         if not value:
-            value = album_id
+            value = album_id[:budget].strip(" .")
+        if not value:
+            raise LibraryError("无法生成安全的漫画目录名")
         if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
-            value = f"_{value}"[:100].strip(" .")
+            value = f"_{value}"[:budget].strip(" .")
         ChapterManifestStore._validate_component(value)
         return value
 

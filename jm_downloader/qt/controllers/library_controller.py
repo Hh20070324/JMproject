@@ -92,14 +92,6 @@ class LibraryController(QObject):
     command_failed = Signal(str, str, str)
     batch_delete_finished = Signal(str, object, object)
 
-    MUTATION_COMMANDS = {
-        "delete_images",
-        "delete_pdf",
-        "delete_all",
-        "delete_chapter_images",
-        "delete_chapter_package",
-        "delete_chapter_all",
-    }
     ACTIVE_STATUSES = {
         TaskStatus.PENDING,
         TaskStatus.FETCHING,

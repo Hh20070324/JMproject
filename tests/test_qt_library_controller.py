@@ -371,6 +371,27 @@ class LibraryControllerTests(unittest.TestCase):
         self.assertIsNot(self.library.calls[0][2], threading.main_thread())
         self.assertFalse(self.manager.is_library_operation_active("1"))
 
+    def test_rejected_chapter_request_reports_its_generation_asynchronously(self):
+        self.manager.add("1")
+        failures = []
+        self.controller.request_failed.connect(
+            lambda *values: failures.append(values)
+        )
+
+        request_id = self.controller.check_chapters("1")
+        self.assertEqual(failures, [])
+        self.assertTrue(self._wait_until(lambda: bool(failures)))
+
+        self.assertEqual(
+            failures[0][:3],
+            (request_id, "check_chapters", "1"),
+        )
+        self.assertIn("暂不可修改", failures[0][3])
+        self.assertEqual(
+            [call for call in self.library.calls if call[0] == "check_chapters"],
+            [],
+        )
+
     def test_repair_adds_download_tasks_only_after_reservation_is_released(self):
         completed = []
         self.controller.request_completed.connect(
