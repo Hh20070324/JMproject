@@ -3,12 +3,13 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .downloader import DownloadWorker
 from .library import ChapterManifestError, ChapterManifestStore
 from .models import (
+    ChapterRepairBatch,
     MAX_CHAPTERS_PER_TASK,
     TaskConfig,
     TaskSnapshot,
@@ -227,6 +228,7 @@ class TaskManager:
         *,
         selected_chapter_ids,
         force_redownload_chapter_ids=(),
+        task_config: TaskConfig | None = None,
     ) -> tuple[TaskSnapshot, ...]:
         album_id = normalize_album_id(album_id)
         if selected_chapter_ids is None:
@@ -281,6 +283,8 @@ class TaskManager:
                 )
             )
 
+        if task_config is not None:
+            task_config.validate()
         with self._lock:
             if self._stopping:
                 raise InvalidTaskState("任务管理器正在关闭")
@@ -312,6 +316,104 @@ class TaskManager:
                     album_id,
                     selection,
                     task_forced,
+                    task_config=task_config,
+                )
+                self._tasks.append(task)
+                tasks.append(task)
+            created = tuple(
+                self._snapshot_locked(task) for task in tasks
+            )
+
+        self._queue_persist()
+        for task in tasks:
+            self.broadcast(
+                {
+                    "type": "added",
+                    "id": task["id"],
+                    "album_id": album_id,
+                }
+            )
+        self.schedule()
+        return created
+
+    def add_repair_batches(
+        self,
+        album_id: str,
+        batches,
+        *,
+        base_config: TaskConfig,
+    ) -> tuple[TaskSnapshot, ...]:
+        """Atomically add grouped force-redownload tasks from a repair plan."""
+
+        album_id = normalize_album_id(album_id)
+        base_config.validate()
+        requests = []
+        seen = set()
+        for batch in batches:
+            if not isinstance(batch, ChapterRepairBatch):
+                raise TaskBatchValidationError(
+                    (TaskBatchIssue("invalid", "修复任务分组无效"),)
+                )
+            if batch.package_format not in {"pdf", "cbz", "images"}:
+                raise TaskBatchValidationError(
+                    (TaskBatchIssue("invalid", "修复任务格式无效"),)
+                )
+            try:
+                selected = normalize_batch_chapter_ids(batch.photo_ids)
+            except InvalidChapterSelection as error:
+                raise TaskBatchValidationError(
+                    (TaskBatchIssue("invalid", str(error)),)
+                ) from error
+            duplicates = tuple(value for value in selected if value in seen)
+            if duplicates:
+                raise TaskBatchValidationError(
+                    (
+                        TaskBatchIssue(
+                            "overlap",
+                            "修复章节不能出现在多个格式分组中",
+                            duplicates,
+                        ),
+                    )
+                )
+            seen.update(selected)
+            config = replace(
+                base_config,
+                package_format=batch.package_format,
+            )
+            config.validate()
+            for offset in range(0, len(selected), MAX_CHAPTERS_PER_TASK):
+                selection = selected[offset : offset + MAX_CHAPTERS_PER_TASK]
+                requests.append((selection, config))
+        if not requests:
+            return ()
+
+        with self._lock:
+            if self._stopping:
+                raise InvalidTaskState("任务管理器正在关闭")
+            if (
+                album_id in self._library_operations
+                or album_id in self._deleting_albums
+            ):
+                raise TaskConflict("该漫画正在进行本地库操作")
+            existing_scopes = tuple(
+                task.get("selected_chapter_ids")
+                for task in self._tasks
+                if (
+                    task["album_id"] == album_id
+                    and task["status"] != TaskStatus.COMPLETED.value
+                )
+            )
+            selections = tuple(selection for selection, _config in requests)
+            issues = self._overlap_issues(selections, existing_scopes)
+            if issues:
+                raise TaskBatchValidationError(issues)
+            tasks = []
+            for selection, config in requests:
+                task = self._new_task_locked(
+                    album_id,
+                    selection,
+                    selection,
+                    task_config=config,
                 )
                 self._tasks.append(task)
                 tasks.append(task)
@@ -336,6 +438,8 @@ class TaskManager:
         album_id: str,
         selected_chapter_ids: tuple[str, ...] | None,
         force_redownload_chapter_ids: tuple[str, ...],
+        *,
+        task_config: TaskConfig | None = None,
     ) -> dict:
         return {
             "id": str(uuid.uuid4())[:8],
@@ -359,7 +463,7 @@ class TaskManager:
             "force_redownload_chapter_ids": (
                 force_redownload_chapter_ids
             ),
-            "config": self._new_task_config,
+            "config": task_config or self._new_task_config,
         }
 
     @staticmethod

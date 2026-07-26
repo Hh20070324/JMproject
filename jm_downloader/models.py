@@ -187,6 +187,22 @@ class ChapterDeleteResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ChapterRepairBatch:
+    package_format: str
+    photo_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterRepairPlan:
+    album_id: str
+    rebuild_photo_ids: tuple[str, ...]
+    download_batches: tuple[ChapterRepairBatch, ...]
+    unchanged_photo_ids: tuple[str, ...]
+    failures: tuple[ChapterOperationFailure, ...]
+    resolved_formats: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterManifest:
     version: int
     album_id: str

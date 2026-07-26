@@ -19,6 +19,8 @@ from .models import (
     ChapterManifestEntry,
     ChapterOperationFailure,
     ChapterPackageStatus,
+    ChapterRepairBatch,
+    ChapterRepairPlan,
     ChapterRebuildOutcome,
     ChapterRebuildResult,
     LibraryChapterSnapshot,
@@ -1016,6 +1018,107 @@ class LibraryService:
                 album_id=album_id,
                 succeeded=tuple(succeeded),
                 failures=tuple(failures),
+            )
+
+    def plan_chapter_repairs(
+        self,
+        album_id: str,
+        photo_ids,
+        *,
+        confirmed_formats: Mapping[str, str] | None = None,
+    ) -> ChapterRepairPlan:
+        """Build an offline, side-effect-free repair plan for selected chapters."""
+
+        with self._lock:
+            self._require_album_id(album_id)
+            selected_ids = self._normalize_photo_ids(photo_ids)
+            if not selected_ids:
+                raise LibraryError("请先选择要修复的章节")
+            choices = {
+                str(photo_id): str(package_format)
+                for photo_id, package_format in dict(
+                    confirmed_formats or {}
+                ).items()
+            }
+            snapshots = {
+                snapshot.photo_id: snapshot
+                for snapshot in self.check_chapters(album_id)
+            }
+            rebuild = []
+            unchanged = []
+            failures = []
+            resolved_formats = []
+            grouped = {"pdf": [], "cbz": [], "images": []}
+            for photo_id in selected_ids:
+                snapshot = snapshots.get(photo_id)
+                if snapshot is None:
+                    failures.append(
+                        ChapterOperationFailure(
+                            photo_id=photo_id,
+                            title="",
+                            message="章节已不在当前清单中",
+                        )
+                    )
+                    continue
+                if "check_error" in snapshot.problem_codes:
+                    failures.append(
+                        ChapterOperationFailure(
+                            photo_id=photo_id,
+                            title=snapshot.title,
+                            message="章节本地路径无法安全检查",
+                        )
+                    )
+                    continue
+                package_format = snapshot.package_format
+                if package_format is None:
+                    package_format = (
+                        snapshot.suggested_package_format
+                        or choices.get(photo_id)
+                    )
+                    if package_format not in {"pdf", "cbz", "images"}:
+                        failures.append(
+                            ChapterOperationFailure(
+                                photo_id=photo_id,
+                                title=snapshot.title,
+                                message=(
+                                    "章节原打包格式未知，请先确认 "
+                                    "PDF、CBZ 或仅图片"
+                                ),
+                            )
+                        )
+                        continue
+                    resolved_formats.append((photo_id, package_format))
+
+                if snapshot.image_status is ChapterImageStatus.COMPLETE:
+                    if snapshot.package_format is None:
+                        # Even an images-only choice must be persisted after
+                        # explicit confirmation.
+                        rebuild.append(photo_id)
+                    elif snapshot.package_status in {
+                        ChapterPackageStatus.MISSING,
+                        ChapterPackageStatus.DAMAGED,
+                    }:
+                        rebuild.append(photo_id)
+                    else:
+                        unchanged.append(photo_id)
+                    continue
+                grouped[package_format].append(photo_id)
+
+            batches = tuple(
+                ChapterRepairBatch(
+                    package_format=package_format,
+                    photo_ids=tuple(grouped[package_format]),
+                )
+                for package_format in ("pdf", "cbz", "images")
+                if grouped[package_format]
+            )
+            return ChapterRepairPlan(
+                album_id=album_id,
+                rebuild_photo_ids=tuple(rebuild),
+                download_batches=batches,
+                unchanged_photo_ids=tuple(unchanged),
+                failures=tuple(failures),
+                resolved_formats=tuple(resolved_formats),
             )
 
     def _rebuild_chapter(
