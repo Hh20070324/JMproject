@@ -56,7 +56,7 @@ def chapter_to_cbz(
         with zipfile.ZipFile(
             temporary,
             "w",
-            compression=zipfile.ZIP_DEFLATED,
+            compression=zipfile.ZIP_STORED,
         ) as archive:
             for image in images:
                 archive.write(image, arcname=image.name)

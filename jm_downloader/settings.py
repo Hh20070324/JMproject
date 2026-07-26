@@ -108,7 +108,7 @@ class AppSettings:
 
         for label, value in (
             ("图片目录", self.pictures_directory),
-            ("PDF 目录", self.pdf_directory),
+            ("打包产物目录", self.pdf_directory),
         ):
             validate_portable_directory(label, value)
 

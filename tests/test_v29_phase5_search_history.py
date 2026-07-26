@@ -9,7 +9,9 @@ from unittest.mock import patch
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, QTimer, Qt
+from PySide6.QtCore import QEvent, QEventLoop, QTimer, Qt
+from PySide6.QtGui import QFocusEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from jm_downloader.models import (
@@ -232,6 +234,54 @@ class SearchHistoryControllerTests(unittest.TestCase):
                 page.keyword_history_menu.entries[0]
             )
             self.assertEqual(controller.history_entries(), ())
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_input_click_schedules_history_popup_only_once(self):
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            page.general_search_button.setFocus()
+            self.app.processEvents()
+            with patch.object(page, "_show_history") as show_history:
+                QTest.mouseClick(
+                    page.general_search_input,
+                    Qt.MouseButton.LeftButton,
+                )
+                self.process_for(20)
+
+            show_history.assert_called_once_with(
+                page.general_search_input
+            )
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_popup_focus_return_does_not_reopen_history(self):
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            popup_focus = QFocusEvent(
+                QEvent.Type.FocusIn,
+                Qt.FocusReason.PopupFocusReason,
+            )
+            with patch.object(page, "_show_history") as show_history:
+                self.app.sendEvent(
+                    page.general_search_input,
+                    popup_focus,
+                )
+                self.process_for(20)
+
+            show_history.assert_not_called()
         finally:
             page.dispose()
             page.close()

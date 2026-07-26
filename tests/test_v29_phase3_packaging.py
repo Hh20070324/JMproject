@@ -39,6 +39,12 @@ class V29PackagingTests(unittest.TestCase):
             self.assertEqual(result, output)
             with zipfile.ZipFile(output) as archive:
                 self.assertEqual(archive.namelist(), ["2.jpg", "10.jpg"])
+                self.assertTrue(
+                    all(
+                        entry.compress_type == zipfile.ZIP_STORED
+                        for entry in archive.infolist()
+                    )
+                )
             self.assertEqual(list(output.parent.glob("*.tmp")), [])
 
     def test_worker_option_uses_task_bound_image_suffix(self):

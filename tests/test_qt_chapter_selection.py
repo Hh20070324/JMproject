@@ -455,7 +455,11 @@ class SearchResultCardChapterStateTests(unittest.TestCase):
         single = make_catalog(ChapterSnapshot("photo-only", 1, "单话"))
         self.card.set_chapter_state(single)
         self.app.processEvents()
-        self.assertEqual(self.card.action_button.text(), "下载整本")
+        self.assertEqual(self.card.action_button.text(), "确认下载")
+        self.assertEqual(
+            self.card.action_button.toolTip(),
+            "确认章节后加入下载任务",
+        )
         self.assertTrue(self.card.action_button.isEnabled())
         self.assertEqual(self.card.size(), card_size)
         self.assertEqual(self.card.action_button.geometry(), button_geometry)

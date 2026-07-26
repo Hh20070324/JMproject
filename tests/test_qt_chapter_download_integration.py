@@ -1,7 +1,7 @@
 import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 if os.name != "nt":
@@ -188,10 +188,11 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
         self.app.processEvents()
         return page
 
-    def test_search_card_loads_catalog_and_single_chapter_queues_directly(self):
+    def test_single_chapter_requires_confirmation_before_queueing(self):
         page = self.make_download_page()
         AcceptedSelectionDialog.selected_ids = ("1231",)
-        page._chapter_flow.dialog_factory = AcceptedSelectionDialog
+        dialog_factory = Mock(side_effect=AcceptedSelectionDialog)
+        page._chapter_flow.dialog_factory = dialog_factory
         request = SearchRequest(SearchMode.GENERAL, "title")
         page._search_generation = 1
         page._on_search_results(
@@ -215,6 +216,7 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
         self.chapter_controller.resolve(1, value)
         self.app.processEvents()
 
+        dialog_factory.assert_called_once_with(value, page)
         self.assertEqual(
             self.download_controller.added,
             [("123", (value.chapters[0].photo_id,))],

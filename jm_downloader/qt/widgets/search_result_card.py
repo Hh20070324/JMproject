@@ -279,8 +279,8 @@ class SearchResultCard(QFrame):
                 else 0
             )
             if chapter_count == 1:
-                text = "下载整本"
-                tooltip = "将此漫画加入下载任务"
+                text = "确认下载"
+                tooltip = "确认章节后加入下载任务"
             elif chapter_count > 1:
                 text = "章节选择"
                 tooltip = "选择要下载的章节"

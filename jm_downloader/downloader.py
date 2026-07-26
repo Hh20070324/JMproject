@@ -1201,8 +1201,7 @@ class DownloadWorker:
         except (OSError, ValueError, UnidentifiedImageError):
             return False
 
-    @staticmethod
-    def _public_error_message(error: Exception) -> str:
+    def _public_error_message(self, error: Exception) -> str:
         if isinstance(error, LegacyChapterSelectionRequired):
             return "旧任务未保存章节选择，请移除任务后重新选择"
         if isinstance(error, SelectedChapterUnavailable):
@@ -1219,10 +1218,15 @@ class DownloadWorker:
             return "PDF 生成失败，图片已保留，可稍后继续"
         if isinstance(error, PermissionError):
             return "无法写入下载目录，请检查权限和磁盘空间"
+        if isinstance(error, (ConnectionError, TimeoutError)):
+            if self.task_config.api_route != "auto":
+                return (
+                    "网络暂时不可用；固定 API 路线可能已失效，"
+                    "请在设置中切回“自动选择”后重试"
+                )
+            return "网络暂时不可用，请检查连接后继续"
         if isinstance(error, OSError):
             return "本地文件操作失败，请检查磁盘和下载目录"
-        if isinstance(error, (ConnectionError, TimeoutError)):
-            return "网络暂时不可用，请检查连接后继续"
         return "下载失败，请检查网络或稍后继续"
 
     def start(self):

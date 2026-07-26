@@ -116,10 +116,10 @@ class SettingsPage(SectionPage):
         pdf_control = self._path_control(
             section,
             self.pdf_directory_input,
-            "选择 PDF 目录",
+            "选择打包产物目录",
             lambda: self._choose_directory(self.pdf_directory_input),
         )
-        self._add_row(section, "PDF 文件", pdf_control)
+        self._add_row(section, "打包产物目录", pdf_control)
 
     def _create_download_section(self, layout: QVBoxLayout) -> None:
         section = self._create_section(layout, "下载性能")

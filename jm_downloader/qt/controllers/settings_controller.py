@@ -107,7 +107,10 @@ class SettingsController(QObject):
                     return
             self.route_test_failed.emit(
                 route,
-                "路线不可用，请切换其他路线或使用自动选择",
+                (
+                    "路线不可用。若固定路线失灵，请在 API 路线中"
+                    "切回“自动选择”，或选择其他路线后重试"
+                ),
             )
             return
         with self._route_test_lock:

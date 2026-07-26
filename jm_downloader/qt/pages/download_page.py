@@ -75,6 +75,7 @@ class DownloadPage(SectionPage):
         self._search_generation = 0
         self._search_snapshot: SearchPageSnapshot | None = None
         self._search_busy = False
+        self._history_popup_editor: QLineEdit | None = None
         self._disposed = False
         self._task_rows = {}
         self._tasks_by_album = set()
@@ -579,15 +580,44 @@ class DownloadPage(SectionPage):
         if watched in (
             self.general_search_input,
             self.jm_id_search_input,
-        ) and event.type() in (
-            QEvent.Type.FocusIn,
-            QEvent.Type.MouseButtonPress,
         ):
-            QTimer.singleShot(
-                0,
-                lambda editor=watched: self._show_history(editor),
+            event_type = event.type()
+            focus_returned_from_popup = (
+                event_type == QEvent.Type.FocusIn
+                and event.reason() == Qt.FocusReason.PopupFocusReason
             )
+            if (
+                event_type
+                in (
+                    QEvent.Type.FocusIn,
+                    QEvent.Type.MouseButtonPress,
+                )
+                and not focus_returned_from_popup
+            ):
+                self._schedule_history_popup(watched)
         return super().eventFilter(watched, event)
+
+    def _schedule_history_popup(self, editor: QLineEdit) -> None:
+        if self._history_popup_editor is editor:
+            return
+        self._history_popup_editor = editor
+        QTimer.singleShot(
+            0,
+            lambda editor=editor: self._show_scheduled_history(editor),
+        )
+
+    def _show_scheduled_history(self, editor: QLineEdit) -> None:
+        if self._history_popup_editor is not editor:
+            return
+        self._history_popup_editor = None
+        menu = (
+            self.jm_history_menu
+            if editor is self.jm_id_search_input
+            else self.keyword_history_menu
+        )
+        if menu.isVisible():
+            return
+        self._show_history(editor)
 
     def _show_history(self, editor: QLineEdit) -> None:
         if self._disposed or self._search_controller is None:

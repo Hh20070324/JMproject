@@ -97,7 +97,7 @@ def ensure_runtime_directories_writable(paths: AppPaths) -> None:
 
 def ensure_output_directories_writable(paths: AppPaths) -> None:
     _probe_writable_directory(paths.pictures, "图片目录")
-    _probe_writable_directory(paths.pdfs, "PDF 目录")
+    _probe_writable_directory(paths.pdfs, "打包产物目录")
 
 
 def validate_settings_output_directories(

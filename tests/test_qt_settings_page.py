@@ -110,6 +110,19 @@ class SettingsPageTests(unittest.TestCase):
             self.page.startup_page_combo.itemText(downloads_index),
             "搜索与下载",
         )
+        labels = {
+            label.text()
+            for label in self.page.findChildren(QLabel)
+            if label.objectName() == "settingsLabel"
+        }
+        self.assertIn("打包产物目录", labels)
+        self.assertNotIn("PDF 文件", labels)
+        browse_tooltips = {
+            button.toolTip()
+            for button in self.page.findChildren(QToolButton)
+            if button.objectName() == "settingsBrowseButton"
+        }
+        self.assertIn("选择打包产物目录", browse_tooltips)
 
     def test_multi_chapter_behavior_uses_exclusive_instant_popup_menu(self):
         button = self.page.multi_chapter_behavior_button
