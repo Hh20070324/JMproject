@@ -4,6 +4,18 @@ from pathlib import Path
 
 
 MAX_CHAPTERS_PER_TASK = 10
+DOWNLOAD_ENGINES = frozenset({"async", "sync"})
+API_ROUTES = frozenset(
+    {
+        "auto",
+        "www.cdnplaystation6.cc",
+        "www.cdnaspa.club",
+        "www.cdnplaystation6.vip",
+        "www.cdnaspa.vip",
+    }
+)
+PACKAGE_FORMATS = frozenset({"pdf", "cbz", "images"})
+IMAGE_FORMATS = frozenset({"jpg", "png"})
 
 
 class TaskStatus(str, Enum):
@@ -38,6 +50,33 @@ class LibraryLayout(str, Enum):
     MANAGED = "managed"
     LEGACY = "legacy"
     UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskConfig:
+    download_engine: str = "async"
+    api_route: str = "auto"
+    package_format: str = "pdf"
+    image_format: str = "jpg"
+    image_concurrency: int = 16
+    multi_chapter_download_behavior: str = "parallel"
+
+    def validate(self) -> None:
+        if self.download_engine not in DOWNLOAD_ENGINES:
+            raise ValueError("下载引擎无效")
+        if self.api_route not in API_ROUTES:
+            raise ValueError("API 路线无效")
+        if self.package_format not in PACKAGE_FORMATS:
+            raise ValueError("打包格式无效")
+        if self.image_format not in IMAGE_FORMATS:
+            raise ValueError("图片格式无效")
+        if (
+            type(self.image_concurrency) is not int
+            or not 1 <= self.image_concurrency <= 64
+        ):
+            raise ValueError("图片并发数必须在 1 到 64 之间")
+        if self.multi_chapter_download_behavior not in {"parallel", "queued"}:
+            raise ValueError("多章漫画下载行为无效")
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +202,7 @@ class TaskSnapshot:
     error: str | None
     cover_url: str | None
     selected_chapter_ids: tuple[str, ...] | None = None
+    config: TaskConfig = TaskConfig()
 
 
 @dataclass(frozen=True, slots=True)

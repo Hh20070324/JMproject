@@ -97,10 +97,10 @@ class TaskStoreTests(unittest.TestCase):
         self.assertIsNotNone(backup)
         self.assertEqual(backup.read_bytes(), raw)
         restored = json.loads(self.paths.tasks_file.read_text(encoding="utf-8"))
-        self.assertEqual(restored, {"schema_version": 2, "tasks": []})
+        self.assertEqual(restored, {"schema_version": 3, "tasks": []})
 
     def test_future_schema_is_refused_without_rewrite_or_backup(self):
-        raw = b'{"schema_version": 3, "tasks": []}'
+        raw = b'{"schema_version": 4, "tasks": []}'
         self.paths.tasks_file.write_bytes(raw)
 
         with self.assertRaises(UnsupportedTaskStoreVersion):
@@ -152,7 +152,7 @@ class TaskStoreTests(unittest.TestCase):
         restored = json.loads(
             self.paths.tasks_file.read_text(encoding="utf-8")
         )
-        self.assertEqual(restored, {"schema_version": 2, "tasks": []})
+        self.assertEqual(restored, {"schema_version": 3, "tasks": []})
 
     def test_failed_atomic_replace_preserves_previous_file(self):
         original = self._task()

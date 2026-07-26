@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import jmcomic
 from PIL import Image, UnidentifiedImageError
+from common import suffix_not_equal
 
 from .jmcomic_client import serialized_client_construction
 from .jmcomic_logging import install_safe_jmcomic_logging
@@ -21,6 +23,7 @@ from .models import (
     MAX_CHAPTERS_PER_TASK,
     ChapterManifest,
     ChapterManifestEntry,
+    TaskConfig,
 )
 from .pdf import (
     IMAGE_EXTENSIONS,
@@ -138,6 +141,7 @@ class DownloadWorker:
         image_concurrency: int = 16,
         selected_chapter_ids: tuple[str, ...] | None = None,
         multi_chapter_download_behavior: str = "parallel",
+        task_config: TaskConfig | None = None,
     ):
         self.album_id = str(album_id)
         self.on_progress = on_progress or (lambda *args: None)
@@ -147,15 +151,31 @@ class DownloadWorker:
         self.on_preview = on_preview or (lambda *args: None)
         self.on_stopped = on_stopped or (lambda *args: None)
         self.paths = paths
-        self.image_concurrency = max(1, int(image_concurrency))
+        if task_config is None:
+            if multi_chapter_download_behavior not in {
+                "parallel",
+                "queued",
+            }:
+                raise ValueError(
+                    "multi_chapter_download_behavior must be parallel or queued"
+                )
+            task_config = TaskConfig(
+                download_engine="sync",
+                image_concurrency=max(1, int(image_concurrency)),
+                multi_chapter_download_behavior=(
+                    multi_chapter_download_behavior
+                ),
+            )
+        task_config.validate()
+        self.task_config = task_config
+        self.download_engine = task_config.download_engine
+        self.image_concurrency = task_config.image_concurrency
         self.selected_chapter_ids = self._normalize_selected_chapter_ids(
             selected_chapter_ids
         )
-        if multi_chapter_download_behavior not in {"parallel", "queued"}:
-            raise ValueError(
-                "multi_chapter_download_behavior must be parallel or queued"
-            )
-        self.multi_chapter_download_behavior = multi_chapter_download_behavior
+        self.multi_chapter_download_behavior = (
+            task_config.multi_chapter_download_behavior
+        )
         self._stop_flag = threading.Event()
         self._thread = None
         self._total_photos = 0
@@ -292,12 +312,60 @@ class DownloadWorker:
                         for future in futures:
                             future.result()
 
-            jmcomic.download_album(
-                self.album_id,
-                option,
-                downloader=ProgressDownloader,
-                check_exception=False,
-            )
+            class AsyncProgressDownloader(jmcomic.JmAsyncDownloader):
+                def __init__(self, active_option):
+                    super().__init__(active_option)
+                    owner._active_downloader = self
+
+                async def __aenter__(self):
+                    with serialized_client_construction():
+                        self.client = self.option.new_jm_async_client(
+                            max_clients=self._image_concurrency
+                        )
+                    await self.client.setup()
+                    return self
+
+                async def before_album(self, album):
+                    owner._prepare_album(album)
+                    await super().before_album(album)
+                    title = owner._album_title
+                    cover = getattr(album, "cover", None)
+                    owner.on_info(owner.album_id, title, cover)
+
+                async def download_by_album_detail(self, album):
+                    await self.before_album(album)
+                    if album.skip:
+                        return
+                    photos = await owner._prepare_selected_photos_async(
+                        self,
+                        album,
+                        tuple(album),
+                    )
+                    if photos:
+                        await asyncio.gather(
+                            *(self._safe_download_photo(photo) for photo in photos)
+                        )
+                    await self.after_album(album)
+
+                async def _download_single_image(self, image):
+                    await owner._download_image_async(self, image)
+
+            if self.download_engine == "async":
+                asyncio.run(
+                    jmcomic.download_album_async(
+                        self.album_id,
+                        option,
+                        downloader=AsyncProgressDownloader,
+                        check_exception=False,
+                    )
+                )
+            else:
+                jmcomic.download_album(
+                    self.album_id,
+                    option,
+                    downloader=ProgressDownloader,
+                    check_exception=False,
+                )
             if self._stop_flag.is_set():
                 return
 
@@ -451,6 +519,88 @@ class DownloadWorker:
         self._album_total_known = total > 0
         return filtered
 
+    async def _prepare_selected_photos_async(
+        self,
+        active_downloader,
+        album,
+        photos: tuple,
+    ) -> tuple:
+        if not photos:
+            if self.selected_chapter_ids is not None:
+                raise SelectedChapterUnavailable()
+            raise DownloadIntegrityError("album has no chapters")
+        selected = (
+            None
+            if self.selected_chapter_ids is None
+            else set(self.selected_chapter_ids)
+        )
+        if selected is None:
+            filtered = photos
+        else:
+            filtered = tuple(
+                photo
+                for photo in photos
+                if self._photo_id(photo) in selected
+            )
+            found = {self._photo_id(photo) for photo in filtered}
+            if found != selected or len(filtered) != len(found):
+                raise SelectedChapterUnavailable()
+
+        photo_ids = [self._photo_id(photo) for photo in filtered]
+        if None in photo_ids or len(photo_ids) != len(set(photo_ids)):
+            raise SelectedChapterUnavailable()
+
+        actual_single_album = len(photos) == 1
+        total = 0
+        entries = []
+        seen_indexes = set()
+        for photo, photo_id in zip(filtered, photo_ids, strict=True):
+            if self._stop_flag.is_set():
+                raise DownloadStopped()
+            await active_downloader.client.check_photo(photo)
+            index = self._photo_index(photo)
+            if index in seen_indexes:
+                raise SelectedChapterUnavailable()
+            seen_indexes.add(index)
+            try:
+                page_count = len(photo)
+            except (TypeError, ValueError) as error:
+                raise DownloadIntegrityError(
+                    "chapter page count is invalid"
+                ) from error
+            if type(page_count) is not int or page_count < 1:
+                raise DownloadIntegrityError("chapter has no images")
+            total += page_count
+            title = getattr(photo, "title", None) or getattr(
+                photo, "name", None
+            )
+            if not isinstance(title, str) or not title.strip():
+                title = f"第 {index} 章"
+            dir_name = "" if actual_single_album else f"第{index}章"
+            setattr(photo, "jm_downloader_chapter_dir", dir_name)
+            entries.append(
+                ChapterManifestEntry(
+                    photo_id=photo_id,
+                    index=index,
+                    title=title,
+                    dir_name=dir_name,
+                    page_count=page_count,
+                )
+            )
+
+        if self._album_dir_name is None:
+            raise DownloadIntegrityError("album directory is unavailable")
+        self._pending_manifest = ChapterManifest(
+            version=1,
+            album_id=self.album_id,
+            album_title=self._album_title,
+            album_dir_name=self._album_dir_name,
+            chapters=tuple(sorted(entries, key=lambda entry: entry.index)),
+        )
+        self._total_photos = total
+        self._album_total_known = total > 0
+        return filtered
+
     @staticmethod
     def _photo_index(photo) -> int:
         value = getattr(photo, "album_index", None)
@@ -514,6 +664,94 @@ class DownloadWorker:
         with self._integrity_lock:
             self._verified_images.add(path)
         downloader.after_image(image, str(path))
+        self._on_image_ready(image, str(path))
+
+    async def _download_image_async(self, downloader, image) -> None:
+        if self._stop_flag.is_set():
+            raise DownloadStopped()
+        final_path = self._managed_image_path(
+            Path(downloader.option.decide_image_filepath(image))
+        )
+        with self._integrity_lock:
+            self._expected_images.add(final_path)
+
+        image.save_path = str(final_path)
+        image.exists = final_path.is_file()
+        image.cache = downloader.option.decide_download_cache(image)
+        if image.exists and not self._is_valid_image(final_path):
+            final_path.unlink()
+            image.exists = False
+
+        await downloader.before_image(image, str(final_path))
+        if image.skip:
+            return
+        if image.cache and image.exists:
+            await self._record_verified_image_async(
+                downloader, image, final_path
+            )
+            return
+        if self._stop_flag.is_set():
+            raise DownloadStopped()
+
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=final_path.parent,
+            prefix=f".{final_path.stem}{PART_FILE_MARKER}",
+            suffix=final_path.suffix,
+        )
+        os.close(descriptor)
+        temp_path = Path(temp_name)
+        try:
+            async with downloader._image_semaphore:
+                if self._stop_flag.is_set():
+                    raise DownloadStopped()
+                response = await downloader.client.get_jm_image(
+                    image.download_url
+                )
+                image_bytes = response.content
+                decode_image = (
+                    downloader.option.decide_download_image_decode(image)
+                )
+                loop = asyncio.get_running_loop()
+                if decode_image and image.scramble_id:
+                    await loop.run_in_executor(
+                        downloader._decode_pool,
+                        downloader._decode_and_save,
+                        image_bytes,
+                        int(image.scramble_id),
+                        int(image.aid),
+                        image.img_file_name,
+                        str(temp_path),
+                    )
+                else:
+                    image_url = image.download_url.split("?", 1)[0]
+                    await loop.run_in_executor(
+                        downloader._decode_pool,
+                        downloader._save_raw,
+                        image_bytes,
+                        str(temp_path),
+                        suffix_not_equal(image_url, str(temp_path)),
+                    )
+            if not self._is_valid_image(temp_path):
+                raise ImageValidationError("downloaded image is invalid")
+            if self._stop_flag.is_set():
+                raise DownloadStopped()
+            os.replace(temp_path, final_path)
+            await self._record_verified_image_async(
+                downloader, image, final_path
+            )
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    async def _record_verified_image_async(
+        self,
+        downloader,
+        image,
+        path: Path,
+    ) -> None:
+        with self._integrity_lock:
+            self._verified_images.add(path)
+        await downloader.after_image(image, str(path))
         self._on_image_ready(image, str(path))
 
     def _verify_download_result(self) -> None:

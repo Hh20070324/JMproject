@@ -8,7 +8,12 @@ from pathlib import Path
 
 from .downloader import DownloadWorker
 from .library import ChapterManifestError, ChapterManifestStore
-from .models import MAX_CHAPTERS_PER_TASK, TaskSnapshot, TaskStatus
+from .models import (
+    MAX_CHAPTERS_PER_TASK,
+    TaskConfig,
+    TaskSnapshot,
+    TaskStatus,
+)
 from .pdf import is_linked_directory
 from .settings import AppPaths, DEFAULT_PATHS
 from .task_store import StoredTask, TaskStore, TaskStoreError
@@ -117,10 +122,13 @@ class TaskManager:
         max_concurrent: int = 2,
         worker_factory: Callable = DownloadWorker,
         task_store: TaskStore | None = None,
+        new_task_config: TaskConfig | None = None,
     ):
         self.paths = paths
         self.max_concurrent = max_concurrent
         self.worker_factory = worker_factory
+        self._new_task_config = new_task_config or TaskConfig()
+        self._new_task_config.validate()
         self.task_store = task_store or TaskStore(paths)
         self._lock = threading.Lock()
         self._lifecycle_lock = threading.RLock()
@@ -145,6 +153,11 @@ class TaskManager:
     def get_task(self, task_id: str) -> TaskSnapshot:
         with self._lock:
             return self._snapshot_locked(self._find_locked(task_id))
+
+    def set_new_task_config(self, config: TaskConfig) -> None:
+        config.validate()
+        with self._lock:
+            self._new_task_config = config
 
     def add(
         self,
@@ -185,6 +198,7 @@ class TaskManager:
                 "_cancel_deferred": False,
                 "_paths": self.paths,
                 "selected_chapter_ids": selected_chapter_ids,
+                "config": self._new_task_config,
             }
             self._tasks.append(task)
             created = self._snapshot_locked(task)
@@ -579,6 +593,7 @@ class TaskManager:
                 album_id = task["album_id"]
                 task_paths = task["_paths"]
                 selected_chapter_ids = task.get("selected_chapter_ids")
+                config = task["config"]
                 task["run_generation"] += 1
                 generation = task["run_generation"]
 
@@ -589,6 +604,7 @@ class TaskManager:
                     album_id,
                     paths=task_paths,
                     selected_chapter_ids=selected_chapter_ids,
+                    task_config=config,
                     **callbacks,
                 )
             except Exception as error:
@@ -668,6 +684,7 @@ class TaskManager:
             error=task.get("error"),
             cover_url=task.get("cover_url"),
             selected_chapter_ids=task.get("selected_chapter_ids"),
+            config=task["config"],
         )
 
     def _restore_task(self, stored: StoredTask) -> dict:
@@ -693,6 +710,7 @@ class TaskManager:
             "_cancel_deferred": False,
             "_paths": stored.to_paths(self.paths.root),
             "selected_chapter_ids": stored.selected_chapter_ids,
+            "config": stored.config,
         }
 
     def _queue_persist(self) -> None:

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 
-from .models import MAX_CHAPTERS_PER_TASK, TaskStatus
+from .models import MAX_CHAPTERS_PER_TASK, TaskConfig, TaskStatus
 from .settings import (
     AppPaths,
     DEFAULT_PATHS,
@@ -19,7 +19,7 @@ from .settings import (
 )
 
 
-TASK_STORE_SCHEMA_VERSION = 2
+TASK_STORE_SCHEMA_VERSION = 3
 PERSISTED_TASK_STATUSES = {
     TaskStatus.PENDING,
     TaskStatus.FETCHING,
@@ -60,6 +60,9 @@ class StoredTask:
     pictures_directory: str
     pdf_directory: str
     selected_chapter_ids: tuple[str, ...] | None = None
+    config: TaskConfig = TaskConfig(
+        download_engine="sync",
+    )
 
     def validate(self) -> None:
         if (
@@ -86,6 +89,10 @@ class StoredTask:
         self._validate_optional_text("任务错误", self.error)
         self._validate_selected_chapter_ids()
         try:
+            self.config.validate()
+        except (AttributeError, ValueError) as error:
+            raise TaskStoreValidationError("任务下载配置无效") from error
+        try:
             validate_portable_directory("任务图片目录", self.pictures_directory)
             validate_portable_directory("任务 PDF 目录", self.pdf_directory)
         except SettingsValidationError as error:
@@ -107,6 +114,16 @@ class StoredTask:
                 if self.selected_chapter_ids is not None
                 else None
             ),
+            "download": {
+                "engine": self.config.download_engine,
+                "api_route": self.config.api_route,
+                "package_format": self.config.package_format,
+                "image_format": self.config.image_format,
+                "image_concurrency": self.config.image_concurrency,
+                "multi_chapter_download_behavior": (
+                    self.config.multi_chapter_download_behavior
+                ),
+            },
             "paths": {
                 "pictures": self.pictures_directory,
                 "pdfs": self.pdf_directory,
@@ -134,6 +151,7 @@ class StoredTask:
         data: Mapping,
         *,
         legacy_schema: bool = False,
+        legacy_config: TaskConfig | None = None,
     ) -> "StoredTask":
         if not isinstance(data, Mapping):
             raise TaskStoreValidationError("任务记录必须是对象")
@@ -159,6 +177,11 @@ class StoredTask:
                 None
                 if legacy_schema
                 else cls._decode_selected_chapter_ids(data)
+            ),
+            config=(
+                legacy_config
+                if legacy_config is not None
+                else cls._decode_config(data)
             ),
         )
         task.validate()
@@ -189,7 +212,29 @@ class StoredTask:
                 paths.pdfs,
             ),
             selected_chapter_ids=task.get("selected_chapter_ids"),
+            config=task["config"],
         )
+
+    @staticmethod
+    def _decode_config(data: Mapping) -> TaskConfig:
+        value = data.get("download")
+        if not isinstance(value, Mapping):
+            raise TaskStoreValidationError("任务记录缺少下载配置")
+        config = TaskConfig(
+            download_engine=value.get("engine"),
+            api_route=value.get("api_route"),
+            package_format=value.get("package_format"),
+            image_format=value.get("image_format"),
+            image_concurrency=value.get("image_concurrency"),
+            multi_chapter_download_behavior=value.get(
+                "multi_chapter_download_behavior"
+            ),
+        )
+        try:
+            config.validate()
+        except ValueError as error:
+            raise TaskStoreValidationError(str(error)) from error
+        return config
 
     def _validate_selected_chapter_ids(self) -> None:
         values = self.selected_chapter_ids
@@ -238,8 +283,16 @@ class StoredTask:
 
 
 class TaskStore:
-    def __init__(self, paths: AppPaths = DEFAULT_PATHS):
+    def __init__(
+        self,
+        paths: AppPaths = DEFAULT_PATHS,
+        legacy_task_config: TaskConfig | None = None,
+    ):
         self.paths = paths
+        self.legacy_task_config = legacy_task_config or TaskConfig(
+            download_engine="sync",
+        )
+        self.legacy_task_config.validate()
         self.last_recovery_backup: Path | None = None
         self.last_error: TaskStoreError | None = None
         self.needs_migration = False
@@ -263,7 +316,10 @@ class TaskStore:
         except OSError as error:
             raise TaskStoreError(f"无法读取任务记录：{error}") from error
         try:
-            tasks, version = self._decode(raw)
+            tasks, version = self._decode(
+                raw,
+                legacy_task_config=self.legacy_task_config,
+            )
             self.needs_migration = version < TASK_STORE_SCHEMA_VERSION
             return tasks
         except UnsupportedTaskStoreVersion:
@@ -396,7 +452,11 @@ class TaskStore:
                 continue
 
     @staticmethod
-    def _decode(raw: bytes) -> tuple[list[StoredTask], int]:
+    def _decode(
+        raw: bytes,
+        *,
+        legacy_task_config: TaskConfig | None = None,
+    ) -> tuple[list[StoredTask], int]:
         data = json.loads(raw.decode("utf-8"))
         if not isinstance(data, Mapping):
             raise TaskStoreValidationError("任务记录根节点必须是对象")
@@ -408,13 +468,21 @@ class TaskStore:
                 f"任务记录版本 {version} 高于程序支持的版本 "
                 f"{TASK_STORE_SCHEMA_VERSION}"
             )
-        if version not in {1, TASK_STORE_SCHEMA_VERSION}:
+        if version not in {1, 2, TASK_STORE_SCHEMA_VERSION}:
             raise TaskStoreValidationError("不支持的任务记录版本")
         values = data.get("tasks")
         if not isinstance(values, list):
             raise TaskStoreValidationError("任务列表必须是数组")
         tasks = [
-            StoredTask.from_dict(value, legacy_schema=version == 1)
+            StoredTask.from_dict(
+                value,
+                legacy_schema=version == 1,
+                legacy_config=(
+                    legacy_task_config or TaskConfig(download_engine="sync")
+                    if version < TASK_STORE_SCHEMA_VERSION
+                    else None
+                ),
+            )
             for value in values
         ]
         ids = [task.id for task in tasks]

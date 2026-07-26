@@ -1,4 +1,5 @@
 import argparse
+from dataclasses import replace
 from functools import partial
 import logging
 import os
@@ -196,12 +197,23 @@ def run_qt_app(
             ),
         )
         try:
-            task_store = TaskStore(paths)
+            legacy_config = replace(
+                settings.task_config(),
+                download_engine="sync",
+                api_route="auto",
+                package_format="pdf",
+                image_format="jpg",
+            )
+            task_store = TaskStore(
+                paths,
+                legacy_task_config=legacy_config,
+            )
             manager = TaskManager(
                 paths=paths,
                 max_concurrent=settings.max_concurrent_tasks,
                 worker_factory=worker_factory,
                 task_store=task_store,
+                new_task_config=settings.task_config(),
             )
         except TaskStoreError as error:
             _show_startup_error(str(error))
@@ -229,6 +241,11 @@ def run_qt_app(
                 validate_settings_output_directories,
                 base_paths,
             ),
+        )
+        settings_controller.settings_changed.connect(
+            lambda current: manager.set_new_task_config(
+                current.task_config()
+            )
         )
         previous_hook = install_exception_hook(logger)
         window = MainWindow(

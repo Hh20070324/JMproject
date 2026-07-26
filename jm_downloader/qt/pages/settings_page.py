@@ -114,6 +114,36 @@ class SettingsPage(SectionPage):
     def _create_download_section(self, layout: QVBoxLayout) -> None:
         section = self._create_section(layout, "下载性能")
 
+        engine_control = QWidget(section)
+        engine_layout = QHBoxLayout(engine_control)
+        engine_layout.setContentsMargins(0, 0, 0, 0)
+        self.download_engine_button = QToolButton(engine_control)
+        self.download_engine_button.setObjectName("downloadEngineButton")
+        self.download_engine_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.download_engine_button.setFixedSize(220, 36)
+        self.download_engine_menu = QMenu(self.download_engine_button)
+        self._download_engine_group = QActionGroup(self)
+        self._download_engine_group.setExclusive(True)
+        self._download_engine_actions = {}
+        for label, value in (
+            ("异步下载（推荐）", "async"),
+            ("同步线程（兼容）", "sync"),
+        ):
+            action = self.download_engine_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._download_engine_group.addAction(action)
+            self._download_engine_actions[value] = action
+        self._download_engine_group.triggered.connect(
+            self._select_download_engine
+        )
+        self.download_engine_button.setMenu(self.download_engine_menu)
+        engine_layout.addWidget(self.download_engine_button)
+        engine_layout.addStretch(1)
+        self._add_row(section, "下载引擎", engine_control)
+
         self.max_concurrent_tasks_spin = QSpinBox(section)
         self.max_concurrent_tasks_spin.setObjectName("settingsSpinBox")
         self.max_concurrent_tasks_spin.setRange(1, 8)
@@ -485,6 +515,7 @@ class SettingsPage(SectionPage):
         self.log_level_combo.currentIndexChanged.connect(self._mark_dirty)
         self.startup_page_combo.currentIndexChanged.connect(self._mark_dirty)
         self._multi_chapter_behavior_group.triggered.connect(self._mark_dirty)
+        self._download_engine_group.triggered.connect(self._mark_dirty)
         self._theme_group.buttonClicked.connect(self._mark_dirty)
 
     def _mark_dirty(self, *_args) -> None:
@@ -556,6 +587,7 @@ class SettingsPage(SectionPage):
             multi_chapter_download_behavior=(
                 self._selected_multi_chapter_behavior()
             ),
+            download_engine=self._selected_download_engine(),
             log_level=str(self.log_level_combo.currentData()),
             window_width=self.window_width_spin.value(),
             window_height=self.window_height_spin.value(),
@@ -584,6 +616,7 @@ class SettingsPage(SectionPage):
             self._set_multi_chapter_behavior(
                 settings.multi_chapter_download_behavior
             )
+            self._set_download_engine(settings.download_engine)
             self.window_width_spin.setValue(settings.window_width)
             self.window_height_spin.setValue(settings.window_height)
             self._select_combo(self.log_level_combo, settings.log_level)
@@ -620,6 +653,23 @@ class SettingsPage(SectionPage):
         checked = self._multi_chapter_behavior_group.checkedAction()
         if checked is None:
             return "parallel"
+        return str(checked.data())
+
+    def _select_download_engine(self, action: QAction) -> None:
+        self._set_download_engine(str(action.data()))
+
+    def _set_download_engine(self, engine: str) -> None:
+        action = self._download_engine_actions.get(
+            engine,
+            self._download_engine_actions["async"],
+        )
+        action.setChecked(True)
+        self.download_engine_button.setText(f"{action.text()} ▾")
+
+    def _selected_download_engine(self) -> str:
+        checked = self._download_engine_group.checkedAction()
+        if checked is None:
+            return "async"
         return str(checked.data())
 
     def _on_save_succeeded(self, _settings: AppSettings) -> None:

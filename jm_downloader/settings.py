@@ -3,6 +3,14 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 import sys
 
+from .models import (
+    API_ROUTES,
+    DOWNLOAD_ENGINES,
+    IMAGE_FORMATS,
+    PACKAGE_FORMATS,
+    TaskConfig,
+)
+
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_SCHEMA_VERSION = 1
@@ -76,6 +84,11 @@ class AppSettings:
     max_concurrent_tasks: int = 2
     image_concurrency: int = 16
     multi_chapter_download_behavior: str = "parallel"
+    download_engine: str = "async"
+    api_route: str = "auto"
+    download_package_format: str = "pdf"
+    download_image_format: str = "jpg"
+    remember_credentials: bool = False
     log_level: str = "INFO"
     window_width: int = 1100
     window_height: int = 720
@@ -110,6 +123,16 @@ class AppSettings:
             or self.multi_chapter_download_behavior not in {"parallel", "queued"}
         ):
             raise SettingsValidationError("多章漫画下载行为无效")
+        if self.download_engine not in DOWNLOAD_ENGINES:
+            raise SettingsValidationError("下载引擎无效")
+        if self.api_route not in API_ROUTES:
+            raise SettingsValidationError("API 路线无效")
+        if self.download_package_format not in PACKAGE_FORMATS:
+            raise SettingsValidationError("打包格式无效")
+        if self.download_image_format not in IMAGE_FORMATS:
+            raise SettingsValidationError("图片格式无效")
+        if type(self.remember_credentials) is not bool:
+            raise SettingsValidationError("记住密码设置无效")
         self._validate_integer(
             "窗口宽度", self.window_width, minimum=760, maximum=10000
         )
@@ -151,7 +174,12 @@ class AppSettings:
                 "multi_chapter_download_behavior": (
                     self.multi_chapter_download_behavior
                 ),
+                "engine": self.download_engine,
+                "api_route": self.api_route,
+                "package_format": self.download_package_format,
+                "image_format": self.download_image_format,
             },
+            "account": {"remember_credentials": self.remember_credentials},
             "logging": {"level": self.log_level},
             "window": {
                 "width": self.window_width,
@@ -181,6 +209,7 @@ class AppSettings:
         logging = cls._group(data, "logging")
         window = cls._group(data, "window")
         appearance = cls._group(data, "appearance")
+        account = cls._group(data, "account")
 
         settings = cls(
             schema_version=schema_version,
@@ -198,6 +227,19 @@ class AppSettings:
                 "multi_chapter_download_behavior",
                 defaults.multi_chapter_download_behavior,
             ),
+            download_engine=download.get(
+                "engine", defaults.download_engine
+            ),
+            api_route=download.get("api_route", defaults.api_route),
+            download_package_format=download.get(
+                "package_format", defaults.download_package_format
+            ),
+            download_image_format=download.get(
+                "image_format", defaults.download_image_format
+            ),
+            remember_credentials=account.get(
+                "remember_credentials", defaults.remember_credentials
+            ),
             log_level=logging.get("level", defaults.log_level),
             window_width=window.get("width", defaults.window_width),
             window_height=window.get("height", defaults.window_height),
@@ -206,6 +248,20 @@ class AppSettings:
         )
         settings.validate()
         return settings
+
+    def task_config(self) -> TaskConfig:
+        config = TaskConfig(
+            download_engine=self.download_engine,
+            api_route=self.api_route,
+            package_format=self.download_package_format,
+            image_format=self.download_image_format,
+            image_concurrency=self.image_concurrency,
+            multi_chapter_download_behavior=(
+                self.multi_chapter_download_behavior
+            ),
+        )
+        config.validate()
+        return config
 
     @staticmethod
     def _group(data: Mapping, name: str) -> Mapping:
