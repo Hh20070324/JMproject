@@ -119,6 +119,19 @@ class FakeLibraryController(QObject):
         return True
 
 
+class FakeChapterCatalogController(QObject):
+    catalog_ready = Signal(int, object)
+    catalog_failed = Signal(int, str, str)
+
+    def __init__(self):
+        super().__init__()
+        self.requests = []
+
+    def request(self, album_id):
+        self.requests.append(str(album_id))
+        return len(self.requests)
+
+
 class V291Phase6UiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -213,7 +226,11 @@ class V291Phase6UiTests(unittest.TestCase):
 
     def test_legacy_identification_requires_explicit_network_confirmation(self):
         controller = FakeLibraryController(item(LibraryLayout.LEGACY))
-        page = LibraryPage(controller)
+        catalog_controller = FakeChapterCatalogController()
+        page = LibraryPage(
+            controller,
+            chapter_catalog_controller=catalog_controller,
+        )
         page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         page.show()
         self.app.processEvents()
@@ -228,9 +245,11 @@ class V291Phase6UiTests(unittest.TestCase):
         ):
             card.chapter_button.click()
         self.assertEqual(page._catalog_requests, {})
+        self.assertEqual(catalog_controller.requests, [])
         page.close()
         page.deleteLater()
         controller.deleteLater()
+        catalog_controller.deleteLater()
         self.app.processEvents()
 
 

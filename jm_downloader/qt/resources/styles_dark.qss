@@ -105,6 +105,46 @@ QLineEdit#jmIdSearchInput:focus {
     padding: 0 11px;
 }
 
+QFrame#searchHistoryMenu {
+    background: #232725;
+    border: 1px solid #59635d;
+    border-radius: 6px;
+}
+
+QScrollArea#searchHistoryScroll,
+QWidget#searchHistoryContent {
+    background: #232725;
+    border: none;
+}
+
+QFrame#searchHistoryRow {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+}
+
+QFrame#searchHistoryRow:hover {
+    background: #343a36;
+}
+
+QToolButton#searchHistoryEntryButton {
+    background: transparent;
+    border: none;
+    color: #edf2ef;
+    text-align: left;
+    padding: 0 8px;
+}
+
+QToolButton#searchHistoryDeleteButton {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+}
+
+QToolButton#searchHistoryDeleteButton:hover {
+    background: #402727;
+}
+
 QLineEdit#generalSearchInput:disabled,
 QLineEdit#jmIdSearchInput:disabled {
     background: #1d211f;
@@ -1513,12 +1553,23 @@ QRadioButton#libraryChapterFormatRadio::indicator {
     height: 17px;
     border: 2px solid #58b989;
     border-radius: 9px;
-    background: #232725;
+    background: #20382d;
 }
 
 QCheckBox#libraryChapterCheck::indicator:checked,
 QRadioButton#libraryChapterFormatRadio::indicator:checked {
     background: #58b989;
+}
+
+QCheckBox#libraryChapterCheck::indicator:disabled,
+QRadioButton#libraryChapterFormatRadio::indicator:disabled {
+    background: #1d2d25;
+    border-color: #3f6b54;
+}
+
+QCheckBox#libraryChapterCheck::indicator:checked:disabled,
+QRadioButton#libraryChapterFormatRadio::indicator:checked:disabled {
+    background: #3f6b54;
 }
 
 QPushButton#libraryChapterPrimaryButton,

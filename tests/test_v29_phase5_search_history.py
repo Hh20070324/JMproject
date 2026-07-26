@@ -287,6 +287,162 @@ class SearchHistoryControllerTests(unittest.TestCase):
             page.close()
             page.deleteLater()
 
+    def test_history_panel_never_takes_focus_and_typing_closes_it(self):
+        self.history.record("keyword", "alpha")
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+
+            self.assertTrue(page.keyword_history_menu.isVisible())
+            self.assertFalse(page.keyword_history_menu.isWindow())
+            self.assertEqual(
+                page.keyword_history_menu.focusPolicy(),
+                Qt.FocusPolicy.NoFocus,
+            )
+
+            QTest.keyClicks(page.general_search_input, "beta")
+            self.process_for(20)
+
+            self.assertEqual(page.general_search_input.text(), "beta")
+            self.assertFalse(page.keyword_history_menu.isVisible())
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_second_input_click_closes_history_without_reopening(self):
+        self.history.record("keyword", "alpha")
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+            self.assertTrue(page.keyword_history_menu.isVisible())
+
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(40)
+
+            self.assertFalse(page.keyword_history_menu.isVisible())
+            self.assertIsNone(page._history_popup_editor)
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_focus_out_and_outside_click_close_history_panel(self):
+        self.history.record("keyword", "alpha")
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+            self.assertTrue(page.keyword_history_menu.isVisible())
+
+            focus_out = QFocusEvent(
+                QEvent.Type.FocusOut,
+                Qt.FocusReason.TabFocusReason,
+            )
+            self.app.sendEvent(
+                page.general_search_input,
+                focus_out,
+            )
+            self.process_for(20)
+            self.assertFalse(page.keyword_history_menu.isVisible())
+
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+            self.assertTrue(page.keyword_history_menu.isVisible())
+
+            QTest.mouseClick(
+                page.general_search_button,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+            self.assertFalse(page.keyword_history_menu.isVisible())
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_deleting_last_history_entry_closes_empty_panel(self):
+        self.history.record("keyword", "alpha")
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+            self.assertTrue(page.keyword_history_menu.isVisible())
+
+            page._delete_history_entry(
+                page.keyword_history_menu.entries[0]
+            )
+            self.process_for(20)
+
+            self.assertEqual(controller.history_entries(), ())
+            self.assertFalse(page.keyword_history_menu.isVisible())
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_page_hide_does_not_restore_history_panel_on_return(self):
+        self.history.record("keyword", "alpha")
+        controller = self.make_controller(ControlledSearchService())
+        page = DownloadPage(search_controller=controller)
+        page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        page.show()
+        self.app.processEvents()
+        try:
+            QTest.mouseClick(
+                page.general_search_input,
+                Qt.MouseButton.LeftButton,
+            )
+            self.process_for(20)
+            self.assertTrue(page.keyword_history_menu.isVisible())
+
+            page.hide()
+            self.process_for(20)
+            page.show()
+            self.process_for(20)
+
+            self.assertFalse(page.keyword_history_menu.isVisible())
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
     def test_settings_clear_uses_native_confirmation(self):
         self.history.record("keyword", "alpha")
         controller = self.make_controller(ControlledSearchService())

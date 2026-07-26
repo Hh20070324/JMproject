@@ -517,6 +517,12 @@ class DownloadPage(SectionPage):
             (self.jm_id_search_input, self.jm_history_menu),
         ):
             editor.installEventFilter(self)
+            menu.set_anchor(editor)
+            editor.textEdited.connect(
+                lambda _text, current=editor: (
+                    self._cancel_history_popup(current)
+                )
+            )
             menu.entry_selected.connect(self._use_history_entry)
             menu.delete_requested.connect(self._delete_history_entry)
 
@@ -567,6 +573,9 @@ class DownloadPage(SectionPage):
         if self._disposed:
             return
         self._disposed = True
+        self._history_popup_editor = None
+        self.keyword_history_menu.dispose()
+        self.jm_history_menu.dispose()
         self._chapter_flow.dispose()
         if self._cover_loader is not None:
             self._cover_loader.dispose()
@@ -582,20 +591,37 @@ class DownloadPage(SectionPage):
             self.jm_id_search_input,
         ):
             event_type = event.type()
-            focus_returned_from_popup = (
-                event_type == QEvent.Type.FocusIn
-                and event.reason() == Qt.FocusReason.PopupFocusReason
-            )
-            if (
-                event_type
-                in (
-                    QEvent.Type.FocusIn,
-                    QEvent.Type.MouseButtonPress,
-                )
-                and not focus_returned_from_popup
-            ):
-                self._schedule_history_popup(watched)
+            if event_type == QEvent.Type.MouseButtonPress:
+                menu = self._history_menu_for(watched)
+                if menu.isVisible():
+                    self._cancel_history_popup(watched)
+                else:
+                    self._close_history_popups(except_menu=menu)
+                    self._schedule_history_popup(watched)
+            elif event_type == QEvent.Type.FocusOut:
+                self._cancel_history_popup(watched)
         return super().eventFilter(watched, event)
+
+    def _history_menu_for(self, editor: QLineEdit) -> SearchHistoryMenu:
+        return (
+            self.jm_history_menu
+            if editor is self.jm_id_search_input
+            else self.keyword_history_menu
+        )
+
+    def _close_history_popups(
+        self,
+        *,
+        except_menu: SearchHistoryMenu | None = None,
+    ) -> None:
+        for menu in (self.keyword_history_menu, self.jm_history_menu):
+            if menu is not except_menu:
+                menu.close()
+
+    def _cancel_history_popup(self, editor: QLineEdit) -> None:
+        if self._history_popup_editor is editor:
+            self._history_popup_editor = None
+        self._history_menu_for(editor).close()
 
     def _schedule_history_popup(self, editor: QLineEdit) -> None:
         if self._history_popup_editor is editor:
@@ -610,11 +636,7 @@ class DownloadPage(SectionPage):
         if self._history_popup_editor is not editor:
             return
         self._history_popup_editor = None
-        menu = (
-            self.jm_history_menu
-            if editor is self.jm_id_search_input
-            else self.keyword_history_menu
-        )
+        menu = self._history_menu_for(editor)
         if menu.isVisible():
             return
         self._show_history(editor)
@@ -638,6 +660,7 @@ class DownloadPage(SectionPage):
         entries = history_entries(kind)
         menu.set_entries(entries)
         if not entries:
+            menu.close()
             return
         menu.setMinimumWidth(editor.width())
         menu.popup(editor.mapToGlobal(QPoint(0, editor.height())))
@@ -786,6 +809,8 @@ class DownloadPage(SectionPage):
         )
 
     def _clear_input_error(self, expected: str) -> None:
+        if self._disposed:
+            return
         if self.results_summary.text() != expected:
             return
         self._set_summary_error(False)
