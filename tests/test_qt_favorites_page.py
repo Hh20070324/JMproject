@@ -281,6 +281,46 @@ class FavoritesPageTests(unittest.TestCase):
             "private-password",
         )
 
+    def test_remembered_credentials_fill_signed_out_form_without_login(self):
+        self.controller.login = Mock(return_value=1)
+        self.page._on_snapshot(AccountSnapshot(AccountStatus.SIGNED_OUT))
+
+        self.page._on_credentials_ready(
+            "remembered-user",
+            "remembered-password",
+        )
+
+        self.assertEqual(
+            self.page.username_input.text(),
+            "remembered-user",
+        )
+        self.assertEqual(
+            self.page.password_input.text(),
+            "remembered-password",
+        )
+        self.controller.login.assert_not_called()
+
+    def test_expired_state_only_fills_remembered_password(self):
+        self.controller.login = Mock(return_value=1)
+        self.page._on_snapshot(
+            AccountSnapshot(AccountStatus.EXPIRED, "current-user")
+        )
+
+        self.page._on_credentials_ready(
+            "old-user",
+            "remembered-password",
+        )
+
+        self.assertEqual(
+            self.page.expired_password_input.text(),
+            "remembered-password",
+        )
+        self.assertEqual(
+            self.page.account_name.text(),
+            "current-user",
+        )
+        self.controller.login.assert_not_called()
+
     def test_snapshot_uses_bounded_local_pages_and_existing_cards(self):
         items = tuple(
             FavoriteItemSnapshot(str(index), f"Title {index}")

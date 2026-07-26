@@ -22,6 +22,7 @@ CRYPTPROTECT_UI_FORBIDDEN = 0x1
 ACCOUNT_MAX_PLAINTEXT_BYTES = 256 * 1024
 FAVORITES_MAX_PLAINTEXT_BYTES = 32 * 1024 * 1024
 SEARCH_HISTORY_MAX_PLAINTEXT_BYTES = 64 * 1024
+CREDENTIALS_MAX_PLAINTEXT_BYTES = 16 * 1024
 DPAPI_MAX_OVERHEAD_BYTES = 64 * 1024
 
 
@@ -65,6 +66,7 @@ class ProtectedStoreKind(Enum):
     ACCOUNT = "account"
     FAVORITES = "favorites"
     SEARCH_HISTORY = "search_history"
+    CREDENTIALS = "credentials"
 
 
 class DataProtector(Protocol):
@@ -222,6 +224,13 @@ _STORE_SPECS = {
         frozenset({1}),
         SEARCH_HISTORY_MAX_PLAINTEXT_BYTES,
     ),
+    ProtectedStoreKind.CREDENTIALS: _StoreSpec(
+        ProtectedStoreKind.CREDENTIALS,
+        "credentials.dat",
+        1,
+        frozenset({1}),
+        CREDENTIALS_MAX_PLAINTEXT_BYTES,
+    ),
 }
 
 
@@ -273,6 +282,14 @@ class ProtectedStore:
             protector,
         )
 
+    @classmethod
+    def credentials(
+        cls,
+        paths: AppPaths = DEFAULT_PATHS,
+        protector: DataProtector | None = None,
+    ) -> "ProtectedStore":
+        return cls(ProtectedStoreKind.CREDENTIALS, paths, protector)
+
     @property
     def kind(self) -> ProtectedStoreKind:
         return self.spec.kind
@@ -285,6 +302,7 @@ class ProtectedStore:
             ProtectedStoreKind.SEARCH_HISTORY: (
                 self.paths.search_history_file
             ),
+            ProtectedStoreKind.CREDENTIALS: self.paths.credentials_file,
         }[self.kind]
 
     @property
@@ -620,6 +638,7 @@ def _same_file_state(first, second) -> bool:
 __all__ = [
     "ACCOUNT_MAX_PLAINTEXT_BYTES",
     "CRYPTPROTECT_UI_FORBIDDEN",
+    "CREDENTIALS_MAX_PLAINTEXT_BYTES",
     "CurrentUserDpapi",
     "DataProtectionError",
     "FAVORITES_MAX_PLAINTEXT_BYTES",

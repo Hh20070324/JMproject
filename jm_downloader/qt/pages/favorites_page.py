@@ -143,6 +143,14 @@ class FavoritesPage(SectionPage):
             controller.snapshot_changed.connect(self._on_snapshot)
             controller.busy_changed.connect(self._on_busy_changed)
             controller.operation_failed.connect(self._on_operation_failed)
+            if hasattr(controller, "credentials_ready"):
+                controller.credentials_ready.connect(
+                    self._on_credentials_ready
+                )
+            if hasattr(controller, "credential_failed"):
+                controller.credential_failed.connect(
+                    self._on_credential_failed
+                )
         if favorites_controller is not None:
             favorites_controller.snapshot_changed.connect(
                 self._on_favorites_snapshot
@@ -190,6 +198,11 @@ class FavoritesPage(SectionPage):
             self._update_sort_selection(self._favorites_snapshot.order_by)
             self._rebuild_folder_options()
         self._render()
+        if controller is not None and hasattr(
+            controller,
+            "request_credentials",
+        ):
+            QTimer.singleShot(0, controller.request_credentials)
         QTimer.singleShot(0, self._reflow_cards)
 
     def _create_loading_state(self) -> QWidget:
@@ -632,7 +645,10 @@ class FavoritesPage(SectionPage):
         answer = QMessageBox.question(
             self,
             "退出登录",
-            "退出后将删除程序目录中的本地账号信息和收藏缓存，确定继续吗？",
+            (
+                "退出后将删除程序目录中的本地账号信息、收藏缓存和"
+                "已记忆的账号密码，确定继续吗？"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -661,6 +677,42 @@ class FavoritesPage(SectionPage):
         self._set_login_error("")
         self._set_expired_error("")
         self._render()
+        if (
+            self.controller is not None
+            and snapshot.status
+            in {
+                AccountStatus.SIGNED_OUT,
+                AccountStatus.LOCAL_DATA_UNREADABLE,
+                AccountStatus.EXPIRED,
+            }
+            and hasattr(self.controller, "request_credentials")
+        ):
+            self.controller.request_credentials()
+
+    @Slot(str, str)
+    def _on_credentials_ready(
+        self,
+        username: str,
+        password: str,
+    ) -> None:
+        if self._snapshot.status is AccountStatus.EXPIRED:
+            self.expired_password_input.setText(password)
+            return
+        if self._snapshot.status in {
+            AccountStatus.SIGNED_OUT,
+            AccountStatus.LOCAL_DATA_UNREADABLE,
+        }:
+            self.username_input.setText(username)
+            self.password_input.setText(password)
+
+    @Slot(str)
+    def _on_credential_failed(self, message: str) -> None:
+        message = str(message).strip() or "本地安全凭据操作失败"
+        if self._snapshot.status is AccountStatus.EXPIRED:
+            self._set_expired_error(message)
+        else:
+            self._set_login_error(message)
+        QMessageBox.warning(self, "安全数据操作失败", message)
 
     @Slot(bool)
     def _on_busy_changed(self, busy: bool) -> None:

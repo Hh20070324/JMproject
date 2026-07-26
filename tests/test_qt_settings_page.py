@@ -337,6 +337,45 @@ class SettingsPageTests(unittest.TestCase):
         )
         self.assertTrue(self.page.theme_button(Theme.LIGHT).isChecked())
 
+    def test_remember_credentials_requires_native_warning_confirmation(self):
+        checkbox = self.page.remember_credentials_checkbox
+        self.assertFalse(checkbox.isChecked())
+
+        with patch(
+            "jm_downloader.qt.pages.settings_page.QMessageBox.warning",
+            return_value=QMessageBox.StandardButton.No,
+        ) as warning:
+            checkbox.click()
+
+        self.assertFalse(checkbox.isChecked())
+        warning.assert_called_once()
+        self.assertIn("Windows", warning.call_args.args[2])
+        self.assertIn("风险", warning.call_args.args[2])
+
+        with patch(
+            "jm_downloader.qt.pages.settings_page.QMessageBox.warning",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            checkbox.click()
+
+        self.assertTrue(checkbox.isChecked())
+        self.page.save_button.click()
+        self.assertTrue(self.store.saved[-1].remember_credentials)
+
+    def test_turning_off_remember_credentials_needs_no_warning(self):
+        self.page._load_settings(
+            AppSettings(remember_credentials=True)
+        )
+        with patch(
+            "jm_downloader.qt.pages.settings_page.QMessageBox.warning"
+        ) as warning:
+            self.page.remember_credentials_checkbox.click()
+
+        self.assertFalse(
+            self.page.remember_credentials_checkbox.isChecked()
+        )
+        warning.assert_not_called()
+
     def test_save_failure_is_reported_without_publishing_settings(self):
         changes = []
         self.controller.settings_changed.connect(changes.append)

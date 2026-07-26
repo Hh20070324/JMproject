@@ -318,6 +318,10 @@ class AppPaths:
         return self.root / "search_history.dat"
 
     @property
+    def credentials_file(self) -> Path:
+        return self.root / "credentials.dat"
+
+    @property
     def legacy_settings_file(self) -> Path:
         return self.root / "settings.ini"
 

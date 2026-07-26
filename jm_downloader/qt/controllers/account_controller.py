@@ -19,6 +19,8 @@ from ...account import (
     validate_login_credentials,
 )
 from ...models import AccountSnapshot, AccountStatus
+from ...credentials import CredentialStore, RememberedCredentials
+from ...protected_store import ProtectedStoreError
 
 
 LOGGER = logging.getLogger("jm-downloader")
@@ -32,6 +34,7 @@ class _AccountJob:
     command: str
     username: str | None = None
     password: str | None = field(default=None, repr=False)
+    remember_credentials: bool = False
 
     def clear_secret(self) -> None:
         self.password = None
@@ -44,11 +47,21 @@ class _AccountOutcome:
     snapshot: AccountSnapshot | None = None
     error_code: str | None = None
     error_message: str | None = None
+    remembered_credentials: RememberedCredentials | None = field(
+        default=None,
+        repr=False,
+    )
+    credential_error: str | None = None
 
 
 class _AccountMailbox:
-    def __init__(self, service: AccountService):
+    def __init__(
+        self,
+        service: AccountService,
+        credential_store: CredentialStore | None = None,
+    ):
         self.service = service
+        self.credential_store = credential_store
         self.condition = threading.Condition()
         self.pending: _AccountJob | None = None
         self.completed: deque[_AccountOutcome] = deque()
@@ -109,6 +122,8 @@ def _account_worker(mailbox: _AccountMailbox) -> None:
         if job is None:
             return
         try:
+            remembered = None
+            credential_error = None
             if job.command == "restore":
                 snapshot = mailbox.service.restore(job.operation)
             elif job.command == "login":
@@ -122,16 +137,52 @@ def _account_worker(mailbox: _AccountMailbox) -> None:
                         password,
                         job.operation,
                     )
+                    if (
+                        job.remember_credentials
+                        and mailbox.credential_store is not None
+                    ):
+                        try:
+                            mailbox.credential_store.save(
+                                job.username or "",
+                                password,
+                            )
+                            remembered = RememberedCredentials(
+                                job.username or "",
+                                password,
+                            )
+                        except ProtectedStoreError:
+                            credential_error = (
+                                "登录成功，但无法保存记忆密码"
+                            )
                 finally:
                     password = None
             elif job.command == "logout":
-                snapshot = mailbox.service.logout(job.operation)
+                try:
+                    snapshot = mailbox.service.logout(job.operation)
+                except Exception as account_error:
+                    if mailbox.credential_store is not None:
+                        try:
+                            mailbox.credential_store.delete()
+                        except ProtectedStoreError:
+                            raise AccountStorageError(
+                                "无法删除本地文件：credentials.dat"
+                            ) from None
+                    raise account_error
+                if mailbox.credential_store is not None:
+                    try:
+                        mailbox.credential_store.delete()
+                    except ProtectedStoreError:
+                        credential_error = (
+                            "账号已退出，但无法删除 credentials.dat"
+                        )
             else:
                 raise AccountError()
             outcome = _AccountOutcome(
                 job.generation,
                 job.command,
                 snapshot=snapshot,
+                remembered_credentials=remembered,
+                credential_error=credential_error,
             )
         except Exception as error:
             code, message = _safe_error_payload(error)
@@ -179,6 +230,8 @@ class AccountController(QObject):
     operation_completed = Signal(str, object)
     operation_failed = Signal(str, str)
     busy_changed = Signal(bool)
+    credentials_ready = Signal(str, str)
+    credential_failed = Signal(str)
 
     def __init__(
         self,
@@ -186,6 +239,8 @@ class AccountController(QObject):
         parent=None,
         result_interval_ms: int = DEFAULT_RESULT_INTERVAL_MS,
         auto_restore: bool = True,
+        credential_store: CredentialStore | None = None,
+        remember_credentials: bool = False,
     ):
         super().__init__(parent)
         if not isinstance(service, AccountService):
@@ -193,7 +248,25 @@ class AccountController(QObject):
         if type(result_interval_ms) is not int or result_interval_ms < 1:
             raise ValueError("result_interval_ms must be a positive integer")
         self.service = service
-        self._mailbox = _AccountMailbox(service)
+        self.credential_store = credential_store
+        self._remember_credentials = bool(remember_credentials)
+        self._remembered_credentials = None
+        self._credential_startup_error = None
+        if credential_store is not None:
+            try:
+                if self._remember_credentials:
+                    self._remembered_credentials = (
+                        credential_store.load()
+                    )
+                else:
+                    credential_store.delete()
+            except ProtectedStoreError:
+                self._credential_startup_error = (
+                    "无法清理本地安全凭据 credentials.dat"
+                    if not self._remember_credentials
+                    else "无法读取记忆密码"
+                )
+        self._mailbox = _AccountMailbox(service, credential_store)
         self._generation = 0
         self._snapshot = service.snapshot
         self._busy = False
@@ -219,6 +292,13 @@ class AccountController(QObject):
         self.destroyed.connect(self._mailbox.close)
         if auto_restore:
             self.restore()
+        if self._credential_startup_error:
+            QTimer.singleShot(
+                0,
+                lambda: self.credential_failed.emit(
+                    self._credential_startup_error or ""
+                ),
+            )
 
     @property
     def current_snapshot(self) -> AccountSnapshot:
@@ -235,6 +315,41 @@ class AccountController(QObject):
     @property
     def worker_is_daemon(self) -> bool:
         return all(worker.daemon for worker in self._workers)
+
+    @property
+    def remember_credentials(self) -> bool:
+        return self._remember_credentials
+
+    def request_credentials(self) -> bool:
+        credentials = self._remembered_credentials
+        if (
+            not self._remember_credentials
+            or credentials is None
+            or self._disposed
+        ):
+            return False
+        self.credentials_ready.emit(
+            credentials.username,
+            credentials.password,
+        )
+        return True
+
+    def set_remember_credentials(self, enabled: bool) -> bool:
+        enabled = bool(enabled)
+        self._remember_credentials = enabled
+        if enabled:
+            return True
+        self._remembered_credentials = None
+        if self.credential_store is None:
+            return True
+        try:
+            self.credential_store.delete()
+        except ProtectedStoreError:
+            self.credential_failed.emit(
+                "无法删除本地安全凭据 credentials.dat"
+            )
+            return False
+        return True
 
     @Slot()
     def restore(self) -> int | None:
@@ -270,6 +385,7 @@ class AccountController(QObject):
         if self._disposed:
             return None
         operation = self.service.prepare_logout()
+        self._remembered_credentials = None
         self._logout_pending = True
         return self._submit(
             "logout",
@@ -318,6 +434,7 @@ class AccountController(QObject):
             command,
             username,
             password,
+            command == "login" and self._remember_credentials,
         )
         if not self._mailbox.submit(job):
             return None
@@ -337,6 +454,12 @@ class AccountController(QObject):
                 self._logout_pending = False
             if outcome.snapshot is not None:
                 self._publish_snapshot(outcome.snapshot)
+            if outcome.remembered_credentials is not None:
+                self._remembered_credentials = (
+                    outcome.remembered_credentials
+                )
+            if outcome.credential_error is not None:
+                self.credential_failed.emit(outcome.credential_error)
             if outcome.error_code == AccountOperationCancelled.code:
                 continue
             if outcome.error_code is not None:

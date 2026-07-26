@@ -1,10 +1,11 @@
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -316,6 +317,23 @@ class SettingsPage(SectionPage):
 
     def _create_application_section(self, layout: QVBoxLayout) -> None:
         section = self._create_section(layout, "应用")
+
+        remember_control = QWidget(section)
+        remember_layout = QHBoxLayout(remember_control)
+        remember_layout.setContentsMargins(0, 0, 0, 0)
+        self.remember_credentials_checkbox = QCheckBox(
+            "记住账号和密码",
+            remember_control,
+        )
+        self.remember_credentials_checkbox.setObjectName(
+            "rememberCredentialsCheckBox"
+        )
+        self.remember_credentials_checkbox.toggled.connect(
+            self._on_remember_credentials_toggled
+        )
+        remember_layout.addWidget(self.remember_credentials_checkbox)
+        remember_layout.addStretch(1)
+        self._add_row(section, "登录凭据", remember_control)
 
         self.log_level_combo = QComboBox(section)
         self.log_level_combo.setObjectName("settingsComboBox")
@@ -767,6 +785,9 @@ class SettingsPage(SectionPage):
             window_height=self.window_height_spin.value(),
             startup_page=str(self.startup_page_combo.currentData()),
             theme=checked_theme,
+            remember_credentials=(
+                self.remember_credentials_checkbox.isChecked()
+            ),
         )
 
     def _normalized_directory_value(self, value: str) -> str:
@@ -798,6 +819,9 @@ class SettingsPage(SectionPage):
             self.window_height_spin.setValue(settings.window_height)
             self._select_combo(self.log_level_combo, settings.log_level)
             self._select_combo(self.startup_page_combo, settings.startup_page)
+            self.remember_credentials_checkbox.setChecked(
+                settings.remember_credentials
+            )
             self._sync_theme(settings.theme)
         finally:
             self._loading = False
@@ -814,6 +838,31 @@ class SettingsPage(SectionPage):
         except (TypeError, ValueError):
             theme = Theme.LIGHT
         self._theme_buttons[theme].setChecked(True)
+
+    def _on_remember_credentials_toggled(self, checked: bool) -> None:
+        if self._loading:
+            return
+        if checked:
+            answer = QMessageBox.warning(
+                self,
+                "开启记住密码",
+                (
+                    "账号和密码将使用 Windows DPAPI 加密并保存到程序目录，"
+                    "仅绑定当前 Windows 用户。仍存在本机读取风险：当前"
+                    "用户会话中的其他程序可能访问这些凭据。\n\n确定开启吗？"
+                ),
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                blocker = QSignalBlocker(
+                    self.remember_credentials_checkbox
+                )
+                self.remember_credentials_checkbox.setChecked(False)
+                del blocker
+                return
+        self._mark_dirty()
 
     def _select_multi_chapter_behavior(self, action: QAction) -> None:
         self._set_multi_chapter_behavior(str(action.data()))

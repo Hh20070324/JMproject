@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 from ..desktop_runtime import SingleInstance, configure_logging
 from ..account import AccountService
+from ..credentials import CredentialStore
 from ..downloader import DownloadWorker
 from ..favorites import FavoritesService
 from ..jmcomic_logging import install_safe_jmcomic_logging
@@ -248,7 +249,13 @@ def run_qt_app(
             paths=paths,
             api_route_provider=api_route_state.get,
         )
-        account_controller = AccountController(account_service)
+        account_controller = AccountController(
+            account_service,
+            credential_store=CredentialStore(
+                ProtectedStore.credentials(paths)
+            ),
+            remember_credentials=settings.remember_credentials,
+        )
         favorites_controller = FavoritesController(
             FavoritesService(
                 account_service,
@@ -271,6 +278,11 @@ def run_qt_app(
         )
         settings_controller.settings_changed.connect(
             lambda current: api_route_state.set(current.api_route)
+        )
+        settings_controller.settings_changed.connect(
+            lambda current: account_controller.set_remember_credentials(
+                current.remember_credentials
+            )
         )
         previous_hook = install_exception_hook(logger)
         window = MainWindow(
