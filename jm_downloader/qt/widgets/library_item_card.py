@@ -1,7 +1,8 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -28,8 +29,10 @@ def format_file_size(size: int) -> str:
 
 class LibraryItemCard(QFrame):
     open_requested = Signal(str, str)
+    view_task_requested = Signal(str)
     rebuild_requested = Signal(str)
     delete_requested = Signal(str, str)
+    selection_changed = Signal(str, bool)
 
     def __init__(self, item: LibraryItem, parent=None):
         super().__init__(parent)
@@ -44,6 +47,7 @@ class LibraryItemCard(QFrame):
         self._preview_revision = -1
         self._active = False
         self._busy = False
+        self._selection_mode = False
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -64,6 +68,14 @@ class LibraryItemCard(QFrame):
         heading_layout = QHBoxLayout()
         heading_layout.setContentsMargins(0, 0, 0, 0)
         heading_layout.setSpacing(8)
+        self.selection_checkbox = QCheckBox(details)
+        self.selection_checkbox.setObjectName("librarySelectionCheck")
+        self.selection_checkbox.setToolTip("选择这本漫画")
+        self.selection_checkbox.toggled.connect(
+            lambda checked: self._selection_toggled(checked)
+        )
+        self.selection_checkbox.hide()
+        heading_layout.addWidget(self.selection_checkbox)
         self.album_id_label = QLabel(details)
         self.album_id_label.setObjectName("libraryAlbumId")
         heading_layout.addWidget(self.album_id_label, 1)
@@ -114,6 +126,17 @@ class LibraryItemCard(QFrame):
         )
         actions_layout.addWidget(self.open_pdf_button)
 
+        self.view_task_button = self._make_icon_button(
+            actions,
+            "libraryViewTaskButton",
+            "在下载任务中定位这本漫画",
+            svg_icon("download"),
+        )
+        self.view_task_button.clicked.connect(
+            lambda: self.view_task_requested.emit(self.item.album_id)
+        )
+        actions_layout.addWidget(self.view_task_button)
+
         self.rebuild_button = QToolButton(actions)
         self.rebuild_button.setObjectName("libraryRebuildButton")
         self.rebuild_button.setToolButtonStyle(
@@ -161,6 +184,27 @@ class LibraryItemCard(QFrame):
         layout.addWidget(details, 1)
 
         self.update_item(item)
+
+    @property
+    def is_selected(self) -> bool:
+        return self.selection_checkbox.isChecked()
+
+    def set_selection_mode(self, enabled: bool) -> None:
+        self._selection_mode = bool(enabled)
+        self.selection_checkbox.setVisible(self._selection_mode)
+        if not self._selection_mode:
+            self.set_selected(False)
+        self._sync_activity()
+
+    def set_selected(self, selected: bool) -> None:
+        selected = bool(selected) and self._selection_mode
+        if selected == self.selection_checkbox.isChecked():
+            self._sync_selected_style()
+            return
+        blocker = QSignalBlocker(self.selection_checkbox)
+        self.selection_checkbox.setChecked(selected)
+        del blocker
+        self._sync_selected_style()
 
     @staticmethod
     def _make_icon_button(parent, object_name, tooltip, icon) -> QToolButton:
@@ -234,6 +278,11 @@ class LibraryItemCard(QFrame):
 
     def _sync_activity(self) -> None:
         locked = self._active or self._busy
+        if locked and self.selection_checkbox.isChecked():
+            self.selection_checkbox.setChecked(False)
+        self.selection_checkbox.setEnabled(
+            self._selection_mode and not locked
+        )
         self.rebuild_button.setEnabled(not locked)
         self.delete_button.setEnabled(not locked)
         self.delete_images_action.setEnabled(not locked and self.item.has_images)
@@ -265,6 +314,22 @@ class LibraryItemCard(QFrame):
         self.delete_button.setToolTip(tooltip or "删除本地文件")
         self.state_label.style().unpolish(self.state_label)
         self.state_label.style().polish(self.state_label)
+        self._sync_selected_style()
+
+    def _selection_toggled(self, checked: bool) -> None:
+        if checked and (self._active or self._busy):
+            self.set_selected(False)
+            return
+        self._sync_selected_style()
+        self.selection_changed.emit(self.item.album_id, bool(checked))
+
+    def _sync_selected_style(self) -> None:
+        self.setProperty(
+            "selected",
+            self._selection_mode and self.selection_checkbox.isChecked(),
+        )
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def reset_preview(self) -> None:
         self.preview.setPixmap(QPixmap())

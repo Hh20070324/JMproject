@@ -2,6 +2,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal, Slot
 
@@ -11,6 +12,13 @@ from ...tasks import TaskError, TaskManager
 
 
 LOGGER = logging.getLogger("jm-downloader")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchDeleteResult:
+    kind: str
+    succeeded: tuple[str, ...]
+    failures: tuple[tuple[str, str], ...]
 
 
 class _LibraryWorkerSignals(QObject):
@@ -56,6 +64,7 @@ class LibraryController(QObject):
     active_albums_changed = Signal(object)
     operation_succeeded = Signal(str, str)
     command_failed = Signal(str, str, str)
+    batch_delete_finished = Signal(str, object, object)
 
     MUTATION_COMMANDS = {
         "rebuild",
@@ -89,6 +98,7 @@ class LibraryController(QObject):
         self._thread_pool.setMaxThreadCount(2)
         self._listener = self.manager.add_listener()
         self._workers = {}
+        self._batch_albums = {}
         self._items: tuple[LibraryItem, ...] = ()
         self._busy_albums = set()
         self._busy_lock = threading.Lock()
@@ -165,6 +175,119 @@ class LibraryController(QObject):
             )
             return
         self._start_mutation(command, album_id)
+
+    @Slot(object, str)
+    def batch_delete(self, album_ids, kind: str) -> bool:
+        if self._disposed:
+            return False
+        command = {
+            "images": "delete_images",
+            "pdf": "delete_pdf",
+            "all": "delete_all",
+        }.get(str(kind))
+        if command is None:
+            self.command_failed.emit(
+                "batch_delete",
+                "",
+                "不支持的删除类型",
+            )
+            return False
+
+        normalized = []
+        seen = set()
+        for value in album_ids:
+            album_id = str(value)
+            if album_id in seen:
+                continue
+            seen.add(album_id)
+            normalized.append(album_id)
+        if not normalized:
+            self.command_failed.emit(
+                "batch_delete",
+                "",
+                "请先选择要删除的漫画",
+            )
+            return False
+
+        reserved = []
+        failures = []
+        for album_id in normalized:
+            try:
+                reserved.append(
+                    self.manager.begin_library_operation(album_id)
+                )
+            except TaskError as error:
+                failures.append((album_id, str(error)))
+
+        if not reserved:
+            self.batch_delete_finished.emit(
+                str(kind),
+                (),
+                tuple(failures),
+            )
+            return False
+
+        with self._busy_lock:
+            self._busy_albums.update(reserved)
+            busy = frozenset(self._busy_albums)
+        self.busy_albums_changed.emit(busy)
+
+        # An older scan must not republish entries removed by this batch.
+        self._requested_scan_id = self._next_request_id()
+        self._refresh_pending = False
+        method = {
+            "delete_images": self.library.delete_images,
+            "delete_pdf": self.library.delete_pdf,
+            "delete_all": self.library.delete_all,
+        }[command]
+
+        def execute():
+            succeeded = []
+            current_failures = list(failures)
+            for album_id in reserved:
+                try:
+                    method(album_id)
+                except Exception as error:
+                    current_failures.append(
+                        (
+                            album_id,
+                            self._batch_error_message(
+                                command,
+                                album_id,
+                                error,
+                            ),
+                        )
+                    )
+                else:
+                    succeeded.append(album_id)
+                finally:
+                    self.manager.end_library_operation(album_id)
+            return BatchDeleteResult(
+                str(kind),
+                tuple(succeeded),
+                tuple(current_failures),
+            )
+
+        request_id = self._next_request_id()
+        self._batch_albums[request_id] = tuple(reserved)
+        try:
+            self._submit(
+                request_id,
+                f"batch_{command}",
+                "",
+                execute,
+            )
+        except Exception as error:
+            self._batch_albums.pop(request_id, None)
+            for album_id in reserved:
+                self.manager.end_library_operation(album_id)
+            with self._busy_lock:
+                self._busy_albums.difference_update(reserved)
+                busy = frozenset(self._busy_albums)
+            self.busy_albums_changed.emit(busy)
+            self._report_error("batch_delete", "", error)
+            return False
+        return True
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         self.dispose()
@@ -266,6 +389,24 @@ class LibraryController(QObject):
         if command == "refresh":
             self._finish_scan(request_id, result, error)
             return
+        if command.startswith("batch_delete_"):
+            albums = self._batch_albums.pop(request_id, ())
+            with self._busy_lock:
+                self._busy_albums.difference_update(albums)
+                busy = frozenset(self._busy_albums)
+            self.busy_albums_changed.emit(busy)
+            if error is not None:
+                for item in albums:
+                    self.manager.end_library_operation(item)
+                self._report_error("batch_delete", "", error)
+            else:
+                self.batch_delete_finished.emit(
+                    result.kind,
+                    result.succeeded,
+                    result.failures,
+                )
+            self.refresh()
+            return
 
         with self._busy_lock:
             self._busy_albums.discard(album_id)
@@ -301,6 +442,22 @@ class LibraryController(QObject):
                 exc_info=(type(error), error, error.__traceback__),
             )
         self.command_failed.emit(command, album_id, str(error) or "操作失败")
+
+    @staticmethod
+    def _batch_error_message(
+        command: str,
+        album_id: str,
+        error: Exception,
+    ) -> str:
+        if isinstance(error, (LibraryError, TaskError, OSError)):
+            return str(error) or "操作失败"
+        LOGGER.error(
+            "Library batch command failed: %s %s",
+            command,
+            album_id,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        return "操作失败"
 
     def _set_loading(self, loading: bool) -> None:
         loading = bool(loading)

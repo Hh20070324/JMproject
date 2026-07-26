@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -546,8 +546,12 @@ class LibraryService:
                         pdf_files=pdf_files,
                         cbz_directory=cbz_directory,
                         cbz_files=cbz_files,
-                        downloaded_at_utc=self._manifest_downloaded_at(
-                            manifest
+                        downloaded_at_utc=(
+                            self._manifest_downloaded_at(manifest)
+                            or self._directory_downloaded_at(
+                                album_dir,
+                                pdf_album_dir,
+                            )
                         ),
                     )
                 # A valid manifest whose declared image layout has drifted is
@@ -567,6 +571,9 @@ class LibraryService:
                     pdf_files=(),
                     cbz_directory=None,
                     cbz_files=(),
+                    downloaded_at_utc=self._directory_downloaded_at(
+                        album_dir,
+                    ),
                 )
 
             pdf_files = self._list_pdf_files(pdf_album_dir)
@@ -585,6 +592,9 @@ class LibraryService:
                 pdf_files=pdf_files,
                 cbz_directory=pdf_album_dir if cbz_files else None,
                 cbz_files=cbz_files,
+                downloaded_at_utc=self._directory_downloaded_at(
+                    pdf_album_dir,
+                ),
             )
 
     @staticmethod
@@ -885,7 +895,34 @@ class LibraryService:
             for chapter in manifest.chapters
             if chapter.downloaded_at_utc is not None
         ]
-        return max(values) if values else None
+        return (
+            max(
+                values,
+                key=lambda value: datetime.fromisoformat(
+                    value[:-1] + "+00:00"
+                ),
+            )
+            if values
+            else None
+        )
+
+    @staticmethod
+    def _directory_downloaded_at(*directories: Path) -> str | None:
+        timestamps = []
+        for directory in directories:
+            if is_linked_directory(directory) or not directory.is_dir():
+                continue
+            try:
+                timestamps.append(directory.stat().st_mtime)
+            except OSError:
+                continue
+        if not timestamps:
+            return None
+        return (
+            datetime.fromtimestamp(max(timestamps), timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z")
+        )
 
     @staticmethod
     def _safe_child_directory(parent: Path, name: str) -> Path | None:

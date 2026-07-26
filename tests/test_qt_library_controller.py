@@ -233,6 +233,60 @@ class LibraryControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.busy_album_ids(), frozenset())
         self.assertFalse(self.manager.is_library_operation_active("1"))
 
+    def test_batch_delete_is_serial_and_continues_after_one_failure(self):
+        calls = []
+        active_calls = 0
+        max_active_calls = 0
+        worker_threads = []
+
+        def delete_all(album_id):
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            calls.append(album_id)
+            worker_threads.append(threading.current_thread())
+            try:
+                if album_id == "2":
+                    raise LibraryError("文件被占用")
+            finally:
+                active_calls -= 1
+
+        self.library.delete_all = delete_all
+        outcomes = []
+        self.controller.batch_delete_finished.connect(
+            lambda kind, succeeded, failures: outcomes.append(
+                (kind, tuple(succeeded), tuple(failures))
+            )
+        )
+
+        self.assertTrue(
+            self.controller.batch_delete(("1", "2", "3"), "all")
+        )
+        self.assertTrue(self._wait_until(lambda: bool(outcomes)))
+
+        self.assertEqual(calls, ["1", "2", "3"])
+        self.assertEqual(max_active_calls, 1)
+        self.assertTrue(
+            all(thread is not threading.main_thread() for thread in worker_threads)
+        )
+        self.assertEqual(
+            outcomes,
+            [
+                (
+                    "all",
+                    ("1", "3"),
+                    (("2", "文件被占用"),),
+                )
+            ],
+        )
+        self.assertEqual(self.controller.busy_album_ids(), frozenset())
+        self.assertFalse(
+            any(
+                self.manager.is_library_operation_active(album_id)
+                for album_id in ("1", "2", "3")
+            )
+        )
+
     def test_rejected_worker_submission_releases_mutation_reservation(self):
         controller = LibraryController(
             self.manager,

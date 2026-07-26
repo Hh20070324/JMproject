@@ -147,6 +147,9 @@ class MainWindow(QMainWindow):
         self._pages["favorites"].view_task_requested.connect(
             self._show_download_task
         )
+        self._pages["library"].view_task_requested.connect(
+            self._show_download_task
+        )
 
     @property
     def current_page(self) -> str:

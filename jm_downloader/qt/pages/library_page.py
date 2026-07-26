@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -9,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -31,6 +34,8 @@ if TYPE_CHECKING:
 
 
 class LibraryPage(SectionPage):
+    view_task_requested = Signal(str)
+
     FILTERS = (
         ("all", "全部"),
         ("images", "有图片"),
@@ -50,6 +55,9 @@ class LibraryPage(SectionPage):
         self._active_albums = frozenset()
         self._busy_albums = frozenset()
         self._visible_ids = ()
+        self._selected_ids = set()
+        self._selection_mode = False
+        self._sort_mode = "downloaded_desc"
         self._column_count = 0
         self._toolbar_compact = None
         self._loading = False
@@ -79,6 +87,10 @@ class LibraryPage(SectionPage):
                 self._set_active_albums
             )
             self._controller.command_failed.connect(self._show_command_error)
+            if hasattr(self._controller, "batch_delete_finished"):
+                self._controller.batch_delete_finished.connect(
+                    self._on_batch_delete_finished
+                )
             self._items = self._controller.list_items()
             self._has_loaded = bool(self._items)
             self._active_albums = self._controller.active_album_ids()
@@ -88,6 +100,8 @@ class LibraryPage(SectionPage):
             for button in self._filter_buttons.values():
                 button.setEnabled(False)
             self.refresh_button.setEnabled(False)
+            self.sort_button.setEnabled(False)
+            self.select_button.setEnabled(False)
 
         self._sync_rows()
         self._apply_filter(force=True)
@@ -103,7 +117,7 @@ class LibraryPage(SectionPage):
 
         self.search_input = QLineEdit(self.toolbar)
         self.search_input.setObjectName("librarySearchInput")
-        self.search_input.setPlaceholderText("搜索 JM 号")
+        self.search_input.setPlaceholderText("搜索 JM 号或漫画名称")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.setFixedHeight(42)
         self.search_input.textChanged.connect(self._apply_filter)
@@ -129,6 +143,37 @@ class LibraryPage(SectionPage):
             filter_layout.addWidget(button)
         self._filter_buttons["all"].setChecked(True)
 
+        self.sort_button = QToolButton(self.toolbar)
+        self.sort_button.setObjectName("librarySortButton")
+        self.sort_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.sort_button.setFixedSize(132, 38)
+        self.sort_menu = QMenu(self.sort_button)
+        self.sort_menu.setObjectName("librarySortMenu")
+        self._sort_actions = {}
+        for value, text in (
+            ("downloaded_desc", "下载时间（新到旧）"),
+            ("name_asc", "名称（A–Z）"),
+        ):
+            action = QAction(text, self.sort_menu)
+            action.setCheckable(True)
+            action.setData(value)
+            action.triggered.connect(
+                lambda _checked=False, mode=value: self._set_sort_mode(mode)
+            )
+            self.sort_menu.addAction(action)
+            self._sort_actions[value] = action
+        self.sort_button.setMenu(self.sort_menu)
+        self._set_sort_mode(self._sort_mode, apply=False)
+
+        self.select_button = QToolButton(self.toolbar)
+        self.select_button.setObjectName("librarySelectButton")
+        self.select_button.setText("选择")
+        self.select_button.setCheckable(True)
+        self.select_button.setFixedSize(70, 38)
+        self.select_button.toggled.connect(self._set_selection_mode)
+
         self.refresh_button = QToolButton(self.toolbar)
         self.refresh_button.setObjectName("refreshLibraryButton")
         self.refresh_button.setToolTip("刷新本地库")
@@ -143,6 +188,55 @@ class LibraryPage(SectionPage):
         )
         self.count_label.setMinimumWidth(84)
         self.content_layout.addWidget(self.toolbar)
+
+        self.selection_bar = QFrame(self.content)
+        self.selection_bar.setObjectName("librarySelectionBar")
+        selection_layout = QHBoxLayout(self.selection_bar)
+        selection_layout.setContentsMargins(10, 6, 8, 6)
+        selection_layout.setSpacing(8)
+        self.selected_count_label = QLabel("已选 0 本", self.selection_bar)
+        self.selected_count_label.setObjectName("librarySelectedCount")
+        selection_layout.addWidget(self.selected_count_label)
+        selection_layout.addStretch(1)
+        self.delete_selected_button = QToolButton(self.selection_bar)
+        self.delete_selected_button.setObjectName(
+            "libraryDeleteSelectedButton"
+        )
+        self.delete_selected_button.setText("删除所选")
+        self.delete_selected_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.delete_selected_menu = QMenu(
+            self.delete_selected_button
+        )
+        self.delete_selected_menu.setObjectName(
+            "libraryDeleteSelectedMenu"
+        )
+        for kind, text in (
+            ("images", "删除全部图片"),
+            ("pdf", "删除全部打包产物"),
+            ("all", "删除全部"),
+        ):
+            action = QAction(text, self.delete_selected_menu)
+            action.triggered.connect(
+                lambda _checked=False, value=kind: (
+                    self._confirm_batch_delete(value)
+                )
+            )
+            self.delete_selected_menu.addAction(action)
+        self.delete_selected_button.setMenu(self.delete_selected_menu)
+        selection_layout.addWidget(self.delete_selected_button)
+        self.cancel_selection_button = QToolButton(self.selection_bar)
+        self.cancel_selection_button.setObjectName(
+            "libraryCancelSelectionButton"
+        )
+        self.cancel_selection_button.setText("取消")
+        self.cancel_selection_button.clicked.connect(
+            lambda: self.select_button.setChecked(False)
+        )
+        selection_layout.addWidget(self.cancel_selection_button)
+        self.selection_bar.hide()
+        self.content_layout.addWidget(self.selection_bar)
 
     def _create_error_banner(self) -> None:
         self.error_banner = QFrame(self.content)
@@ -247,20 +341,26 @@ class LibraryPage(SectionPage):
         self._toolbar_compact = compact
         if compact:
             self.toolbar.setFixedHeight(88)
-            self.toolbar_grid.addWidget(self.search_input, 0, 0, 1, 3)
-            self.toolbar_grid.addWidget(self.count_label, 0, 3)
+            self.toolbar_grid.addWidget(self.search_input, 0, 0, 1, 4)
+            self.toolbar_grid.addWidget(self.count_label, 0, 4)
             self.toolbar_grid.addWidget(self.filter_segment, 1, 0, 1, 2)
-            self.toolbar_grid.addWidget(self.refresh_button, 1, 3)
+            self.toolbar_grid.addWidget(self.sort_button, 1, 2)
+            self.toolbar_grid.addWidget(self.select_button, 1, 3)
+            self.toolbar_grid.addWidget(self.refresh_button, 1, 4)
         else:
             self.toolbar.setFixedHeight(42)
             self.toolbar_grid.addWidget(self.search_input, 0, 0)
             self.toolbar_grid.addWidget(self.filter_segment, 0, 1)
-            self.toolbar_grid.addWidget(self.refresh_button, 0, 2)
-            self.toolbar_grid.addWidget(self.count_label, 0, 3)
+            self.toolbar_grid.addWidget(self.sort_button, 0, 2)
+            self.toolbar_grid.addWidget(self.select_button, 0, 3)
+            self.toolbar_grid.addWidget(self.refresh_button, 0, 4)
+            self.toolbar_grid.addWidget(self.count_label, 0, 5)
         self.toolbar_grid.setColumnStretch(0, 1)
         self.toolbar_grid.setColumnStretch(1, 0)
         self.toolbar_grid.setColumnStretch(2, 0)
         self.toolbar_grid.setColumnStretch(3, 0)
+        self.toolbar_grid.setColumnStretch(4, 0)
+        self.toolbar_grid.setColumnStretch(5, 0)
 
     def _set_items(self, items) -> None:
         self._items = list(items)
@@ -272,6 +372,7 @@ class LibraryPage(SectionPage):
 
     def _sync_rows(self) -> None:
         item_ids = {item.album_id for item in self._items}
+        self._selected_ids.intersection_update(item_ids)
         for album_id in tuple(self._rows):
             if album_id in item_ids:
                 continue
@@ -286,16 +387,25 @@ class LibraryPage(SectionPage):
             if row is None:
                 row = LibraryItemCard(item, self.library_canvas)
                 row.open_requested.connect(self._open_item)
+                row.view_task_requested.connect(
+                    self.view_task_requested.emit
+                )
                 row.rebuild_requested.connect(self._rebuild_pdf)
                 row.delete_requested.connect(self._confirm_delete)
+                row.selection_changed.connect(
+                    self._on_selection_changed
+                )
                 self._rows[item.album_id] = row
             else:
                 row.update_item(item)
+            row.set_selection_mode(self._selection_mode)
+            row.set_selected(item.album_id in self._selected_ids)
             row.set_activity(
                 item.album_id in self._active_albums,
                 item.album_id in self._busy_albums,
             )
             self._queue_preview(item, row)
+        self._sync_selection_controls()
 
     def _queue_preview(self, item: LibraryItem, row: LibraryItemCard) -> None:
         path = item.preview_path
@@ -332,11 +442,16 @@ class LibraryPage(SectionPage):
             return str(resolved), -1, -1
 
     def _apply_filter(self, *_args, force: bool = False) -> None:
-        query = self.search_input.text().strip().lower()
-        if query.startswith("#"):
-            query = query[1:].strip()
-        if query.startswith("jm"):
-            query = query[2:].strip()
+        query = " ".join(
+            self.search_input.text().split()
+        ).casefold()
+        id_query = query
+        if id_query.startswith("#"):
+            id_query = id_query[1:].strip()
+        if id_query.startswith("jm"):
+            candidate = id_query[2:].strip()
+            if candidate.isdigit():
+                id_query = candidate
         selected = next(
             (
                 value
@@ -348,7 +463,15 @@ class LibraryPage(SectionPage):
         visible = [
             item
             for item in self._items
-            if (not query or query in item.album_id.lower())
+            if (
+                not query
+                or id_query in item.album_id.casefold()
+                or (
+                    item.title is not None
+                    and query
+                    in " ".join(item.title.split()).casefold()
+                )
+            )
             and (
                 selected == "all"
                 or (selected == "images" and item.has_images)
@@ -358,10 +481,100 @@ class LibraryPage(SectionPage):
                 )
             )
         ]
+        if self._sort_mode == "downloaded_desc":
+            visible.sort(
+                key=lambda item: self._download_timestamp(
+                    item.downloaded_at_utc
+                ),
+                reverse=True,
+            )
+        else:
+            visible.sort(
+                key=lambda item: (
+                    (
+                        " ".join(item.title.split()).casefold()
+                        if item.title
+                        else "\uffff"
+                    ),
+                    int(item.album_id),
+                )
+            )
         self._visible_ids = tuple(item.album_id for item in visible)
         self.count_label.setText(f"{len(visible)} / {len(self._items)} 本")
         self._reflow_cards(force=True if force else False)
         self._sync_content_state()
+
+    @staticmethod
+    def _download_timestamp(value: str | None) -> float:
+        if not value:
+            return float("-inf")
+        try:
+            parsed = datetime.fromisoformat(
+                value[:-1] + "+00:00"
+                if value.endswith("Z")
+                else value
+            )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except (ValueError, OSError, OverflowError):
+            return float("-inf")
+
+    def _set_sort_mode(
+        self,
+        mode: str,
+        *,
+        apply: bool = True,
+    ) -> None:
+        if mode not in self._sort_actions:
+            return
+        self._sort_mode = mode
+        for value, action in self._sort_actions.items():
+            action.setChecked(value == mode)
+        self.sort_button.setText(
+            "下载时间 ▾" if mode == "downloaded_desc" else "名称 ▾"
+        )
+        if apply:
+            self._apply_filter(force=True)
+
+    def _set_selection_mode(self, enabled: bool) -> None:
+        self._selection_mode = bool(enabled)
+        self.select_button.setText(
+            "选择中" if self._selection_mode else "选择"
+        )
+        self.selection_bar.setVisible(self._selection_mode)
+        if not self._selection_mode:
+            self._selected_ids.clear()
+        for row in self._rows.values():
+            row.set_selection_mode(self._selection_mode)
+            row.set_selected(
+                row.item.album_id in self._selected_ids
+            )
+        self._sync_selection_controls()
+
+    def _on_selection_changed(
+        self,
+        album_id: str,
+        selected: bool,
+    ) -> None:
+        if selected:
+            if (
+                album_id in self._active_albums
+                or album_id in self._busy_albums
+            ):
+                return
+            self._selected_ids.add(album_id)
+        else:
+            self._selected_ids.discard(album_id)
+        self._sync_selection_controls()
+
+    def _sync_selection_controls(self) -> None:
+        self.selected_count_label.setText(
+            f"已选 {len(self._selected_ids)} 本"
+        )
+        self.delete_selected_button.setEnabled(
+            bool(self._selected_ids)
+        )
 
     def _reflow_cards(self, force: bool = False) -> None:
         available = max(1, self.scroll_area.viewport().width() - 8)
@@ -440,6 +653,10 @@ class LibraryPage(SectionPage):
                 album_id in self._active_albums,
                 album_id in self._busy_albums,
             )
+        self._selected_ids.difference_update(
+            self._active_albums | self._busy_albums
+        )
+        self._sync_selection_controls()
 
     def _on_thumbnail_ready(self, album_id: str, revision: int, image) -> None:
         row = self._rows.get(album_id)
@@ -491,6 +708,82 @@ class LibraryPage(SectionPage):
         )
         if answer == QMessageBox.StandardButton.Yes:
             self._controller.delete_item(album_id, kind)
+
+    def _confirm_batch_delete(self, kind: str) -> None:
+        if self._controller is None or not self._selected_ids:
+            return
+        labels = {
+            "images": "全部图片",
+            "pdf": "全部打包产物（PDF 与 CBZ）",
+            "all": "全部图片和打包产物",
+        }
+        target = labels.get(kind)
+        if target is None:
+            return
+        album_ids = tuple(
+            album_id
+            for album_id in self._visible_ids
+            if album_id in self._selected_ids
+        )
+        album_ids += tuple(
+            sorted(
+                self._selected_ids.difference(album_ids),
+                key=int,
+            )
+        )
+        answer = QMessageBox.question(
+            self,
+            "批量删除本地文件",
+            (
+                f"确定删除所选 {len(album_ids)} 本漫画的{target}吗？\n"
+                "程序会逐本处理；单本失败不会中断后续项目。此操作无法撤销。"
+            ),
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.delete_selected_button.setEnabled(False)
+        if not self._controller.batch_delete(album_ids, kind):
+            self._sync_selection_controls()
+
+    def _on_batch_delete_finished(
+        self,
+        _kind: str,
+        succeeded,
+        failures,
+    ) -> None:
+        succeeded = tuple(str(value) for value in succeeded)
+        failures = tuple(
+            (str(album_id), str(message))
+            for album_id, message in failures
+        )
+        self._selected_ids.difference_update(succeeded)
+        for album_id in succeeded:
+            row = self._rows.get(album_id)
+            if row is not None:
+                row.set_selected(False)
+        self._sync_selection_controls()
+
+        lines = [f"成功：{len(succeeded)} 本"]
+        if failures:
+            lines.append(f"失败：{len(failures)} 本")
+            lines.extend(
+                f"JM {album_id}：{message}"
+                for album_id, message in failures
+            )
+            QMessageBox.warning(
+                self,
+                "批量删除完成（部分失败）",
+                "\n".join(lines),
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "批量删除完成",
+                "\n".join(lines),
+            )
 
     def _show_command_error(
         self,

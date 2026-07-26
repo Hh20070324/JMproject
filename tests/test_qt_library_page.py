@@ -26,6 +26,7 @@ class FakeLibraryController(QObject):
     active_albums_changed = Signal(object)
     operation_succeeded = Signal(str, str)
     command_failed = Signal(str, str, str)
+    batch_delete_finished = Signal(str, object, object)
 
     def __init__(self, items=None):
         super().__init__()
@@ -59,6 +60,10 @@ class FakeLibraryController(QObject):
 
     def delete_item(self, album_id, kind):
         self.calls.append(("delete", album_id, kind))
+
+    def batch_delete(self, album_ids, kind):
+        self.calls.append(("batch_delete", tuple(album_ids), kind))
+        return True
 
 
 class LibraryPageTests(unittest.TestCase):
@@ -113,6 +118,74 @@ class LibraryPageTests(unittest.TestCase):
         self.app.processEvents()
         self.app.processEvents()
         self.assertEqual(self.page.column_count, 1)
+
+    def test_name_search_and_download_time_or_name_sort(self):
+        self.controller.items = [
+            replace(
+                self.items[0],
+                title="Zulu",
+                downloaded_at_utc="2026-07-20T00:00:00Z",
+            ),
+            replace(
+                self.items[1],
+                title="Alpha",
+                downloaded_at_utc="2026-07-22T00:00:00Z",
+            ),
+            replace(
+                self.items[2],
+                title="Middle",
+                downloaded_at_utc="2026-07-21T00:00:00Z",
+            ),
+        ]
+        self.controller.items_reset.emit(self.controller.items)
+
+        self.assertEqual(
+            self.page.visible_album_ids,
+            ("20", "30", "10"),
+        )
+        self.page.search_input.setText("alpha")
+        self.assertEqual(self.page.visible_album_ids, ("20",))
+        self.page.search_input.clear()
+        self.page.sort_menu.actions()[1].trigger()
+        self.assertEqual(
+            self.page.visible_album_ids,
+            ("20", "30", "10"),
+        )
+        self.assertEqual(
+            self.page.sort_button.popupMode(),
+            self.page.sort_button.ToolButtonPopupMode.InstantPopup,
+        )
+
+    def test_selection_mode_disables_active_and_starts_batch_delete(self):
+        self.controller.active = frozenset({"20"})
+        self.controller.active_albums_changed.emit(self.controller.active)
+        self.page.select_button.click()
+
+        first = self.page.item_card("10")
+        active = self.page.item_card("20")
+        third = self.page.item_card("30")
+        self.assertFalse(first.selection_checkbox.isHidden())
+        self.assertFalse(active.selection_checkbox.isEnabled())
+        first.selection_checkbox.click()
+        third.selection_checkbox.click()
+        self.assertEqual(self.page.selected_count_label.text(), "已选 2 本")
+
+        with patch(
+            "jm_downloader.qt.pages.library_page.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.page.delete_selected_menu.actions()[2].trigger()
+
+        self.assertEqual(
+            self.controller.calls,
+            [("batch_delete", ("10", "30"), "all")],
+        )
+        self.controller.batch_delete_finished.emit(
+            "all",
+            ("10",),
+            (("30", "文件被占用"),),
+        )
+        self.assertEqual(self.page.selected_count_label.text(), "已选 1 本")
 
     def test_card_actions_and_activity_state(self):
         card = self.page.item_card("30")

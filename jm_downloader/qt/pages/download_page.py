@@ -1132,10 +1132,22 @@ class DownloadPage(SectionPage):
 
     def _view_search_task(self, album_id: str) -> None:
         self.view_tabs.setCurrentIndex(1)
-        for row in self._task_rows.values():
-            if row.snapshot.album_id == album_id:
-                self.tasks_scroll.ensureWidgetVisible(row)
-                break
+        matches = [
+            row
+            for row in self._task_rows.values()
+            if row.snapshot.album_id == album_id
+        ]
+        if not matches:
+            return
+        target = next(
+            (
+                row
+                for row in matches
+                if row.snapshot.status is not TaskStatus.COMPLETED
+            ),
+            matches[-1],
+        )
+        self.tasks_scroll.ensureWidgetVisible(target)
 
     def _on_view_changed(self, index: int) -> None:
         self.view_stack.setCurrentIndex(index)

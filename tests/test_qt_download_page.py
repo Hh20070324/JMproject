@@ -349,6 +349,56 @@ class DownloadPageTests(unittest.TestCase):
         callback()
         self.assertEqual(self.controller.removed, [completed.id])
 
+    def test_show_task_prefers_earliest_incomplete_then_latest_completed(self):
+        page = self.window.page("downloads")
+        tasks = [
+            make_snapshot(
+                task_id="completed-old",
+                album_id="77",
+                status=TaskStatus.COMPLETED,
+            ),
+            make_snapshot(
+                task_id="pending-first",
+                album_id="77",
+                status=TaskStatus.PENDING,
+            ),
+            make_snapshot(
+                task_id="failed-second",
+                album_id="77",
+                status=TaskStatus.FAILED,
+            ),
+        ]
+        self.controller.tasks = tasks
+        with patch.object(
+            page.tasks_scroll,
+            "ensureWidgetVisible",
+        ) as ensure_visible:
+            self.controller.tasks_reset.emit(tasks)
+            self.app.processEvents()
+            page.show_task("77")
+
+        self.assertIs(
+            ensure_visible.call_args.args[0],
+            page._task_rows["pending-first"],
+        )
+
+        completed = [
+            replace(task, status=TaskStatus.COMPLETED)
+            for task in tasks
+        ]
+        with patch.object(
+            page.tasks_scroll,
+            "ensureWidgetVisible",
+        ) as ensure_visible:
+            self.controller.tasks_reset.emit(completed)
+            self.app.processEvents()
+            page.show_task("77")
+
+        self.assertIs(
+            ensure_visible.call_args.args[0],
+            page._task_rows["failed-second"],
+        )
+
     def test_close_with_active_task_requires_confirmation_and_waits_async(self):
         active = make_snapshot(status=TaskStatus.DOWNLOADING)
         self.controller.tasks = [active]

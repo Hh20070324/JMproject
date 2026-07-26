@@ -433,6 +433,49 @@ QToolButton#refreshLibraryButton:disabled {
     border-color: #343a36;
 }
 
+QToolButton#librarySortButton,
+QToolButton#librarySelectButton,
+QToolButton#libraryDeleteSelectedButton,
+QToolButton#libraryCancelSelectionButton {
+    background: #232725;
+    border: 1px solid #454c48;
+    border-radius: 6px;
+    color: #edf2ef;
+    padding: 0 9px;
+}
+
+QToolButton#librarySortButton:hover,
+QToolButton#librarySelectButton:hover,
+QToolButton#libraryDeleteSelectedButton:hover,
+QToolButton#libraryCancelSelectionButton:hover {
+    background: #343a36;
+    border-color: #59635d;
+}
+
+QToolButton#librarySelectButton:checked,
+QToolButton#libraryDeleteSelectedButton {
+    background: #58b989;
+    border-color: #58b989;
+    color: #101512;
+}
+
+QToolButton#libraryDeleteSelectedButton:disabled {
+    background: #202421;
+    border-color: #343a36;
+    color: #69736d;
+}
+
+QFrame#librarySelectionBar {
+    background: #20382d;
+    border: 1px solid #35664e;
+    border-radius: 6px;
+}
+
+QLabel#librarySelectedCount {
+    color: #79cfa3;
+    font-weight: 600;
+}
+
 QLabel#libraryCountLabel,
 QLabel#libraryMeta {
     color: #a8b0ab;
@@ -467,6 +510,27 @@ QFrame#libraryItemCard {
 
 QFrame#libraryItemCard:hover {
     border-color: #59635d;
+}
+
+QFrame#libraryItemCard[selected="true"] {
+    border: 2px solid #58b989;
+}
+
+QCheckBox#librarySelectionCheck::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #58b989;
+    border-radius: 5px;
+    background: #232725;
+}
+
+QCheckBox#librarySelectionCheck::indicator:checked {
+    background: #58b989;
+}
+
+QCheckBox#librarySelectionCheck::indicator:disabled {
+    border-color: #59635d;
+    background: #202421;
 }
 
 QLabel#libraryPreview {
@@ -525,23 +589,31 @@ QWidget#libraryActions QToolButton:disabled {
     color: #69736d;
 }
 
-QMenu#libraryDeleteMenu {
+QMenu#libraryDeleteMenu,
+QMenu#librarySortMenu,
+QMenu#libraryDeleteSelectedMenu {
     background: #232725;
     border: 1px solid #454c48;
     color: #edf2ef;
     padding: 4px;
 }
 
-QMenu#libraryDeleteMenu::item {
+QMenu#libraryDeleteMenu::item,
+QMenu#librarySortMenu::item,
+QMenu#libraryDeleteSelectedMenu::item {
     border-radius: 4px;
     padding: 7px 24px 7px 10px;
 }
 
-QMenu#libraryDeleteMenu::item:selected {
+QMenu#libraryDeleteMenu::item:selected,
+QMenu#librarySortMenu::item:selected,
+QMenu#libraryDeleteSelectedMenu::item:selected {
     background: #343a36;
 }
 
-QMenu#libraryDeleteMenu::item:disabled {
+QMenu#libraryDeleteMenu::item:disabled,
+QMenu#librarySortMenu::item:disabled,
+QMenu#libraryDeleteSelectedMenu::item:disabled {
     color: #69736d;
 }
 
