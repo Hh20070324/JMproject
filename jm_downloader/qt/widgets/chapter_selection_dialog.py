@@ -135,13 +135,6 @@ class ChapterSelectionDialog(QDialog):
         metadata.setObjectName("chapterDialogMetadata")
         root.addWidget(metadata)
 
-        self.selection_limit_label = QLabel(
-            f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章",
-            self,
-        )
-        self.selection_limit_label.setObjectName("chapterSelectionLimit")
-        root.addWidget(self.selection_limit_label)
-
         toolbar = QFrame(self)
         toolbar.setObjectName("chapterDialogToolbar")
         toolbar_layout = QHBoxLayout(toolbar)
@@ -155,12 +148,30 @@ class ChapterSelectionDialog(QDialog):
             self._apply_select_all
         )
         toolbar_layout.addWidget(self.select_all_checkbox)
+
+        self.include_downloaded_checkbox = QCheckBox(
+            "包含已下载章节",
+            toolbar,
+        )
+        self.include_downloaded_checkbox.setObjectName(
+            "chapterIncludeDownloaded"
+        )
+        self.include_downloaded_checkbox.toggled.connect(
+            self._set_include_downloaded
+        )
+        toolbar_layout.addWidget(self.include_downloaded_checkbox)
         toolbar_layout.addStretch(1)
 
         self.selection_summary = QLabel(toolbar)
         self.selection_summary.setObjectName("chapterSelectionSummary")
         toolbar_layout.addWidget(self.selection_summary)
         root.addWidget(toolbar)
+
+        self.validation_label = QLabel(self)
+        self.validation_label.setObjectName("chapterValidationIssues")
+        self.validation_label.setWordWrap(True)
+        self.validation_label.hide()
+        root.addWidget(self.validation_label)
 
         scroll = QScrollArea(self)
         scroll.setObjectName("chapterSelectionScroll")
@@ -179,12 +190,18 @@ class ChapterSelectionDialog(QDialog):
         chapter_layout.setSpacing(4)
 
         checkboxes = []
-        for position, chapter in enumerate(catalog.chapters):
-            text = f"第 {chapter.index} 章 · {chapter.title}"
+        for chapter in catalog.chapters:
+            downloaded_suffix = "（已下载）" if chapter.downloaded else ""
+            text = (
+                f"第 {chapter.index} 章 · {chapter.title}"
+                f"{downloaded_suffix}"
+            )
             checkbox = ElidedChapterCheckBox(text, content)
             checkbox.setObjectName("chapterItemCheck")
             checkbox.setProperty("chapter_id", chapter.photo_id)
-            checkbox.setChecked(position == 0)
+            checkbox.setProperty("downloaded", chapter.downloaded)
+            checkbox.setChecked(False)
+            checkbox.setEnabled(not chapter.downloaded)
             checkbox.toggled.connect(self._on_chapter_toggled)
             chapter_layout.addWidget(checkbox)
             checkboxes.append(checkbox)
@@ -213,7 +230,6 @@ class ChapterSelectionDialog(QDialog):
         footer.addWidget(self.confirm_button)
         root.addLayout(footer)
 
-        self._limit_message_visible = False
         self._update_selection_state()
 
     def selected_chapter_ids(self) -> tuple[str, ...]:
@@ -223,43 +239,66 @@ class ChapterSelectionDialog(QDialog):
             if checkbox.isChecked()
         )
 
+    def force_redownload_chapter_ids(self) -> tuple[str, ...]:
+        return tuple(
+            str(checkbox.property("chapter_id"))
+            for checkbox in self.chapter_checkboxes
+            if checkbox.isChecked()
+            and bool(checkbox.property("downloaded"))
+        )
+
+    def set_validation_issues(self, issues) -> None:
+        messages = tuple(
+            str(getattr(issue, "message", issue)).strip()
+            for issue in issues
+            if str(getattr(issue, "message", issue)).strip()
+        )
+        if messages:
+            self.validation_label.setText(
+                "请调整选择后重试：\n" + "\n".join(messages)
+            )
+            self.validation_label.show()
+        else:
+            self.validation_label.clear()
+            self.validation_label.hide()
+
     def _apply_select_all(self, state: Qt.CheckState) -> None:
         if state is Qt.CheckState.PartiallyChecked:
             return
         checked = state is Qt.CheckState.Checked
-        for position, checkbox in enumerate(self.chapter_checkboxes):
+        for checkbox in self.chapter_checkboxes:
             blocker = QSignalBlocker(checkbox)
-            checkbox.setChecked(
-                checked and position < MAX_CHAPTERS_PER_TASK
-            )
+            checkbox.setChecked(checked and checkbox.isEnabled())
             del blocker
-        self._limit_message_visible = False
+        self.set_validation_issues(())
         self._update_selection_state()
 
-    def _on_chapter_toggled(self, checked: bool) -> None:
-        checkbox = self.sender()
-        if (
-            checked
-            and isinstance(checkbox, QCheckBox)
-            and len(self.selected_chapter_ids()) > MAX_CHAPTERS_PER_TASK
-        ):
+    def _on_chapter_toggled(self, _checked: bool) -> None:
+        self.set_validation_issues(())
+        self._update_selection_state()
+
+    def _set_include_downloaded(self, include: bool) -> None:
+        for checkbox in self.chapter_checkboxes:
+            if not bool(checkbox.property("downloaded")):
+                continue
             blocker = QSignalBlocker(checkbox)
-            checkbox.setChecked(False)
+            if not include:
+                checkbox.setChecked(False)
+            checkbox.setEnabled(include)
             del blocker
-            self._limit_message_visible = True
-        else:
-            self._limit_message_visible = False
+        self.set_validation_issues(())
         self._update_selection_state()
 
     def _update_selection_state(self) -> None:
         selected_count = sum(
             checkbox.isChecked() for checkbox in self.chapter_checkboxes
         )
-        total_count = len(self.chapter_checkboxes)
-        checked_target = min(total_count, MAX_CHAPTERS_PER_TASK)
+        eligible_count = sum(
+            checkbox.isEnabled() for checkbox in self.chapter_checkboxes
+        )
         if selected_count == 0:
             state = Qt.CheckState.Unchecked
-        elif selected_count == checked_target:
+        elif eligible_count > 0 and selected_count == eligible_count:
             state = Qt.CheckState.Checked
         else:
             state = Qt.CheckState.PartiallyChecked
@@ -267,29 +306,15 @@ class ChapterSelectionDialog(QDialog):
         self.select_all_checkbox.setCheckState(state)
         del blocker
 
-        if self._limit_message_visible:
-            summary = (
-                f"已达到 {MAX_CHAPTERS_PER_TASK} 章上限，"
-                "请先取消一个已选章节"
-            )
+        task_count = (
+            (selected_count + MAX_CHAPTERS_PER_TASK - 1)
+            // MAX_CHAPTERS_PER_TASK
+        )
+        if eligible_count == 0 and not self.include_downloaded_checkbox.isChecked():
+            summary = "全部章节已下载"
         else:
-            summary = f"已选 {selected_count} / {total_count}"
-            if total_count > MAX_CHAPTERS_PER_TASK:
-                summary += f"（上限 {MAX_CHAPTERS_PER_TASK}）"
-        limit_reached = self._limit_message_visible
-        if (
-            self.selection_summary.property("limitReached")
-            != limit_reached
-        ):
-            self.selection_summary.setProperty(
-                "limitReached",
-                limit_reached,
-            )
-            self.selection_summary.style().unpolish(
-                self.selection_summary
-            )
-            self.selection_summary.style().polish(
-                self.selection_summary
+            summary = (
+                f"已选 {selected_count} 章，将创建 {task_count} 个任务"
             )
         self.selection_summary.setText(summary)
         self.confirm_button.setText(f"确认下载（{selected_count}）")

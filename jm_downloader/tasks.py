@@ -43,6 +43,21 @@ class InvalidChapterSelection(TaskError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class TaskBatchIssue:
+    code: str
+    message: str
+    chapter_ids: tuple[str, ...] = ()
+
+
+class TaskBatchValidationError(TaskConflict):
+    def __init__(self, issues: tuple[TaskBatchIssue, ...]):
+        if not issues:
+            raise ValueError("issues must not be empty")
+        self.issues = issues
+        super().__init__("\n".join(issue.message for issue in issues))
+
+
 def normalize_album_id(value: str) -> str:
     album_id = str(value).strip()
     if album_id[:2].lower() == "jm":
@@ -92,6 +107,37 @@ def normalize_selected_chapter_ids(
     return tuple(result)
 
 
+def normalize_batch_chapter_ids(values) -> tuple[str, ...]:
+    if values is None:
+        raise InvalidChapterSelection("批量章节选择不能为空")
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(
+        values,
+        (tuple, list),
+    ):
+        raise InvalidChapterSelection("章节选择无效")
+    result = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, str):
+            raise InvalidChapterSelection("章节编号无效")
+        value = value.strip()
+        if (
+            not value
+            or len(value) > 32
+            or not value.isascii()
+            or not value.isdigit()
+        ):
+            raise InvalidChapterSelection("章节编号无效")
+        value = str(int(value))
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    if not result:
+        raise InvalidChapterSelection("请至少选择一个章节")
+    return tuple(result)
+
+
 @dataclass(slots=True)
 class _WorkerHandle:
     generation: int
@@ -137,6 +183,7 @@ class TaskManager:
         self._listeners = []
         self._stopping = False
         self._library_operations = set()
+        self._deleting_albums = set()
         stored_tasks = self.task_store.load()
         self._persistence_started = bool(stored_tasks) or self.paths.tasks_file.exists()
         self._tasks = [self._restore_task(task) for task in stored_tasks]
@@ -165,49 +212,191 @@ class TaskManager:
         *,
         selected_chapter_ids=None,
     ) -> TaskSnapshot:
-        album_id = normalize_album_id(album_id)
-        selected_chapter_ids = normalize_selected_chapter_ids(
+        normalized = normalize_selected_chapter_ids(
             selected_chapter_ids
         )
+        created = self.add_batch(
+            album_id,
+            selected_chapter_ids=normalized,
+        )
+        return created[0]
+
+    def add_batch(
+        self,
+        album_id: str,
+        *,
+        selected_chapter_ids,
+        force_redownload_chapter_ids=(),
+    ) -> tuple[TaskSnapshot, ...]:
+        album_id = normalize_album_id(album_id)
+        if selected_chapter_ids is None:
+            selections = (None,)
+            selected = None
+        else:
+            try:
+                selected = normalize_batch_chapter_ids(
+                    selected_chapter_ids
+                )
+            except InvalidChapterSelection as error:
+                raise TaskBatchValidationError(
+                    (TaskBatchIssue("invalid", str(error)),)
+                ) from error
+            selections = tuple(
+                selected[offset : offset + MAX_CHAPTERS_PER_TASK]
+                for offset in range(0, len(selected), MAX_CHAPTERS_PER_TASK)
+            )
+        try:
+            forced = (
+                ()
+                if not force_redownload_chapter_ids
+                else normalize_batch_chapter_ids(
+                    force_redownload_chapter_ids
+                )
+            )
+        except InvalidChapterSelection as error:
+            raise TaskBatchValidationError(
+                (TaskBatchIssue("invalid_force", str(error)),)
+            ) from error
+        if selected is None and forced:
+            raise TaskBatchValidationError(
+                (
+                    TaskBatchIssue(
+                        "invalid_force",
+                        "整本任务不能标记强制重下章节",
+                        forced,
+                    ),
+                )
+            )
+        unknown_forced = tuple(
+            value for value in forced if value not in (selected or ())
+        )
+        if unknown_forced:
+            raise TaskBatchValidationError(
+                (
+                    TaskBatchIssue(
+                        "invalid_force",
+                        "强制重下章节不在当前选择中",
+                        unknown_forced,
+                    ),
+                )
+            )
+
         with self._lock:
             if self._stopping:
                 raise InvalidTaskState("任务管理器正在关闭")
-            if album_id in self._library_operations:
-                raise TaskConflict("该漫画正在进行本地库操作")
-            if any(
-                task["album_id"] == album_id
-                and task["status"] != TaskStatus.COMPLETED.value
-                for task in self._tasks
+            if (
+                album_id in self._library_operations
+                or album_id in self._deleting_albums
             ):
-                raise TaskConflict("该车号已在队列中")
+                raise TaskConflict("该漫画正在进行本地库操作")
+            existing_scopes = tuple(
+                task.get("selected_chapter_ids")
+                for task in self._tasks
+                if (
+                    task["album_id"] == album_id
+                    and task["status"] != TaskStatus.COMPLETED.value
+                )
+            )
+            issues = self._overlap_issues(selections, existing_scopes)
+            if issues:
+                raise TaskBatchValidationError(issues)
 
-            task = {
-                "id": str(uuid.uuid4())[:8],
-                "album_id": album_id,
-                "title": None,
-                "cover_url": None,
-                "preview_revision": 0,
-                "_preview_path": None,
-                "status": TaskStatus.PENDING.value,
-                "progress": 0,
-                "chapter": "",
-                "page": "",
-                "error": None,
-                "pdf_directory": None,
-                "cbz_directory": None,
-                "run_generation": 0,
-                "_cancel_deferred": False,
-                "_paths": self.paths,
-                "selected_chapter_ids": selected_chapter_ids,
-                "config": self._new_task_config,
-            }
-            self._tasks.append(task)
-            created = self._snapshot_locked(task)
+            tasks = []
+            for selection in selections:
+                task_forced = tuple(
+                    value
+                    for value in forced
+                    if selection is not None and value in selection
+                )
+                task = self._new_task_locked(
+                    album_id,
+                    selection,
+                    task_forced,
+                )
+                self._tasks.append(task)
+                tasks.append(task)
+            created = tuple(
+                self._snapshot_locked(task) for task in tasks
+            )
 
         self._queue_persist()
-        self.broadcast({"type": "added", "id": task["id"], "album_id": album_id})
+        for task in tasks:
+            self.broadcast(
+                {
+                    "type": "added",
+                    "id": task["id"],
+                    "album_id": album_id,
+                }
+            )
         self.schedule()
         return created
+
+    def _new_task_locked(
+        self,
+        album_id: str,
+        selected_chapter_ids: tuple[str, ...] | None,
+        force_redownload_chapter_ids: tuple[str, ...],
+    ) -> dict:
+        return {
+            "id": str(uuid.uuid4())[:8],
+            "album_id": album_id,
+            "title": None,
+            "cover_url": None,
+            "preview_revision": 0,
+            "_preview_path": None,
+            "status": TaskStatus.PENDING.value,
+            "progress": 0,
+            "chapter": "",
+            "page": "",
+            "error": None,
+            "pdf_directory": None,
+            "cbz_directory": None,
+            "run_generation": 0,
+            "_cancel_deferred": False,
+            "_restart_after_album_delete": False,
+            "_paths": self.paths,
+            "selected_chapter_ids": selected_chapter_ids,
+            "force_redownload_chapter_ids": (
+                force_redownload_chapter_ids
+            ),
+            "config": self._new_task_config,
+        }
+
+    @staticmethod
+    def _overlap_issues(
+        selections: tuple[tuple[str, ...] | None, ...],
+        existing_scopes: tuple[tuple[str, ...] | None, ...],
+    ) -> tuple[TaskBatchIssue, ...]:
+        if not existing_scopes:
+            return ()
+        issues = []
+        for selection in selections:
+            if selection is None:
+                issues.append(
+                    TaskBatchIssue(
+                        "overlap",
+                        "该漫画已在队列中，整本任务会与其重叠",
+                    )
+                )
+                continue
+            overlap = set()
+            for scope in existing_scopes:
+                if scope is None:
+                    overlap.update(selection)
+                else:
+                    overlap.update(set(selection).intersection(scope))
+            ordered = tuple(
+                value for value in selection if value in overlap
+            )
+            if ordered:
+                issues.append(
+                    TaskBatchIssue(
+                        "overlap",
+                        "以下章节已在队列中：" + "、".join(ordered),
+                        ordered,
+                    )
+                )
+        return tuple(issues)
 
     def is_active(self, album_id: str) -> bool:
         with self._lock:
@@ -215,14 +404,17 @@ class TaskManager:
                 task["album_id"] == album_id
                 and task["status"] in self.RESERVED_STATUSES
                 for task in self._tasks
-            )
+            ) or album_id in self._deleting_albums
 
     def begin_library_operation(self, album_id: str) -> str:
         album_id = normalize_album_id(album_id)
         with self._lock:
             if self._stopping:
                 raise InvalidTaskState("任务管理器正在关闭")
-            if album_id in self._library_operations:
+            if (
+                album_id in self._library_operations
+                or album_id in self._deleting_albums
+            ):
                 raise TaskConflict("该漫画正在进行本地库操作")
             if any(
                 task["album_id"] == album_id
@@ -290,6 +482,8 @@ class TaskManager:
                     if task["status"] in self.SHUTDOWN_PAUSE_STATUSES:
                         task["status"] = TaskStatus.PAUSED.value
                         task["_cancel_deferred"] = False
+                        task["_restart_after_album_delete"] = False
+                self._deleting_albums.clear()
                 handles = list(self._workers.items())
 
             self._queue_persist()
@@ -380,7 +574,10 @@ class TaskManager:
                     TaskStatus.FAILED.value,
                 ):
                     raise InvalidTaskState("任务当前不可继续")
-                if task["album_id"] in self._library_operations:
+                if (
+                    task["album_id"] in self._library_operations
+                    or task["album_id"] in self._deleting_albums
+                ):
                     raise TaskConflict("该漫画正在进行本地库操作")
                 task.update(
                     status=TaskStatus.PENDING.value,
@@ -399,6 +596,73 @@ class TaskManager:
 
     def prepare_cancel(self, task_id: str) -> None:
         self._request_cancel(task_id, deferred=True)
+
+    def prepare_album_delete(self, task_id: str) -> None:
+        handles = []
+        changed = []
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._stopping:
+                    raise InvalidTaskState("任务管理器正在关闭")
+                target = self._find_locked(task_id)
+                album_id = target["album_id"]
+                if album_id in self._deleting_albums:
+                    raise TaskConflict("该漫画正在删除本地文件")
+                if target["status"] not in (
+                    TaskStatus.PENDING.value,
+                    TaskStatus.PAUSED.value,
+                    TaskStatus.FAILED.value,
+                    *self.ACTIVE_STATUSES,
+                ):
+                    raise InvalidTaskState("任务当前不可取消")
+
+                self._deleting_albums.add(album_id)
+                for task in self._tasks:
+                    if (
+                        task["album_id"] != album_id
+                        or task["id"] == task_id
+                    ):
+                        continue
+                    if task["status"] not in self.ACTIVE_STATUSES:
+                        continue
+                    handle = self._workers.get(task["id"])
+                    if handle is None:
+                        task.update(
+                            status=TaskStatus.PENDING.value,
+                            error=None,
+                        )
+                    else:
+                        task["status"] = TaskStatus.PAUSING.value
+                        task["_restart_after_album_delete"] = True
+                        handles.append(handle)
+                        changed.append(
+                            (task["id"], TaskStatus.PAUSING.value)
+                        )
+
+                target_handle = self._workers.get(task_id)
+                target.update(
+                    status=TaskStatus.CANCELLING.value,
+                    _cancel_deferred=True,
+                )
+                if target_handle is not None:
+                    handles.append(target_handle)
+                ready = not any(
+                    task["album_id"] == album_id
+                    and task["id"] in self._workers
+                    for task in self._tasks
+                )
+
+            self._queue_persist()
+            for changed_id, status in changed:
+                self.broadcast({"type": status, "id": changed_id})
+            self.broadcast(
+                {
+                    "type": "cancel_ready" if ready else "cancelling",
+                    "id": task_id,
+                }
+            )
+            for handle in handles:
+                handle.worker.stop()
 
     def _request_cancel(self, task_id: str, *, deferred: bool) -> None:
         handle = None
@@ -466,7 +730,15 @@ class TaskManager:
                 or not task.get("_cancel_deferred")
             ):
                 raise InvalidTaskState("取消任务尚未准备完成")
+            album_id = task["album_id"]
+            if album_id in self._deleting_albums and any(
+                other["album_id"] == album_id
+                and other["id"] in self._workers
+                for other in self._tasks
+            ):
+                raise InvalidTaskState("同漫画下载尚未完全停止")
             self._tasks.remove(task)
+            self._deleting_albums.discard(album_id)
         self._queue_persist()
         self.broadcast({"type": "cancelled", "id": task_id})
         self.schedule()
@@ -480,15 +752,18 @@ class TaskManager:
                 or not task.get("_cancel_deferred")
             ):
                 raise InvalidTaskState("取消任务尚未准备完成")
+            album_id = task["album_id"]
             task.update(
                 status=TaskStatus.FAILED.value,
                 error=str(error) or "删除下载文件失败",
                 _cancel_deferred=False,
             )
+            self._deleting_albums.discard(album_id)
         self._queue_persist()
         self.broadcast(
             {"type": "failed", "id": task_id, "error": task["error"]}
         )
+        self.schedule()
 
     def get_task_paths(self, task_id: str) -> AppPaths:
         with self._lock:
@@ -500,10 +775,29 @@ class TaskManager:
                 task = self._find_locked(task_id)
             except TaskNotFound:
                 return False
-            return (
+            ready = (
                 task["status"] == TaskStatus.CANCELLING.value
                 and task_id not in self._workers
                 and bool(task.get("_cancel_deferred"))
+            )
+            if not ready:
+                return False
+            if task["album_id"] not in self._deleting_albums:
+                return True
+            return not any(
+                other["album_id"] == task["album_id"]
+                and other["id"] in self._workers
+                for other in self._tasks
+            )
+
+    def related_task_count(self, task_id: str) -> int:
+        with self._lock:
+            task = self._find_locked(task_id)
+            return sum(
+                other["album_id"] == task["album_id"]
+                and other["id"] != task_id
+                and other["status"] != TaskStatus.COMPLETED.value
+                for other in self._tasks
             )
 
     def restore_preview(self, task_id: str) -> Path | None:
@@ -604,7 +898,18 @@ class TaskManager:
                     (
                         task
                         for task in self._tasks
-                        if task["status"] == TaskStatus.PENDING.value
+                        if (
+                            task["status"] == TaskStatus.PENDING.value
+                            and task["album_id"]
+                            not in self._library_operations
+                            and task["album_id"]
+                            not in self._deleting_albums
+                            and not any(
+                                other["album_id"] == task["album_id"]
+                                and other["id"] in self._workers
+                                for other in self._tasks
+                            )
+                        )
                     ),
                     None,
                 )
@@ -615,6 +920,10 @@ class TaskManager:
                 album_id = task["album_id"]
                 task_paths = task["_paths"]
                 selected_chapter_ids = task.get("selected_chapter_ids")
+                force_redownload_chapter_ids = task.get(
+                    "force_redownload_chapter_ids",
+                    (),
+                )
                 config = task["config"]
                 task["run_generation"] += 1
                 generation = task["run_generation"]
@@ -626,6 +935,9 @@ class TaskManager:
                     album_id,
                     paths=task_paths,
                     selected_chapter_ids=selected_chapter_ids,
+                    force_redownload_chapter_ids=(
+                        force_redownload_chapter_ids
+                    ),
                     task_config=config,
                     **callbacks,
                 )
@@ -711,6 +1023,10 @@ class TaskManager:
             cbz_directory=(
                 Path(cbz_directory) if cbz_directory else None
             ),
+            force_redownload_chapter_ids=task.get(
+                "force_redownload_chapter_ids",
+                (),
+            ),
         )
 
     def _restore_task(self, stored: StoredTask) -> dict:
@@ -735,8 +1051,12 @@ class TaskManager:
             "cbz_directory": None,
             "run_generation": 0,
             "_cancel_deferred": False,
+            "_restart_after_album_delete": False,
             "_paths": stored.to_paths(self.paths.root),
             "selected_chapter_ids": stored.selected_chapter_ids,
+            "force_redownload_chapter_ids": (
+                stored.force_redownload_chapter_ids
+            ),
             "config": stored.config,
         }
 
@@ -1029,7 +1349,7 @@ class TaskManager:
         self.schedule()
 
     def _on_stopped(self, task_id: str, generation: int) -> None:
-        event = None
+        events = []
         with self._lock:
             try:
                 task = self._find_locked(task_id)
@@ -1039,23 +1359,72 @@ class TaskManager:
                 return
 
             status = task["status"]
+            album_id = task["album_id"]
             self._retire_worker_locked(task_id, generation)
             if status == TaskStatus.PAUSING.value:
-                task.update(status=TaskStatus.PAUSED.value, error=None)
-                event = {"type": "paused", "id": task_id}
+                if task.get("_restart_after_album_delete"):
+                    task.update(
+                        status=TaskStatus.PENDING.value,
+                        error=None,
+                        _restart_after_album_delete=False,
+                    )
+                    events.append({"type": "pending", "id": task_id})
+                else:
+                    task.update(status=TaskStatus.PAUSED.value, error=None)
+                    events.append({"type": "paused", "id": task_id})
             elif status == TaskStatus.CANCELLING.value:
                 if task.get("_cancel_deferred"):
-                    event = {"type": "cancel_ready", "id": task_id}
+                    if not any(
+                        other["album_id"] == album_id
+                        and other["id"] in self._workers
+                        for other in self._tasks
+                    ):
+                        events.append(
+                            {"type": "cancel_ready", "id": task_id}
+                        )
                 else:
                     self._tasks.remove(task)
-                    event = {"type": "cancelled", "id": task_id}
+                    events.append({"type": "cancelled", "id": task_id})
             elif status in self.ACTIVE_STATUSES:
                 message = "下载任务意外停止，请点击继续重试"
                 task.update(status=TaskStatus.FAILED.value, error=message)
-                event = {"type": "failed", "id": task_id, "error": message}
+                events.append(
+                    {"type": "failed", "id": task_id, "error": message}
+                )
 
-        if event is None:
+            if (
+                album_id in self._deleting_albums
+                and not any(
+                    other["album_id"] == album_id
+                    and other["id"] in self._workers
+                    for other in self._tasks
+                )
+            ):
+                target = next(
+                    (
+                        other
+                        for other in self._tasks
+                        if (
+                            other["album_id"] == album_id
+                            and other["status"]
+                            == TaskStatus.CANCELLING.value
+                            and other.get("_cancel_deferred")
+                        )
+                    ),
+                    None,
+                )
+                if target is not None and not any(
+                    event.get("type") == "cancel_ready"
+                    and event.get("id") == target["id"]
+                    for event in events
+                ):
+                    events.append(
+                        {"type": "cancel_ready", "id": target["id"]}
+                    )
+
+        if not events:
             return
         self._queue_persist()
-        self.broadcast(event)
+        for event in events:
+            self.broadcast(event)
         self.schedule()

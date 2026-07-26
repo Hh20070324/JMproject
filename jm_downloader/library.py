@@ -8,6 +8,8 @@ import threading
 import uuid
 from pathlib import Path
 
+from PIL import Image, UnidentifiedImageError
+
 from .models import (
     ChapterManifest,
     ChapterManifestEntry,
@@ -447,6 +449,60 @@ class LibraryService:
                     continue
             return items
 
+    def completed_chapter_ids(self, album_id: str) -> frozenset[str]:
+        """Return chapters whose manifest and image files are both complete."""
+
+        with self._lock:
+            self._require_album_id(album_id)
+            album_dir = self._album_directory(
+                self.paths.pictures,
+                album_id,
+            )
+            if not album_dir.is_dir():
+                return frozenset()
+            try:
+                manifest = ChapterManifestStore(self.paths).load(album_id)
+            except ChapterManifestError:
+                return frozenset()
+            if manifest is None:
+                return frozenset()
+            title_dir = self._safe_child_directory(
+                album_dir,
+                manifest.album_dir_name,
+            )
+            if title_dir is None:
+                return frozenset()
+
+            completed = set()
+            for chapter in manifest.chapters:
+                chapter_dir = title_dir
+                if chapter.dir_name:
+                    chapter_dir = self._safe_child_directory(
+                        title_dir,
+                        chapter.dir_name,
+                    )
+                    if chapter_dir is None:
+                        continue
+                try:
+                    images = self._list_direct_images(chapter_dir)
+                except LibraryNotFound:
+                    continue
+                if (
+                    chapter.page_count <= 0
+                    or len(images) != chapter.page_count
+                    or not self._images_match_format(
+                        images,
+                        chapter.image_format,
+                    )
+                    or not all(
+                        self._is_valid_image_file(path)
+                        for path in images
+                    )
+                ):
+                    continue
+                completed.add(chapter.photo_id)
+            return frozenset(completed)
+
     def get_item(self, album_id: str) -> LibraryItem:
         with self._lock:
             self._require_album_id(album_id)
@@ -872,6 +928,32 @@ class LibraryService:
                 images.append(resolved)
         images.sort(key=lambda path: natural_key(path.name))
         return tuple(images)
+
+    @staticmethod
+    def _images_match_format(
+        images: tuple[Path, ...],
+        image_format: str | None,
+    ) -> bool:
+        if image_format is None:
+            return True
+        if image_format == "jpg":
+            allowed = {".jpg", ".jpeg"}
+        elif image_format == "png":
+            allowed = {".png"}
+        else:
+            return False
+        return all(path.suffix.lower() in allowed for path in images)
+
+    @staticmethod
+    def _is_valid_image_file(path: Path) -> bool:
+        try:
+            if path.stat().st_size <= 0:
+                return False
+            with Image.open(path) as image:
+                image.verify()
+            return True
+        except (OSError, ValueError, UnidentifiedImageError):
+            return False
 
     @staticmethod
     def _list_direct_pdfs(directory: Path) -> tuple[Path, ...]:

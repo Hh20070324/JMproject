@@ -91,6 +91,7 @@ class ChapterSnapshot:
     photo_id: str
     index: int
     title: str
+    downloaded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +207,7 @@ class TaskSnapshot:
     selected_chapter_ids: tuple[str, ...] | None = None
     config: TaskConfig = TaskConfig()
     cbz_directory: Path | None = None
+    force_redownload_chapter_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

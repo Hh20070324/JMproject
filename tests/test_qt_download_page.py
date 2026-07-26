@@ -76,6 +76,15 @@ class FakeDownloadController(QObject):
             for task in self.tasks
         )
 
+    def related_task_count(self, task_id):
+        target = next(task for task in self.tasks if task.id == task_id)
+        return sum(
+            task.id != task_id
+            and task.album_id == target.album_id
+            and task.status != TaskStatus.COMPLETED
+            for task in self.tasks
+        )
+
     def begin_shutdown(self, timeout=5.0):
         self.shutdown_timeouts.append(timeout)
 
@@ -248,8 +257,12 @@ class DownloadPageTests(unittest.TestCase):
     def test_cancel_dialog_routes_keep_delete_and_back_choices(self):
         page = self.window.page("downloads")
         paused = make_snapshot(status=TaskStatus.PAUSED)
-        self.controller.tasks = [paused]
-        self.controller.tasks_reset.emit([paused])
+        related = make_snapshot(
+            task_id="task-related",
+            album_id=paused.album_id,
+        )
+        self.controller.tasks = [paused, related]
+        self.controller.tasks_reset.emit([paused, related])
         self.app.processEvents()
 
         class FakeMessageBox:
@@ -318,7 +331,9 @@ class DownloadPageTests(unittest.TestCase):
         warning_text = FakeMessageBox.warning_calls[-1][2]
         self.assertIn("全部章节图片", warning_text)
         self.assertIn("PDF", warning_text)
+        self.assertIn("CBZ", warning_text)
         self.assertIn("本次任务开始前", warning_text)
+        self.assertIn("还有 1 个任务", warning_text)
 
     def test_completed_task_is_scheduled_for_removal_after_five_seconds(self):
         page = self.window.page("downloads")

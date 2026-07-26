@@ -19,7 +19,7 @@ from .settings import (
 )
 
 
-TASK_STORE_SCHEMA_VERSION = 3
+TASK_STORE_SCHEMA_VERSION = 4
 PERSISTED_TASK_STATUSES = {
     TaskStatus.PENDING,
     TaskStatus.FETCHING,
@@ -60,6 +60,7 @@ class StoredTask:
     pictures_directory: str
     pdf_directory: str
     selected_chapter_ids: tuple[str, ...] | None = None
+    force_redownload_chapter_ids: tuple[str, ...] = ()
     config: TaskConfig = TaskConfig(
         download_engine="sync",
     )
@@ -88,6 +89,7 @@ class StoredTask:
         self._validate_text("页数摘要", self.page)
         self._validate_optional_text("任务错误", self.error)
         self._validate_selected_chapter_ids()
+        self._validate_force_redownload_chapter_ids()
         try:
             self.config.validate()
         except (AttributeError, ValueError) as error:
@@ -113,6 +115,9 @@ class StoredTask:
                 list(self.selected_chapter_ids)
                 if self.selected_chapter_ids is not None
                 else None
+            ),
+            "force_redownload_chapter_ids": list(
+                self.force_redownload_chapter_ids
             ),
             "download": {
                 "engine": self.config.download_engine,
@@ -151,6 +156,7 @@ class StoredTask:
         data: Mapping,
         *,
         legacy_schema: bool = False,
+        legacy_force_redownload: bool = False,
         legacy_config: TaskConfig | None = None,
     ) -> "StoredTask":
         if not isinstance(data, Mapping):
@@ -177,6 +183,11 @@ class StoredTask:
                 None
                 if legacy_schema
                 else cls._decode_selected_chapter_ids(data)
+            ),
+            force_redownload_chapter_ids=(
+                ()
+                if legacy_force_redownload
+                else cls._decode_force_redownload_chapter_ids(data)
             ),
             config=(
                 legacy_config
@@ -212,6 +223,10 @@ class StoredTask:
                 paths.pdfs,
             ),
             selected_chapter_ids=task.get("selected_chapter_ids"),
+            force_redownload_chapter_ids=task.get(
+                "force_redownload_chapter_ids",
+                (),
+            ),
             config=task["config"],
         )
 
@@ -258,6 +273,21 @@ class StoredTask:
             ):
                 raise TaskStoreValidationError("已选章节编号无效")
 
+    def _validate_force_redownload_chapter_ids(self) -> None:
+        values = self.force_redownload_chapter_ids
+        if not isinstance(values, tuple):
+            raise TaskStoreValidationError("强制重下章节必须是数组")
+        if len(values) != len(set(values)):
+            raise TaskStoreValidationError("强制重下章节不能重复")
+        selected = self.selected_chapter_ids
+        if values and selected is None:
+            raise TaskStoreValidationError("整本任务不能标记强制重下章节")
+        for value in values:
+            if value not in (selected or ()):
+                raise TaskStoreValidationError(
+                    "强制重下章节必须包含在已选章节中"
+                )
+
     @staticmethod
     def _decode_selected_chapter_ids(
         data: Mapping,
@@ -269,6 +299,15 @@ class StoredTask:
             return None
         if not isinstance(values, list):
             raise TaskStoreValidationError("已选章节必须是数组")
+        return tuple(values)
+
+    @staticmethod
+    def _decode_force_redownload_chapter_ids(
+        data: Mapping,
+    ) -> tuple[str, ...]:
+        values = data.get("force_redownload_chapter_ids")
+        if not isinstance(values, list):
+            raise TaskStoreValidationError("强制重下章节必须是数组")
         return tuple(values)
 
     @staticmethod
@@ -468,7 +507,7 @@ class TaskStore:
                 f"任务记录版本 {version} 高于程序支持的版本 "
                 f"{TASK_STORE_SCHEMA_VERSION}"
             )
-        if version not in {1, 2, TASK_STORE_SCHEMA_VERSION}:
+        if version not in {1, 2, 3, TASK_STORE_SCHEMA_VERSION}:
             raise TaskStoreValidationError("不支持的任务记录版本")
         values = data.get("tasks")
         if not isinstance(values, list):
@@ -477,9 +516,10 @@ class TaskStore:
             StoredTask.from_dict(
                 value,
                 legacy_schema=version == 1,
+                legacy_force_redownload=version < 4,
                 legacy_config=(
                     legacy_task_config or TaskConfig(download_engine="sync")
-                    if version < TASK_STORE_SCHEMA_VERSION
+                    if version < 3
                     else None
                 ),
             )

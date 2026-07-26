@@ -141,8 +141,8 @@ class ChapterTaskContractTests(unittest.TestCase):
         finally:
             restored.shutdown(timeout=2)
 
-    def test_schema_v3_round_trip_preserves_selected_chapter_ids(self):
-        self.assertEqual(TASK_STORE_SCHEMA_VERSION, 3)
+    def test_schema_v4_round_trip_preserves_selected_chapter_ids(self):
+        self.assertEqual(TASK_STORE_SCHEMA_VERSION, 4)
         store = TaskStore(self.paths)
         task = StoredTask(
             id="abc12345",
@@ -163,7 +163,7 @@ class ChapterTaskContractTests(unittest.TestCase):
             payload = json.loads(
                 self.paths.tasks_file.read_text(encoding="utf-8")
             )
-            self.assertEqual(payload["schema_version"], 3)
+            self.assertEqual(payload["schema_version"], 4)
             self.assertEqual(
                 payload["tasks"][0]["selected_chapter_ids"],
                 ["301", "303"],
@@ -210,7 +210,7 @@ class ChapterTaskContractTests(unittest.TestCase):
             migrated = json.loads(
                 self.paths.tasks_file.read_text(encoding="utf-8")
             )
-            self.assertEqual(migrated["schema_version"], 3)
+            self.assertEqual(migrated["schema_version"], 4)
             self.assertIsNone(
                 migrated["tasks"][0]["selected_chapter_ids"]
             )
@@ -223,8 +223,8 @@ class ChapterTaskContractTests(unittest.TestCase):
         finally:
             manager.shutdown(timeout=2)
 
-    def test_schema_newer_than_v3_is_refused_without_rewrite(self):
-        raw = b'{"schema_version": 4, "tasks": []}'
+    def test_schema_newer_than_v4_is_refused_without_rewrite(self):
+        raw = b'{"schema_version": 5, "tasks": []}'
         self.paths.tasks_file.write_bytes(raw)
 
         with self.assertRaises(UnsupportedTaskStoreVersion):

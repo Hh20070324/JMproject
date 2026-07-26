@@ -2,15 +2,28 @@ import logging
 import queue
 import threading
 import time
+from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ...library import LibraryError, LibraryNotFound, LibraryService
 from ...models import TaskSnapshot, TaskStatus
-from ...tasks import TaskError, TaskManager
+from ...tasks import (
+    TaskBatchIssue,
+    TaskBatchValidationError,
+    TaskError,
+    TaskManager,
+)
 
 
 LOGGER = logging.getLogger("jm-downloader")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchAddOutcome:
+    snapshots: tuple[TaskSnapshot, ...] = ()
+    issues: tuple[TaskBatchIssue, ...] = ()
+    error: str | None = None
 
 
 class DownloadController(QObject):
@@ -83,6 +96,29 @@ class DownloadController(QObject):
         self._publish(force=True)
         return snapshot
 
+    def add_task_batch(
+        self,
+        album_id: str,
+        selected_chapter_ids,
+        force_redownload_chapter_ids=(),
+    ) -> BatchAddOutcome:
+        try:
+            created = self.manager.add_batch(
+                album_id,
+                selected_chapter_ids=selected_chapter_ids,
+                force_redownload_chapter_ids=(
+                    force_redownload_chapter_ids
+                ),
+            )
+        except TaskBatchValidationError as error:
+            return BatchAddOutcome(issues=error.issues, error=str(error))
+        except TaskError as error:
+            message = str(error)
+            self.command_failed.emit("add", message)
+            return BatchAddOutcome(error=message)
+        self._publish(force=True)
+        return BatchAddOutcome(snapshots=created)
+
     @Slot(str)
     def retry_task(self, task_id: str) -> None:
         try:
@@ -122,7 +158,7 @@ class DownloadController(QObject):
                         paths,
                     )
                 try:
-                    self.manager.prepare_cancel(task_id)
+                    self.manager.prepare_album_delete(task_id)
                 except Exception:
                     with self._cleanup_lock:
                         self._delete_intents.pop(task_id, None)
@@ -161,6 +197,12 @@ class DownloadController(QObject):
 
     def has_active_tasks(self) -> bool:
         return self.manager.has_active_tasks()
+
+    def related_task_count(self, task_id: str) -> int:
+        try:
+            return self.manager.related_task_count(task_id)
+        except TaskError:
+            return 0
 
     def stop_all(self) -> None:
         self.manager.stop_all()

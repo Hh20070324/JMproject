@@ -80,7 +80,7 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         self.dialog.deleteLater()
         self.app.processEvents()
 
-    def test_preserves_official_order_and_defaults_to_only_first_chapter(self):
+    def test_preserves_official_order_and_defaults_to_no_selection(self):
         boxes = tuple(self.dialog.chapter_checkboxes)
 
         self.assertEqual(
@@ -97,14 +97,14 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         )
         self.assertEqual(
             [box.isChecked() for box in boxes],
-            [True, False, False],
+            [False, False, False],
         )
         self.assertEqual(
             self.dialog.selected_chapter_ids(),
-            ("photo-first",),
+            (),
         )
-        self.assertTrue(self.dialog.confirm_button.isEnabled())
-        self.assertIn("1", self.dialog.confirm_button.text())
+        self.assertFalse(self.dialog.confirm_button.isEnabled())
+        self.assertIn("0", self.dialog.confirm_button.text())
 
     def test_select_all_is_three_state_and_tracks_individual_choices(self):
         select_all = self.dialog.select_all_checkbox
@@ -114,7 +114,7 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         self.assertTrue(select_all.isTristate())
         self.assertEqual(
             select_all.checkState(),
-            Qt.CheckState.PartiallyChecked,
+            Qt.CheckState.Unchecked,
         )
 
         select_all.click()
@@ -148,6 +148,7 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         select_all = self.dialog.select_all_checkbox
         boxes = tuple(self.dialog.chapter_checkboxes)
 
+        boxes[0].click()
         self.assertEqual(
             select_all.checkState(),
             Qt.CheckState.PartiallyChecked,
@@ -167,7 +168,7 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         self.assertTrue(all(box.isChecked() for box in boxes))
         self.assertEqual(select_all.checkState(), Qt.CheckState.Checked)
 
-    def test_selection_limit_rejects_eleventh_then_allows_replacement(self):
+    def test_more_than_ten_chapters_are_selectable_and_show_batch_count(self):
         dialog = ChapterSelectionDialog(
             make_catalog(
                 *(
@@ -184,47 +185,36 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         dialog.show()
         self.app.processEvents()
         try:
-            self.assertTrue(dialog.selection_limit_label.isVisible())
-            self.assertEqual(
-                dialog.selection_limit_label.text(),
-                f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章",
-            )
-
             dialog.select_all_checkbox.click()
             self.app.processEvents()
             self.assertEqual(
                 len(dialog.selected_chapter_ids()),
-                MAX_CHAPTERS_PER_TASK,
+                12,
             )
             self.assertEqual(
                 dialog.select_all_checkbox.checkState(),
                 Qt.CheckState.Checked,
             )
-            self.assertIn("上限 10", dialog.selection_summary.text())
+            self.assertEqual(
+                dialog.selection_summary.text(),
+                "已选 12 章，将创建 2 个任务",
+            )
 
             boxes = dialog.chapter_checkboxes
             boxes[MAX_CHAPTERS_PER_TASK].click()
             self.app.processEvents()
             self.assertFalse(boxes[MAX_CHAPTERS_PER_TASK].isChecked())
-            self.assertTrue(
-                dialog.selection_summary.property("limitReached")
-            )
             self.assertEqual(
                 dialog.selection_summary.text(),
-                "已达到 10 章上限，请先取消一个已选章节",
+                "已选 11 章，将创建 2 个任务",
             )
 
-            boxes[0].click()
             boxes[MAX_CHAPTERS_PER_TASK].click()
             self.app.processEvents()
-            self.assertFalse(boxes[0].isChecked())
             self.assertTrue(boxes[MAX_CHAPTERS_PER_TASK].isChecked())
             self.assertEqual(
                 len(dialog.selected_chapter_ids()),
-                MAX_CHAPTERS_PER_TASK,
-            )
-            self.assertFalse(
-                dialog.selection_summary.property("limitReached")
+                12,
             )
         finally:
             dialog.close()
@@ -249,8 +239,6 @@ class ChapterSelectionDialogTests(unittest.TestCase):
     def test_confirm_is_disabled_until_at_least_one_chapter_is_selected(self):
         first, second, _third = self.dialog.chapter_checkboxes
 
-        first.click()
-        self.app.processEvents()
         self.assertEqual(self.dialog.selected_chapter_ids(), ())
         self.assertFalse(self.dialog.confirm_button.isEnabled())
         self.assertIn("0", self.dialog.confirm_button.text())
@@ -271,19 +259,54 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         third.click()
         self.app.processEvents()
 
-        self.assertTrue(first.isChecked())
+        self.assertFalse(first.isChecked())
         self.assertTrue(third.isChecked())
         self.assertEqual(
             self.dialog.selected_chapter_ids(),
-            ("photo-first", "photo-second", "photo-third"),
+            ("photo-second", "photo-third"),
         )
 
         second.click()
         self.app.processEvents()
         self.assertEqual(
             self.dialog.selected_chapter_ids(),
-            ("photo-first", "photo-third"),
+            ("photo-third",),
         )
+
+    def test_downloaded_chapters_require_explicit_include_toggle(self):
+        dialog = ChapterSelectionDialog(
+            make_catalog(
+                ChapterSnapshot("301", 1, "已完成", downloaded=True),
+                ChapterSnapshot("302", 2, "未完成"),
+            )
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dialog.show()
+        self.app.processEvents()
+        try:
+            downloaded, available = dialog.chapter_checkboxes
+            self.assertFalse(downloaded.isEnabled())
+            self.assertIn("已下载", downloaded.full_text)
+
+            dialog.select_all_checkbox.click()
+            self.assertEqual(dialog.selected_chapter_ids(), ("302",))
+            self.assertEqual(dialog.force_redownload_chapter_ids(), ())
+
+            dialog.include_downloaded_checkbox.click()
+            dialog.select_all_checkbox.click()
+            self.app.processEvents()
+            self.assertEqual(
+                dialog.selected_chapter_ids(),
+                ("301", "302"),
+            )
+            self.assertEqual(
+                dialog.force_redownload_chapter_ids(),
+                ("301",),
+            )
+            self.assertTrue(available.isChecked())
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
     def test_long_markup_like_title_is_elided_with_safe_full_tooltip(self):
         title = "<b>不是粗体</b>" + "非常长的章节标题" * 24

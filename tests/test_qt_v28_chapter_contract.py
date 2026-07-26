@@ -55,7 +55,7 @@ class OversizedDialog:
         pass
 
 
-class ChapterSelectionLimitUiContractTests(unittest.TestCase):
+class ChapterSelectionBatchUiContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(
@@ -73,12 +73,8 @@ class ChapterSelectionLimitUiContractTests(unittest.TestCase):
         self.dialog.deleteLater()
         self.app.processEvents()
 
-    def test_limit_is_visible_and_select_all_chooses_only_first_ten(self):
+    def test_select_all_has_no_ui_limit_and_reports_two_batches(self):
         self.assertEqual(models.MAX_CHAPTERS_PER_TASK, 10)
-        self.assertEqual(
-            self.dialog.selection_limit_label.text(),
-            "每次最多选择 10 章",
-        )
 
         self.dialog.select_all_checkbox.click()
         self.app.processEvents()
@@ -91,35 +87,34 @@ class ChapterSelectionLimitUiContractTests(unittest.TestCase):
             )
             if checkbox.isChecked()
         ]
-        self.assertEqual(checked, list(range(1, 11)))
+        self.assertEqual(checked, list(range(1, 13)))
         self.assertEqual(
             self.dialog.select_all_checkbox.checkState(),
             Qt.CheckState.Checked,
         )
-        self.assertIn("上限 10", self.dialog.selection_summary.text())
+        self.assertEqual(
+            self.dialog.selection_summary.text(),
+            "已选 12 章，将创建 2 个任务",
+        )
 
         self.dialog.select_all_checkbox.click()
         self.app.processEvents()
         self.assertEqual(self.dialog.selected_chapter_ids(), ())
 
-    def test_eleventh_choice_is_rejected_but_can_replace_an_existing_choice(self):
+    def test_eleventh_choice_remains_selectable(self):
         boxes = self.dialog.chapter_checkboxes
         self.dialog.select_all_checkbox.click()
         boxes[10].click()
         self.app.processEvents()
 
         self.assertFalse(boxes[10].isChecked())
-        self.assertIn("已达到 10 章上限", self.dialog.selection_summary.text())
-
-        boxes[0].click()
         boxes[10].click()
         self.app.processEvents()
 
-        self.assertFalse(boxes[0].isChecked())
         self.assertTrue(boxes[10].isChecked())
-        self.assertEqual(len(self.dialog.selected_chapter_ids()), 10)
+        self.assertEqual(len(self.dialog.selected_chapter_ids()), 12)
 
-    def test_download_flow_rejects_oversized_dialog_result_before_controller(self):
+    def test_download_flow_splits_oversized_dialog_result(self):
         controller = DownloadController()
         flow = ChapterDownloadFlow(
             controller,
@@ -132,10 +127,14 @@ class ChapterSelectionLimitUiContractTests(unittest.TestCase):
 
         flow.start("123", catalog())
 
-        self.assertEqual(controller.calls, [])
-        self.assertEqual(len(failures), 1)
-        self.assertEqual(failures[0][0], "123")
-        self.assertIn("最多选择 10 章", failures[0][1])
+        self.assertEqual(
+            controller.calls,
+            [
+                ("123", tuple(str(value) for value in range(301, 311))),
+                ("123", ("311",)),
+            ],
+        )
+        self.assertEqual(failures, [])
         flow.dispose()
         flow.deleteLater()
 

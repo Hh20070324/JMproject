@@ -233,7 +233,10 @@ def run_qt_app(
             api_route_provider=api_route_state.get,
         )
         search_controller = SearchController(search_service)
-        chapter_catalog_controller = ChapterCatalogController(search_service)
+        chapter_catalog_controller = ChapterCatalogController(
+            search_service,
+            downloaded_detector=library.completed_chapter_ids,
+        )
         account_service = AccountService(
             paths=paths,
             api_route_provider=api_route_state.get,

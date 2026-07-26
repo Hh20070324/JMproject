@@ -1,7 +1,7 @@
 import logging
 import threading
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
@@ -26,6 +26,7 @@ DEFAULT_RESULT_INTERVAL_MS = 15
 class _ChapterJob:
     request_id: int
     album_id: str
+    cached_catalog: ChapterCatalogSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,8 +40,9 @@ class _ChapterOutcome:
 class _ChapterMailbox:
     """Thread-safe queues that do not retain QObject or widget references."""
 
-    def __init__(self, service):
+    def __init__(self, service, downloaded_detector=None):
         self.service = service
+        self.downloaded_detector = downloaded_detector
         self.condition = threading.Condition()
         self.pending: deque[_ChapterJob] = deque()
         self.completed: deque[_ChapterOutcome] = deque()
@@ -89,12 +91,38 @@ def _chapter_worker(mailbox: _ChapterMailbox) -> None:
         if job is None:
             return
         try:
-            catalog = mailbox.service.fetch_chapters(job.album_id)
+            catalog = (
+                job.cached_catalog
+                if job.cached_catalog is not None
+                else mailbox.service.fetch_chapters(job.album_id)
+            )
             if (
                 not isinstance(catalog, ChapterCatalogSnapshot)
                 or catalog.album_id != job.album_id
             ):
                 raise SearchResponseError()
+            if mailbox.downloaded_detector is not None:
+                try:
+                    downloaded = frozenset(
+                        mailbox.downloaded_detector(job.album_id)
+                    )
+                except Exception:
+                    LOGGER.warning(
+                        "Downloaded chapter detection failed: album_id=%s",
+                        job.album_id,
+                        exc_info=True,
+                    )
+                    downloaded = frozenset()
+                catalog = replace(
+                    catalog,
+                    chapters=tuple(
+                        replace(
+                            chapter,
+                            downloaded=chapter.photo_id in downloaded,
+                        )
+                        for chapter in catalog.chapters
+                    ),
+                )
             outcome = _ChapterOutcome(job, catalog=catalog)
         except Exception as error:
             code, message = _safe_error_payload(error)
@@ -141,6 +169,7 @@ class ChapterCatalogController(QObject):
     def __init__(
         self,
         service: SearchService | None = None,
+        downloaded_detector=None,
         parent=None,
         result_interval_ms: int = DEFAULT_RESULT_INTERVAL_MS,
     ):
@@ -149,7 +178,10 @@ class ChapterCatalogController(QObject):
             raise ValueError("result_interval_ms must be a positive integer")
 
         self.service = service if service is not None else SearchService()
-        self._mailbox = _ChapterMailbox(self.service)
+        self._mailbox = _ChapterMailbox(
+            self.service,
+            downloaded_detector,
+        )
         self._next_request_id = 0
         self._cache: dict[str, ChapterCatalogSnapshot] = {}
         self._inflight: dict[str, int] = {}
@@ -184,12 +216,15 @@ class ChapterCatalogController(QObject):
 
         self._next_request_id += 1
         request_id = self._next_request_id
-        job = _ChapterJob(request_id, album_id)
         cached = self._cache.get(album_id)
         if cached is not None:
-            self._mailbox.publish(_ChapterOutcome(job, catalog=cached))
+            if not self._mailbox.submit(
+                _ChapterJob(request_id, album_id, cached)
+            ):
+                return None
             return request_id
 
+        job = _ChapterJob(request_id, album_id)
         self._inflight[album_id] = request_id
         if not self._mailbox.submit(job):
             self._inflight.pop(album_id, None)

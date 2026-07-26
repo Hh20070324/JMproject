@@ -53,9 +53,10 @@ class ChapterDownloadFlow(QObject):
                 return None
             if self.chapter_controller is not None:
                 self.chapter_controller.prime(catalog)
-            self.catalog_resolved.emit(normalized_id, catalog)
-            self._create_selected_task(normalized_id, catalog)
-            return normalized_id
+            else:
+                self.catalog_resolved.emit(normalized_id, catalog)
+                self._create_selected_task(normalized_id, catalog)
+                return normalized_id
 
         # Keep controller-less test and recovery surfaces compatible. The
         # production app always supplies the asynchronous chapter controller.
@@ -125,39 +126,75 @@ class ChapterDownloadFlow(QObject):
         album_id: str,
         catalog: ChapterCatalogSnapshot,
     ) -> None:
-        chapters = catalog.chapters
-        if len(chapters) == 1:
-            selected_ids = (chapters[0].photo_id,)
-        else:
-            dialog = self.dialog_factory(catalog, self.dialog_parent)
-            try:
+        dialog = self.dialog_factory(catalog, self.dialog_parent)
+        try:
+            while True:
                 if dialog.exec() != QDialog.DialogCode.Accepted:
                     self.task_skipped.emit(album_id)
                     return
                 selected_ids = dialog.selected_chapter_ids()
-            finally:
-                dialog.deleteLater()
-            if not selected_ids:
-                self.task_skipped.emit(album_id)
-                return
-            if len(selected_ids) > MAX_CHAPTERS_PER_TASK:
-                self.failed.emit(
-                    album_id,
-                    (
-                        f"每次最多选择 {MAX_CHAPTERS_PER_TASK} 章，"
-                        "请重新选择"
-                    ),
+                if not selected_ids:
+                    self.task_skipped.emit(album_id)
+                    return
+                forced_ids = (
+                    dialog.force_redownload_chapter_ids()
+                    if hasattr(
+                        dialog,
+                        "force_redownload_chapter_ids",
+                    )
+                    else ()
                 )
-                return
 
-        snapshot = self.download_controller.add_task(
-            album_id,
-            selected_chapter_ids=selected_ids,
-        )
-        if snapshot is not None:
-            self.task_created.emit(album_id, snapshot)
-        else:
-            self.task_skipped.emit(album_id)
+                add_batch = getattr(
+                    self.download_controller,
+                    "add_task_batch",
+                    None,
+                )
+                if add_batch is None:
+                    snapshots = []
+                    for offset in range(
+                        0,
+                        len(selected_ids),
+                        MAX_CHAPTERS_PER_TASK,
+                    ):
+                        snapshot = self.download_controller.add_task(
+                            album_id,
+                            selected_chapter_ids=selected_ids[
+                                offset : offset
+                                + MAX_CHAPTERS_PER_TASK
+                            ],
+                        )
+                        if snapshot is None:
+                            self.task_skipped.emit(album_id)
+                            return
+                        snapshots.append(snapshot)
+                    issues = ()
+                    error = None
+                else:
+                    outcome = add_batch(
+                        album_id,
+                        selected_ids,
+                        forced_ids,
+                    )
+                    snapshots = outcome.snapshots
+                    issues = outcome.issues
+                    error = outcome.error
+
+                if issues:
+                    if hasattr(dialog, "set_validation_issues"):
+                        dialog.set_validation_issues(issues)
+                    continue
+                if error:
+                    self.failed.emit(album_id, error)
+                    return
+                if not snapshots:
+                    self.task_skipped.emit(album_id)
+                    return
+                for snapshot in snapshots:
+                    self.task_created.emit(album_id, snapshot)
+                return
+        finally:
+            dialog.deleteLater()
 
 
 __all__ = ["ChapterDownloadFlow"]

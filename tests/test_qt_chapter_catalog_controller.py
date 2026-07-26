@@ -122,6 +122,33 @@ class ChapterCatalogControllerTests(unittest.TestCase):
         self.assertEqual(busy_events, [("123", True), ("123", False)])
         self.assertFalse(controller.is_busy("123"))
 
+    def test_downloaded_detection_runs_off_qt_thread_and_marks_catalog(self):
+        detector_threads = []
+
+        def detect(_album_id):
+            detector_threads.append(threading.current_thread())
+            return {"12302"}
+
+        service = ControlledChapterService()
+        controller = ChapterCatalogController(
+            service,
+            downloaded_detector=detect,
+        )
+        self.controllers.append(controller)
+        deliveries = []
+        controller.catalog_ready.connect(
+            lambda _request_id, value: deliveries.append(value)
+        )
+
+        controller.request("123")
+
+        self.assertTrue(self.wait_until(lambda: bool(deliveries)))
+        self.assertIsNot(detector_threads[0], threading.main_thread())
+        self.assertEqual(
+            [chapter.downloaded for chapter in deliveries[0].chapters],
+            [False, True],
+        )
+
     def test_completed_catalog_is_cached_for_the_session(self):
         service = ControlledChapterService()
         controller = self.make_controller(service)

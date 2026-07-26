@@ -19,6 +19,7 @@ from jm_downloader.models import (
     SearchRequest,
     SearchResultSnapshot,
 )
+from jm_downloader.qt.chapter_download_flow import ChapterDownloadFlow
 from jm_downloader.qt.pages.download_page import DownloadPage
 from jm_downloader.qt.pages.favorites_page import FavoritesPage
 
@@ -108,6 +109,55 @@ class RejectedSelectionDialog(AcceptedSelectionDialog):
         return QDialog.DialogCode.Rejected
 
 
+class RetryingSelectionDialog(AcceptedSelectionDialog):
+    instance = None
+
+    def __init__(self, value, _parent=None):
+        super().__init__(value, _parent)
+        self.exec_count = 0
+        self.issues = ()
+        self.__class__.instance = self
+
+    def exec(self):
+        self.exec_count += 1
+        return QDialog.DialogCode.Accepted
+
+    def set_validation_issues(self, issues):
+        self.issues = tuple(issues)
+
+
+class BatchRetryDownloadController(FakeDownloadController):
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = []
+
+    def add_task_batch(
+        self,
+        album_id,
+        selected_chapter_ids,
+        force_redownload_chapter_ids=(),
+    ):
+        self.batch_calls.append(
+            (
+                album_id,
+                tuple(selected_chapter_ids),
+                tuple(force_redownload_chapter_ids),
+            )
+        )
+        if len(self.batch_calls) == 1:
+            issue = SimpleNamespace(message="章节 2 已在队列中")
+            return SimpleNamespace(
+                snapshots=(),
+                issues=(issue,),
+                error="章节 2 已在队列中",
+            )
+        return SimpleNamespace(
+            snapshots=(SimpleNamespace(album_id=album_id),),
+            issues=(),
+            error=None,
+        )
+
+
 class ChapterDownloadIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -140,6 +190,8 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
 
     def test_search_card_loads_catalog_and_single_chapter_queues_directly(self):
         page = self.make_download_page()
+        AcceptedSelectionDialog.selected_ids = ("1231",)
+        page._chapter_flow.dialog_factory = AcceptedSelectionDialog
         request = SearchRequest(SearchMode.GENERAL, "title")
         page._search_generation = 1
         page._on_search_results(
@@ -200,8 +252,13 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
 
         card.action_button.click()
 
-        self.assertEqual(self.chapter_controller.requests, [])
+        self.assertEqual(
+            self.chapter_controller.requests,
+            [(1, "350234")],
+        )
         self.assertEqual(self.chapter_controller.primed, [value])
+        self.chapter_controller.resolve(1, value)
+        self.app.processEvents()
         self.assertEqual(
             self.download_controller.added,
             [("350234", AcceptedSelectionDialog.selected_ids)],
@@ -238,6 +295,10 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
         )
         favorites_page.show()
         self.pages.append(favorites_page)
+        AcceptedSelectionDialog.selected_ids = ("4561",)
+        favorites_page._chapter_flow.dialog_factory = (
+            AcceptedSelectionDialog
+        )
         favorites_page._set_cards((FavoriteItemSnapshot("456", "Title"),))
         favorite_card = favorites_page.favorite_cards[0]
 
@@ -261,6 +322,7 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
         page.download_input.setText("JM789")
 
         page.download_button.click()
+        self.chapter_controller.resolve(1, value)
         self.app.processEvents()
 
         self.assertEqual(self.download_controller.added, [])
@@ -294,6 +356,8 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
 
     def test_same_album_inflight_from_card_and_input_creates_one_task(self):
         page = self.make_download_page()
+        AcceptedSelectionDialog.selected_ids = ("1231",)
+        page._chapter_flow.dialog_factory = AcceptedSelectionDialog
         request = SearchRequest(SearchMode.GENERAL, "title")
         page._search_generation = 1
         page._on_search_results(
@@ -338,6 +402,35 @@ class ChapterDownloadIntegrationTests(unittest.TestCase):
         self.assertEqual(page.download_input.text(), "123")
         self.assertTrue(page.download_input.isEnabled())
         warning.assert_called_once()
+
+    def test_batch_issue_reopens_same_dialog_with_selection_preserved(self):
+        controller = BatchRetryDownloadController()
+        flow = ChapterDownloadFlow(
+            controller,
+            dialog_factory=RetryingSelectionDialog,
+        )
+        value = catalog("123", 3)
+        RetryingSelectionDialog.selected_ids = (
+            value.chapters[0].photo_id,
+            value.chapters[1].photo_id,
+        )
+        created = []
+        flow.task_created.connect(lambda *args: created.append(args))
+
+        flow.start("123", value)
+
+        dialog = RetryingSelectionDialog.instance
+        self.assertEqual(dialog.exec_count, 2)
+        self.assertEqual(len(dialog.issues), 1)
+        self.assertEqual(len(controller.batch_calls), 2)
+        self.assertEqual(
+            controller.batch_calls[0][1],
+            RetryingSelectionDialog.selected_ids,
+        )
+        self.assertEqual(controller.batch_calls[1][1], controller.batch_calls[0][1])
+        self.assertEqual(len(created), 1)
+        flow.dispose()
+        flow.deleteLater()
 
 
 if __name__ == "__main__":

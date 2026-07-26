@@ -1238,12 +1238,21 @@ class DownloadPage(SectionPage):
         if clicked is keep_button:
             self._controller.cancel_task(task_id, False)
         elif clicked is delete_button:
+            related_count = self._controller.related_task_count(task_id)
+            related_warning = ""
+            if related_count:
+                related_warning = (
+                    f"\n\n警告：同一漫画还有 {related_count} 个任务。"
+                    "继续后会先停止该漫画正在运行的下载；删除完成后，"
+                    "其他被中断任务将从安全状态重新排队。"
+                )
             answer = QMessageBox.warning(
                 self,
                 "确认删除全部本地文件",
                 (
                     f"这会删除 JM {row.snapshot.album_id} 已下载的全部章节图片"
-                    "和该漫画的 PDF，包括本次任务开始前已存在的章节。\n\n"
+                    "和该漫画的 PDF/CBZ，包括本次任务开始前已存在的章节。"
+                    f"{related_warning}\n\n"
                     "此操作无法撤销，确定继续吗？"
                 ),
                 QMessageBox.StandardButton.Yes
