@@ -10,6 +10,7 @@ import jmcomic
 from curl_cffi.requests.exceptions import RequestException
 
 from .jmcomic_client import serialized_client_construction
+from .option_config import apply_api_route
 from .models import AccountSnapshot, AccountStatus
 from .protected_store import (
     ProtectedStore,
@@ -184,9 +185,11 @@ class AccountStore:
 def build_account_client(
     option_file: Path,
     cookies: Mapping[str, str] | None = None,
+    api_route: str = "auto",
 ):
     with serialized_client_construction():
         option = jmcomic.create_option_by_file(str(option_file))
+        apply_api_route(option, api_route)
         option.client.retry_times = 0
         arguments = {
             "impl": "api",
@@ -211,6 +214,7 @@ class AccountService:
         favorites_store: ProtectedStore | None = None,
         client_factory: Callable[[Mapping[str, str] | None], object] | None = None,
         clock: Callable[[], datetime] | None = None,
+        api_route_provider: Callable[[], str] | None = None,
     ):
         if not isinstance(paths, AppPaths):
             raise TypeError("paths must be AppPaths")
@@ -225,6 +229,11 @@ class AccountService:
             lambda cookies=None: build_account_client(
                 self.paths.option_file,
                 cookies,
+                (
+                    api_route_provider()
+                    if api_route_provider is not None
+                    else "auto"
+                ),
             )
         )
         self._clock = clock or (lambda: datetime.now(timezone.utc))

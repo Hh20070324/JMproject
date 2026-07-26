@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...settings import AppSettings, serialize_portable_path
+from ...option_config import API_ROUTE_LABELS
 from ..controllers.settings_controller import SettingsController
 from ..icons import svg_icon
 from ..theme import Theme, ThemeManager
@@ -70,6 +71,12 @@ class SettingsPage(SectionPage):
             self._controller.settings_changed.connect(self._load_settings)
             self._controller.save_succeeded.connect(self._on_save_succeeded)
             self._controller.save_failed.connect(self._on_save_failed)
+            self._controller.route_test_succeeded.connect(
+                self._on_route_test_succeeded
+            )
+            self._controller.route_test_failed.connect(
+                self._on_route_test_failed
+            )
             settings = self._controller.settings
         else:
             selected_theme = (
@@ -143,6 +150,38 @@ class SettingsPage(SectionPage):
         engine_layout.addWidget(self.download_engine_button)
         engine_layout.addStretch(1)
         self._add_row(section, "下载引擎", engine_control)
+
+        route_control = QWidget(section)
+        route_layout = QHBoxLayout(route_control)
+        route_layout.setContentsMargins(0, 0, 0, 0)
+        route_layout.setSpacing(8)
+        self.api_route_button = QToolButton(route_control)
+        self.api_route_button.setObjectName("apiRouteButton")
+        self.api_route_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.api_route_button.setFixedSize(220, 36)
+        self.api_route_menu = QMenu(self.api_route_button)
+        self._api_route_group = QActionGroup(self)
+        self._api_route_group.setExclusive(True)
+        self._api_route_actions = {}
+        for value, label in API_ROUTE_LABELS.items():
+            action = self.api_route_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._api_route_group.addAction(action)
+            self._api_route_actions[value] = action
+        self._api_route_group.triggered.connect(self._select_api_route)
+        self.api_route_button.setMenu(self.api_route_menu)
+        route_layout.addWidget(self.api_route_button)
+        self.test_api_route_button = QPushButton("测试路线", route_control)
+        self.test_api_route_button.setObjectName("testApiRouteButton")
+        self.test_api_route_button.setFixedSize(100, 36)
+        self.test_api_route_button.clicked.connect(self._test_api_route)
+        self.test_api_route_button.setEnabled(self._controller is not None)
+        route_layout.addWidget(self.test_api_route_button)
+        route_layout.addStretch(1)
+        self._add_row(section, "API 路线", route_control)
 
         self.max_concurrent_tasks_spin = QSpinBox(section)
         self.max_concurrent_tasks_spin.setObjectName("settingsSpinBox")
@@ -516,6 +555,7 @@ class SettingsPage(SectionPage):
         self.startup_page_combo.currentIndexChanged.connect(self._mark_dirty)
         self._multi_chapter_behavior_group.triggered.connect(self._mark_dirty)
         self._download_engine_group.triggered.connect(self._mark_dirty)
+        self._api_route_group.triggered.connect(self._mark_dirty)
         self._theme_group.buttonClicked.connect(self._mark_dirty)
 
     def _mark_dirty(self, *_args) -> None:
@@ -588,6 +628,7 @@ class SettingsPage(SectionPage):
                 self._selected_multi_chapter_behavior()
             ),
             download_engine=self._selected_download_engine(),
+            api_route=self._selected_api_route(),
             log_level=str(self.log_level_combo.currentData()),
             window_width=self.window_width_spin.value(),
             window_height=self.window_height_spin.value(),
@@ -617,6 +658,7 @@ class SettingsPage(SectionPage):
                 settings.multi_chapter_download_behavior
             )
             self._set_download_engine(settings.download_engine)
+            self._set_api_route(settings.api_route)
             self.window_width_spin.setValue(settings.window_width)
             self.window_height_spin.setValue(settings.window_height)
             self._select_combo(self.log_level_combo, settings.log_level)
@@ -671,6 +713,41 @@ class SettingsPage(SectionPage):
         if checked is None:
             return "async"
         return str(checked.data())
+
+    def _select_api_route(self, action: QAction) -> None:
+        self._set_api_route(str(action.data()))
+
+    def _set_api_route(self, route: str) -> None:
+        action = self._api_route_actions.get(
+            route,
+            self._api_route_actions["auto"],
+        )
+        action.setChecked(True)
+        self.api_route_button.setText(f"{action.text()} ▾")
+
+    def _selected_api_route(self) -> str:
+        checked = self._api_route_group.checkedAction()
+        if checked is None:
+            return "auto"
+        return str(checked.data())
+
+    def _test_api_route(self) -> None:
+        if self._controller is None:
+            return
+        self.test_api_route_button.setEnabled(False)
+        self.save_status_label.setText("正在测试路线…")
+        self._controller.test_api_route(self._selected_api_route())
+
+    def _on_route_test_succeeded(self, route: str, elapsed_ms: int) -> None:
+        self.test_api_route_button.setEnabled(True)
+        label = API_ROUTE_LABELS.get(route, route)
+        self.save_status_label.setText(
+            f"{label}可用，响应约 {elapsed_ms} ms"
+        )
+
+    def _on_route_test_failed(self, _route: str, message: str) -> None:
+        self.test_api_route_button.setEnabled(True)
+        self.save_status_label.setText(message)
 
     def _on_save_succeeded(self, _settings: AppSettings) -> None:
         self._set_actions_enabled(True)

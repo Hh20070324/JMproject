@@ -282,6 +282,7 @@ class FavoritesService:
         cache_store: FavoriteCacheStore | None = None,
         client_factory: Callable[[Mapping[str, str]], object] | None = None,
         clock: Callable[[], datetime] | None = None,
+        api_route_provider: Callable[[], str] | None = None,
     ):
         if not isinstance(account_service, AccountService):
             raise TypeError("account_service must be AccountService")
@@ -298,6 +299,11 @@ class FavoritesService:
             lambda cookies: build_account_client(
                 self.paths.option_file,
                 cookies,
+                (
+                    api_route_provider()
+                    if api_route_provider is not None
+                    else "auto"
+                ),
             )
         )
         self._clock = clock or (lambda: datetime.now(timezone.utc))

@@ -18,6 +18,7 @@ from ..downloader import DownloadWorker
 from ..favorites import FavoritesService
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
+from ..option_config import ApiRouteState
 from ..search import SearchService
 from ..settings import AppPaths, AppSettings, DEFAULT_PATHS, SettingsError
 from ..task_store import TaskStore, TaskStoreError
@@ -226,13 +227,24 @@ def run_qt_app(
         library = LibraryService(paths)
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
-        search_service = SearchService(paths=paths)
+        api_route_state = ApiRouteState(settings.api_route)
+        search_service = SearchService(
+            paths=paths,
+            api_route_provider=api_route_state.get,
+        )
         search_controller = SearchController(search_service)
         chapter_catalog_controller = ChapterCatalogController(search_service)
-        account_service = AccountService(paths=paths)
+        account_service = AccountService(
+            paths=paths,
+            api_route_provider=api_route_state.get,
+        )
         account_controller = AccountController(account_service)
         favorites_controller = FavoritesController(
-            FavoritesService(account_service, paths=paths),
+            FavoritesService(
+                account_service,
+                paths=paths,
+                api_route_provider=api_route_state.get,
+            ),
             account_controller,
         )
         settings_controller = SettingsController(
@@ -246,6 +258,9 @@ def run_qt_app(
             lambda current: manager.set_new_task_config(
                 current.task_config()
             )
+        )
+        settings_controller.settings_changed.connect(
+            lambda current: api_route_state.set(current.api_route)
         )
         previous_hook = install_exception_hook(logger)
         window = MainWindow(

@@ -25,6 +25,7 @@ from .models import (
     ChapterManifestEntry,
     TaskConfig,
 )
+from .option_config import apply_api_route
 from .pdf import (
     IMAGE_EXTENSIONS,
     PART_FILE_MARKER,
@@ -200,6 +201,7 @@ class DownloadWorker:
         option.download.threading.photo = (
             2 if self.multi_chapter_download_behavior == "parallel" else 1
         )
+        apply_api_route(option, self.task_config.api_route)
         option.client.retry_times = self.REQUEST_RETRIES
         option.client.postman.meta_data.timeout = self.REQUEST_TIMEOUT_SECONDS
         option.dir_rule = jmcomic.DirRule(

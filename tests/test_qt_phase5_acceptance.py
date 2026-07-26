@@ -166,10 +166,15 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
                 library_service_class.call_args_list,
                 [call(expected_paths), call(expected_paths)],
             )
-            self.assertEqual(
-                account_service_class.call_args_list,
-                [call(paths=expected_paths), call(paths=expected_paths)],
-            )
+            self.assertEqual(account_service_class.call_count, 2)
+            for account_call in account_service_class.call_args_list:
+                self.assertEqual(
+                    account_call.kwargs["paths"],
+                    expected_paths,
+                )
+                self.assertTrue(
+                    callable(account_call.kwargs["api_route_provider"])
+                )
             self.assertEqual(account_controller_class.call_count, 2)
             self.assertEqual(favorites_service_class.call_count, 2)
             self.assertEqual(favorites_controller_class.call_count, 2)

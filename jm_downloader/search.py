@@ -7,6 +7,7 @@ import jmcomic
 from curl_cffi.requests.exceptions import RequestException
 
 from .jmcomic_client import serialized_client_construction
+from .option_config import apply_api_route
 from .jmcomic_logging import install_safe_jmcomic_logging
 from .models import (
     ChapterCatalogSnapshot,
@@ -91,19 +92,25 @@ def normalize_search_request(request: SearchRequest) -> SearchRequest:
     return SearchRequest(request.mode, query, request.page)
 
 
-def _build_search_client(option_file: Path):
+def _build_search_client(option_file: Path, api_route: str = "auto"):
     install_safe_jmcomic_logging()
     with serialized_client_construction():
         try:
             if (
+                api_route == "auto"
+                and
                 jmcomic.JmModuleConfig.FLAG_API_CLIENT_AUTO_UPDATE_DOMAIN
                 is not True
             ):
                 raise SearchUnavailable()
-            if jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST == []:
+            if (
+                api_route == "auto"
+                and jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST == []
+            ):
                 jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST = None
 
             option = jmcomic.create_option_by_file(str(option_file))
+            apply_api_route(option, api_route)
             option.client.retry_times = 0
             client = option.new_jm_client(
                 impl="api",
@@ -112,10 +119,16 @@ def _build_search_client(option_file: Path):
             if not isinstance(client, jmcomic.JmApiClient):
                 raise TypeError("unexpected client type")
 
-            domains = tuple(
-                domain.strip()
-                for domain in jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST or ()
-                if isinstance(domain, str) and domain.strip()
+            domains = (
+                (api_route,)
+                if api_route != "auto"
+                else tuple(
+                    domain.strip()
+                    for domain in (
+                        jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST or ()
+                    )
+                    if isinstance(domain, str) and domain.strip()
+                )
             )
             if not domains:
                 raise ValueError("empty domain list")
@@ -152,6 +165,7 @@ class SearchService:
         client_factory: Callable[[], object] | None = None,
         cover_url_factory: Callable[[str], str] | None = None,
         max_cover_bytes: int = MAX_COVER_BYTES,
+        api_route_provider: Callable[[], str] | None = None,
     ):
         if client_factory is not None and not callable(client_factory):
             raise TypeError("client_factory must be callable")
@@ -164,8 +178,16 @@ class SearchService:
         self.paths = paths
         self.max_cover_bytes = max_cover_bytes
         self._uses_default_client_factory = client_factory is None
+        self._api_route_provider = api_route_provider
         self._client_factory = client_factory or (
-            lambda: _build_search_client(self.paths.option_file)
+            lambda: _build_search_client(
+                self.paths.option_file,
+                (
+                    api_route_provider()
+                    if api_route_provider is not None
+                    else "auto"
+                ),
+            )
         )
         self._cover_url_factory = cover_url_factory or (
             lambda album_id: jmcomic.JmcomicText.get_album_cover_url(
@@ -299,9 +321,17 @@ class SearchService:
             self._raise_response_error(error, "chapters")
 
     def _get_client_for_operation(self, operation: str):
+        route = (
+            self._api_route_provider()
+            if self._api_route_provider is not None
+            else None
+        )
         client = getattr(self._thread_state, "client", None)
-        if client is not None:
+        client_route = getattr(self._thread_state, "api_route", None)
+        if client is not None and route == client_route:
             return client
+        if client is not None:
+            self._discard_thread_client()
 
         try:
             install_safe_jmcomic_logging()
@@ -318,11 +348,14 @@ class SearchService:
         if client is None:
             self._raise_response_error(TypeError("empty client"), operation)
         self._thread_state.client = client
+        self._thread_state.api_route = route
         return client
 
     def _discard_thread_client(self) -> None:
         if hasattr(self._thread_state, "client"):
             del self._thread_state.client
+        if hasattr(self._thread_state, "api_route"):
+            del self._thread_state.api_route
 
     def _discard_client_for_error(self, error: SearchError) -> None:
         if (
