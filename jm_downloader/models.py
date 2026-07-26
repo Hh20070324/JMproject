@@ -203,6 +203,27 @@ class ChapterRepairPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class LegacyChapterMapping:
+    photo_id: str
+    index: int
+    title: str
+    source_name: str
+    target_dir_name: str
+    page_count: int
+    image_format: str
+    package_format: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyMigrationPlan:
+    album_id: str
+    album_title: str
+    album_dir_name: str
+    direct_images: bool
+    mappings: tuple[LegacyChapterMapping, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterManifest:
     version: int
     album_id: str

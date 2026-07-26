@@ -10,10 +10,12 @@ import threading
 import uuid
 from pathlib import Path
 
+from jmcomic import fix_windir_name
 from PIL import Image, UnidentifiedImageError
 
 from .models import (
     ChapterImageStatus,
+    ChapterCatalogSnapshot,
     ChapterDeleteResult,
     ChapterManifest,
     ChapterManifestEntry,
@@ -26,6 +28,8 @@ from .models import (
     LibraryChapterSnapshot,
     LibraryItem,
     LibraryLayout,
+    LegacyChapterMapping,
+    LegacyMigrationPlan,
 )
 from .packaging import cbz_file_intact, chapter_to_cbz
 from .pdf import (
@@ -1120,6 +1124,286 @@ class LibraryService:
                 failures=tuple(failures),
                 resolved_formats=tuple(resolved_formats),
             )
+
+    def plan_legacy_migration(
+        self,
+        album_id: str,
+        catalog: ChapterCatalogSnapshot,
+    ) -> LegacyMigrationPlan:
+        """Map a legacy image layout only when every local source is unique."""
+
+        with self._lock:
+            self._require_album_id(album_id)
+            if (
+                not isinstance(catalog, ChapterCatalogSnapshot)
+                or catalog.album_id != album_id
+                or not catalog.chapters
+            ):
+                raise LibraryError("远端章节目录无效")
+            album_dir = self._album_directory(self.paths.pictures, album_id)
+            if not album_dir.is_dir():
+                raise LibraryNotFound("旧版图片目录不存在")
+            self._reject_linked_tree(album_dir)
+            if ChapterManifestStore(self.paths).load(album_id) is not None:
+                raise LibraryError("该漫画已经是受管章节布局")
+            try:
+                children = tuple(album_dir.iterdir())
+            except OSError as error:
+                raise LibraryError("无法读取旧版图片目录") from error
+            direct_images = self._list_direct_images(album_dir)
+            directories = tuple(
+                child for child in children if child.is_dir()
+            )
+            extras = tuple(
+                child
+                for child in children
+                if child not in direct_images and child not in directories
+            )
+            if extras or (direct_images and directories):
+                raise LibraryError("旧版目录包含无法唯一识别的额外内容")
+
+            if direct_images:
+                if len(catalog.chapters) != 1:
+                    raise LibraryError("直接图片无法唯一对应多章目录")
+                sources = (("", direct_images, catalog.chapters[0]),)
+            else:
+                if not directories:
+                    raise LibraryNotFound("旧版目录中没有可迁移图片")
+                remote_by_name = {}
+                for chapter in catalog.chapters:
+                    key = fix_windir_name(chapter.title).strip().casefold()
+                    remote_by_name.setdefault(key, []).append(chapter)
+                sources = []
+                used = set()
+                for directory in directories:
+                    try:
+                        children = tuple(directory.iterdir())
+                    except OSError as error:
+                        raise LibraryError("无法读取旧章节目录") from error
+                    images = self._list_direct_images(directory)
+                    if not images or len(images) != len(children):
+                        raise LibraryError(
+                            f"旧章节“{directory.name}”包含非图片或嵌套内容"
+                        )
+                    matches = remote_by_name.get(
+                        directory.name.casefold(),
+                        (),
+                    )
+                    if (
+                        len(matches) != 1
+                        or matches[0].photo_id in used
+                    ):
+                        raise LibraryError(
+                            f"旧章节“{directory.name}”无法唯一对应远端章节"
+                        )
+                    used.add(matches[0].photo_id)
+                    sources.append((directory.name, images, matches[0]))
+                sources = tuple(sources)
+
+            album_title = catalog.title or f"JM {album_id}"
+            album_dir_name = self._migration_album_dir_name(
+                album_title,
+                album_id,
+            )
+            mappings = []
+            for source_name, images, chapter in sources:
+                target_dir_name = (
+                    ""
+                    if len(catalog.chapters) == 1
+                    else f"第{chapter.index}章"
+                )
+                mappings.append(
+                    LegacyChapterMapping(
+                        photo_id=chapter.photo_id,
+                        index=chapter.index,
+                        title=chapter.title,
+                        source_name=source_name,
+                        target_dir_name=target_dir_name,
+                        page_count=len(images),
+                        image_format=self._migration_image_format(images),
+                        package_format=self._infer_migration_package_format(
+                            album_id,
+                            album_dir_name,
+                            target_dir_name,
+                        ),
+                    )
+                )
+            return LegacyMigrationPlan(
+                album_id=album_id,
+                album_title=album_title,
+                album_dir_name=album_dir_name,
+                direct_images=bool(direct_images),
+                mappings=tuple(
+                    sorted(mappings, key=lambda value: value.index)
+                ),
+            )
+
+    def migrate_legacy_layout(
+        self,
+        plan: LegacyMigrationPlan,
+    ) -> ChapterManifest:
+        """Apply a previewed migration using one staged album transaction."""
+
+        with self._lock:
+            if not isinstance(plan, LegacyMigrationPlan):
+                raise LibraryError("旧版迁移方案无效")
+            self._require_album_id(plan.album_id)
+            album_dir = self._album_directory(
+                self.paths.pictures,
+                plan.album_id,
+            )
+            self._validate_migration_sources(album_dir, plan)
+            staged = album_dir.with_name(
+                f".{plan.album_id}.{uuid.uuid4().hex}.migrate"
+            )
+            try:
+                os.replace(album_dir, staged)
+                album_dir.mkdir()
+                title_dir = album_dir / plan.album_dir_name
+                if plan.direct_images or any(
+                    value.target_dir_name for value in plan.mappings
+                ):
+                    title_dir.mkdir()
+                for mapping in plan.mappings:
+                    target = (
+                        title_dir
+                        if not mapping.target_dir_name
+                        else title_dir / mapping.target_dir_name
+                    )
+                    if mapping.target_dir_name:
+                        shutil.copytree(staged / mapping.source_name, target)
+                    elif plan.direct_images:
+                        for image in self._list_direct_images(staged):
+                            shutil.copy2(image, target / image.name)
+                    else:
+                        shutil.copytree(staged / mapping.source_name, target)
+                manifest = ChapterManifest(
+                    version=CHAPTER_MANIFEST_SCHEMA_VERSION,
+                    album_id=plan.album_id,
+                    album_title=plan.album_title,
+                    album_dir_name=plan.album_dir_name,
+                    chapters=tuple(
+                        ChapterManifestEntry(
+                            photo_id=value.photo_id,
+                            index=value.index,
+                            title=value.title,
+                            dir_name=value.target_dir_name,
+                            page_count=value.page_count,
+                            image_format=value.image_format,
+                            downloaded_at_utc=None,
+                            package_format=value.package_format,
+                        )
+                        for value in plan.mappings
+                    ),
+                )
+                ChapterManifestStore(self.paths).replace_exact(manifest)
+            except Exception as error:
+                rollback_errors = []
+                try:
+                    if album_dir.exists():
+                        shutil.rmtree(album_dir)
+                except OSError as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+                if staged.exists():
+                    try:
+                        os.replace(staged, album_dir)
+                    except OSError as rollback_error:
+                        rollback_errors.append(str(rollback_error))
+                if rollback_errors:
+                    raise LibraryError(
+                        "旧版迁移失败，且无法完整回滚："
+                        + "; ".join(rollback_errors)
+                    ) from error
+                raise LibraryError(f"旧版迁移失败：{error}") from error
+            try:
+                shutil.rmtree(staged)
+            except OSError as error:
+                raise LibraryError(
+                    f"迁移已完成，但临时目录清理失败：{error}"
+                ) from error
+            return manifest
+
+    def _validate_migration_sources(
+        self,
+        album_dir: Path,
+        plan: LegacyMigrationPlan,
+    ) -> None:
+        self._reject_linked_tree(album_dir)
+        if ChapterManifestStore(self.paths).load(plan.album_id) is not None:
+            raise LibraryError("旧版目录已发生变化，请重新识别")
+        expected_names = {value.source_name for value in plan.mappings}
+        if plan.direct_images:
+            images = self._list_direct_images(album_dir)
+            if len(plan.mappings) != 1:
+                raise LibraryError("旧版迁移方案无效")
+            mapping = plan.mappings[0]
+            if (
+                len(images) != mapping.page_count
+                or self._migration_image_format(images)
+                != mapping.image_format
+                or len(tuple(album_dir.iterdir())) != len(images)
+            ):
+                raise LibraryError("旧版目录已发生变化，请重新识别")
+            return
+        directories = {
+            child.name: child
+            for child in album_dir.iterdir()
+            if child.is_dir()
+        }
+        if set(directories) != expected_names:
+            raise LibraryError("旧版目录已发生变化，请重新识别")
+        for mapping in plan.mappings:
+            images = self._list_direct_images(directories[mapping.source_name])
+            if (
+                len(images) != mapping.page_count
+                or self._migration_image_format(images)
+                != mapping.image_format
+                or len(tuple(directories[mapping.source_name].iterdir()))
+                != len(images)
+            ):
+                raise LibraryError("旧版目录已发生变化，请重新识别")
+
+    @staticmethod
+    def _migration_album_dir_name(title: str, album_id: str) -> str:
+        value = fix_windir_name(title).strip(" .")[:100].strip(" .")
+        if not value:
+            value = album_id
+        if value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+            value = f"_{value}"[:100].strip(" .")
+        ChapterManifestStore._validate_component(value)
+        return value
+
+    def _migration_image_format(self, images: tuple[Path, ...]) -> str:
+        if not images or not all(
+            self._is_valid_image_file(path) for path in images
+        ):
+            raise LibraryError("旧章节包含损坏图片")
+        suffixes = {path.suffix.lower() for path in images}
+        if suffixes <= {".jpg", ".jpeg"}:
+            return "jpg"
+        if suffixes == {".png"}:
+            return "png"
+        raise LibraryError("旧章节图片格式不一致")
+
+    def _infer_migration_package_format(
+        self,
+        album_id: str,
+        album_dir_name: str,
+        target_dir_name: str,
+    ) -> str | None:
+        package_album_dir = self._album_directory(self.paths.pdfs, album_id)
+        package_dir = self._safe_child_directory(
+            package_album_dir,
+            album_dir_name,
+        )
+        if package_dir is None:
+            return None
+        name = target_dir_name or album_dir_name
+        pdf = (package_dir / f"{name}.pdf").is_file()
+        cbz = (package_dir / f"{name}.cbz").is_file()
+        if pdf == cbz:
+            return None
+        return "pdf" if pdf else "cbz"
 
     def _rebuild_chapter(
         self,
