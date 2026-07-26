@@ -7,7 +7,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "JM-Downloader-v2.9.0-Windows-x64.zip"
+ARCHIVE_NAME = "JM-Downloader-v2.9.1-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
@@ -34,10 +34,10 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         spec = (PROJECT_ROOT / "JM-Downloader.spec").read_text(encoding="utf-8")
 
         for resource in (formal, debug):
-            self.assertIn("filevers=(2, 9, 0, 0)", resource)
-            self.assertIn("prodvers=(2, 9, 0, 0)", resource)
-            self.assertIn("StringStruct('FileVersion', '2.9.0')", resource)
-            self.assertIn("StringStruct('ProductVersion', '2.9.0')", resource)
+            self.assertIn("filevers=(2, 9, 1, 0)", resource)
+            self.assertIn("prodvers=(2, 9, 1, 0)", resource)
+            self.assertIn("StringStruct('FileVersion', '2.9.1')", resource)
+            self.assertIn("StringStruct('ProductVersion', '2.9.1')", resource)
             self.assertNotIn("2.1.0", resource)
 
         self.assertIn("OriginalFilename', 'JM-Downloader.exe'", formal)
@@ -55,7 +55,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
 
         for document in (readme, guide):
             self.assertIn(ARCHIVE_NAME, document)
-        self.assertIn('$ReleaseVersion = "2.9.0"', build_script)
+        self.assertIn('$ReleaseVersion = "2.9.1"', build_script)
         self.assertIn(
             '"JM-Downloader-v$ReleaseVersion-Windows-x64.zip"',
             build_script,
@@ -71,6 +71,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertIn("JM-Downloader-v2.5.1-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.7.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.8.0-Windows-x64.zip", build_script)
+        self.assertIn("JM-Downloader-v2.9.0-Windows-x64.zip", build_script)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", readme)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", guide)
 
@@ -94,6 +95,11 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             self.assertIn("自动拆分", document)
             self.assertIn("按名称", document)
             self.assertIn("批量删除", document)
+            self.assertIn("管理章节", document)
+            self.assertIn("离线检查", document)
+            self.assertIn("识别章节", document)
+            self.assertIn("原格式", document)
+            self.assertIn("旧整本 PDF", document)
             self.assertNotIn("只支持从搜索结果添加到默认收藏", document)
             self.assertNotIn("不支持取消收藏、选择目标", document)
             self.assertNotIn("不提供漫画详情页或章节选择", document)
@@ -303,9 +309,12 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             from jm_downloader.models import (
                 AccountSnapshot,
                 AccountStatus,
+                ChapterImageStatus,
+                ChapterPackageStatus,
                 FavoriteFolderSnapshot,
                 FavoriteItemSnapshot,
                 FavoritesSnapshot,
+                LibraryChapterSnapshot,
                 TaskSnapshot,
                 TaskStatus,
             )
@@ -314,6 +323,9 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             from jm_downloader.qt.settings_store import SettingsStore
             from jm_downloader.qt.theme import ThemeManager
             from jm_downloader.qt.widgets.task_row import DownloadTaskRow
+            from jm_downloader.qt.widgets.library_chapter_dialogs import (
+                LibraryChapterDialog,
+            )
             from jm_downloader.settings import AppPaths
 
             QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -331,6 +343,49 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                 )
                 window.resize(760, 520)
                 window.show()
+                app.processEvents()
+                chapter_dialog = LibraryChapterDialog(
+                    "123456",
+                    "用于验证高缩放章节管理布局的长标题",
+                    window,
+                )
+                chapter_dialog.set_snapshots(
+                    tuple(
+                        LibraryChapterSnapshot(
+                            album_id="123456",
+                            photo_id=str(300 + index),
+                            index=index,
+                            title=f"用于缩放验证的章节长标题 {index}",
+                            image_directory=Path(temp_dir) / str(index),
+                            package_path=None,
+                            page_count=10,
+                            valid_image_count=10,
+                            image_status=ChapterImageStatus.COMPLETE,
+                            package_format="pdf",
+                            package_status=ChapterPackageStatus.MISSING,
+                            downloaded_at_utc=None,
+                            can_rebuild=True,
+                            can_redownload=False,
+                            can_delete_images=True,
+                            can_delete_package=False,
+                            can_delete_all=True,
+                            problem_codes=("package_missing",),
+                        )
+                        for index in range(1, 31)
+                    )
+                )
+                chapter_dialog.show()
+                app.processEvents()
+                assert chapter_dialog.table.viewport().width() > 0
+                assert chapter_dialog.table.viewport().height() > 0
+                assert not chapter_dialog.recheck_button.geometry().intersects(
+                    chapter_dialog.repair_button.geometry()
+                )
+                chapter_action = chapter_dialog.table.cellWidget(0, 7)
+                assert chapter_action.popupMode().name == "InstantPopup"
+                chapter_image = chapter_dialog.grab().toImage()
+                assert not chapter_image.isNull()
+                chapter_dialog.close()
                 app.processEvents()
                 download_page = window.page("downloads")
                 task_row = DownloadTaskRow(
