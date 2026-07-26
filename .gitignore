@@ -32,6 +32,8 @@ tasks.json.corrupt-*
 /.credentials.dat.*.tmp
 /search_history.dat.corrupt-*
 /credentials.dat.corrupt-*
+/account.dat.corrupt-*
+/favorites.dat.corrupt-*
 *.jm-part-*
 game-icon-pack-v1.4-svg/
 AGENTS.md
