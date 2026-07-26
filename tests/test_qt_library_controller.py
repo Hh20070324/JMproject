@@ -12,7 +12,17 @@ from PySide6.QtCore import QEventLoop, QThread, QThreadPool, QTimer
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.library import LibraryError
-from jm_downloader.models import LibraryItem, LibraryLayout, TaskStatus
+from jm_downloader.models import (
+    ChapterImageStatus,
+    ChapterPackageStatus,
+    ChapterRepairBatch,
+    ChapterRepairPlan,
+    LibraryChapterSnapshot,
+    LibraryItem,
+    LibraryLayout,
+    TaskConfig,
+    TaskStatus,
+)
 from jm_downloader.qt.controllers import LibraryController
 from jm_downloader.settings import AppPaths
 from jm_downloader.tasks import TaskConflict, TaskManager
@@ -108,6 +118,58 @@ class ControlledLibrary:
         if self.operation_error is not None:
             raise self.operation_error
         return {"photo_id": photo_id, "kind": kind}
+
+    def check_chapters(self, album_id):
+        self.calls.append(("check_chapters", album_id, threading.current_thread()))
+        self.operation_started.set()
+        self.operation_release.wait(timeout=3)
+        return (
+            LibraryChapterSnapshot(
+                album_id=album_id,
+                photo_id="301",
+                index=1,
+                title="第一章",
+                image_directory=Path("Pictures/1/title"),
+                package_path=None,
+                page_count=1,
+                valid_image_count=0,
+                image_status=ChapterImageStatus.MISSING,
+                package_format="pdf",
+                package_status=ChapterPackageStatus.MISSING,
+                downloaded_at_utc=None,
+                can_rebuild=False,
+                can_redownload=True,
+                can_delete_images=False,
+                can_delete_package=False,
+                can_delete_all=True,
+            ),
+        )
+
+    def plan_chapter_repairs(
+        self,
+        album_id,
+        photo_ids,
+        *,
+        confirmed_formats=None,
+    ):
+        self.calls.append(
+            (
+                "plan_chapter_repairs",
+                album_id,
+                tuple(photo_ids),
+                dict(confirmed_formats or {}),
+                threading.current_thread(),
+            )
+        )
+        return ChapterRepairPlan(
+            album_id=album_id,
+            rebuild_photo_ids=(),
+            download_batches=(
+                ChapterRepairBatch("pdf", tuple(photo_ids)),
+            ),
+            unchanged_photo_ids=(),
+            failures=(),
+        )
 
     def _mutate(self, command, album_id):
         self.calls.append((command, album_id, threading.current_thread()))
@@ -293,6 +355,45 @@ class LibraryControllerTests(unittest.TestCase):
         self.assertEqual(errors[0][:2], ("delete_chapter_all", "1"))
         self.assertIn("暂不可修改", errors[0][2])
         self.assertEqual(self.library.calls, [])
+
+    def test_chapter_check_has_request_id_and_runs_off_main_thread(self):
+        completed = []
+        self.controller.request_completed.connect(
+            lambda *values: completed.append(values)
+        )
+
+        request_id = self.controller.check_chapters("1")
+        self.assertIsInstance(request_id, int)
+        self.assertTrue(self._wait_until(lambda: bool(completed)))
+
+        self.assertEqual(completed[0][:3], (request_id, "check_chapters", "1"))
+        self.assertEqual(completed[0][3][0].photo_id, "301")
+        self.assertIsNot(self.library.calls[0][2], threading.main_thread())
+        self.assertFalse(self.manager.is_library_operation_active("1"))
+
+    def test_repair_adds_download_tasks_only_after_reservation_is_released(self):
+        completed = []
+        self.controller.request_completed.connect(
+            lambda *values: completed.append(values)
+        )
+
+        request_id = self.controller.repair_chapters(
+            "1",
+            ("301",),
+            {},
+            TaskConfig(package_format="images"),
+        )
+        self.assertTrue(self._wait_until(lambda: bool(completed)))
+
+        result = completed[0][3]
+        self.assertEqual(completed[0][:3], (request_id, "repair_chapters", "1"))
+        self.assertEqual(len(result.created_tasks), 1)
+        self.assertEqual(
+            result.created_tasks[0].selected_chapter_ids,
+            ("301",),
+        )
+        self.assertEqual(result.created_tasks[0].config.package_format, "pdf")
+        self.assertFalse(self.manager.is_library_operation_active("1"))
 
     def test_batch_delete_is_serial_and_continues_after_one_failure(self):
         calls = []

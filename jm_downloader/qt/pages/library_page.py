@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from shiboken6 import isValid
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -23,14 +24,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...models import LibraryItem
+from ...models import (
+    ChapterImageStatus,
+    ChapterPackageStatus,
+    LibraryItem,
+    TaskConfig,
+)
 from ..icons import svg_icon
+from ..widgets.library_chapter_dialogs import (
+    LegacyMigrationPreviewDialog,
+    LibraryChapterDialog,
+    PackageFormatConfirmationDialog,
+)
 from ..widgets.library_item_card import LibraryItemCard
 from ..widgets.thumbnail_loader import ThumbnailLoader
 from .base import SectionPage
 
 if TYPE_CHECKING:
+    from ..controllers.chapter_catalog_controller import ChapterCatalogController
     from ..controllers.library_controller import LibraryController
+    from ..controllers.settings_controller import SettingsController
 
 
 class LibraryPage(SectionPage):
@@ -46,9 +59,18 @@ class LibraryPage(SectionPage):
         self,
         controller: "LibraryController | None" = None,
         parent=None,
+        *,
+        chapter_catalog_controller: "ChapterCatalogController | None" = None,
+        settings_controller: "SettingsController | None" = None,
     ):
         super().__init__("本地漫画库", "libraryPage", parent)
         self._controller = controller
+        self._chapter_catalog_controller = chapter_catalog_controller
+        self._settings_controller = settings_controller
+        self._chapter_dialogs = {}
+        self._chapter_requests = {}
+        self._catalog_requests = {}
+        self._chapter_completion_messages = {}
         self._items: list[LibraryItem] = []
         self._rows = {}
         self._preview_state = {}
@@ -91,6 +113,13 @@ class LibraryPage(SectionPage):
                 self._controller.batch_delete_finished.connect(
                     self._on_batch_delete_finished
                 )
+            if hasattr(self._controller, "request_completed"):
+                self._controller.request_completed.connect(
+                    self._on_library_request_completed
+                )
+                self._controller.request_failed.connect(
+                    self._on_library_request_failed
+                )
             self._items = self._controller.list_items()
             self._has_loaded = bool(self._items)
             self._active_albums = self._controller.active_album_ids()
@@ -102,6 +131,14 @@ class LibraryPage(SectionPage):
             self.refresh_button.setEnabled(False)
             self.sort_button.setEnabled(False)
             self.select_button.setEnabled(False)
+
+        if self._chapter_catalog_controller is not None:
+            self._chapter_catalog_controller.catalog_ready.connect(
+                self._on_catalog_ready
+            )
+            self._chapter_catalog_controller.catalog_failed.connect(
+                self._on_catalog_failed
+            )
 
         self._sync_rows()
         self._apply_filter(force=True)
@@ -391,6 +428,9 @@ class LibraryPage(SectionPage):
                     self.view_task_requested.emit
                 )
                 row.delete_requested.connect(self._confirm_delete)
+                row.chapter_action_requested.connect(
+                    self._open_chapter_action
+                )
                 row.selection_changed.connect(
                     self._on_selection_changed
                 )
@@ -668,6 +708,471 @@ class LibraryPage(SectionPage):
         if self._controller is not None:
             self._controller.open_item(album_id, kind)
 
+    def _open_chapter_action(self, album_id: str, action: str) -> None:
+        item = next(
+            (
+                value
+                for value in self._items
+                if value.album_id == str(album_id)
+            ),
+            None,
+        )
+        if item is None:
+            return
+        if action == "identify":
+            self._start_legacy_identification(item)
+            return
+        if action != "manage" or self._controller is None:
+            return
+
+        current = self._chapter_dialogs.get(item.album_id)
+        if current is not None and isValid(current):
+            current.show()
+            current.raise_()
+            current.activateWindow()
+            return
+
+        dialog = LibraryChapterDialog(
+            item.album_id,
+            item.title,
+            self,
+        )
+        self._chapter_dialogs[item.album_id] = dialog
+        dialog.destroyed.connect(
+            lambda _object=None, current_id=item.album_id, current=dialog: (
+                self._forget_chapter_dialog(current_id, current)
+            )
+        )
+        dialog.recheck_requested.connect(
+            lambda current=dialog: self._request_chapter_check(current)
+        )
+        dialog.rebuild_requested.connect(
+            lambda photo_ids, current=dialog: (
+                self._request_chapter_rebuild(current, photo_ids)
+            )
+        )
+        dialog.repair_requested.connect(
+            lambda photo_ids, current=dialog: (
+                self._request_chapter_repair(current, photo_ids)
+            )
+        )
+        dialog.delete_requested.connect(
+            lambda snapshot, kind, current=dialog: (
+                self._confirm_chapter_delete(current, snapshot, kind)
+            )
+        )
+        dialog.show()
+        self._request_chapter_check(dialog)
+
+    def _forget_chapter_dialog(
+        self,
+        album_id: str,
+        dialog: LibraryChapterDialog,
+    ) -> None:
+        if self._chapter_dialogs.get(album_id) is dialog:
+            self._chapter_dialogs.pop(album_id, None)
+        for request_id, context in tuple(self._chapter_requests.items()):
+            if context[2] is dialog:
+                self._chapter_requests.pop(request_id, None)
+
+    def _dialog_is_current(
+        self,
+        album_id: str,
+        dialog,
+    ) -> bool:
+        return (
+            dialog is not None
+            and isValid(dialog)
+            and self._chapter_dialogs.get(album_id) is dialog
+        )
+
+    def _request_chapter_check(self, dialog: LibraryChapterDialog) -> None:
+        if (
+            self._controller is None
+            or not self._dialog_is_current(dialog.album_id, dialog)
+        ):
+            return
+        dialog.set_loading(True)
+        request_id = self._controller.check_chapters(dialog.album_id)
+        self._remember_chapter_request(
+            request_id,
+            "check_chapters",
+            dialog.album_id,
+            dialog,
+        )
+
+    def _request_chapter_rebuild(
+        self,
+        dialog: LibraryChapterDialog,
+        photo_ids,
+    ) -> None:
+        if self._controller is None or not photo_ids:
+            return
+        selected = tuple(
+            value
+            for value in dialog.selected_snapshots()
+            if (
+                value.image_status is ChapterImageStatus.COMPLETE
+                and (
+                    value.package_format is None
+                    or value.package_status
+                    in {
+                        ChapterPackageStatus.MISSING,
+                        ChapterPackageStatus.DAMAGED,
+                    }
+                )
+            )
+        )
+        if not selected:
+            dialog.show_result(
+                "所选章节中没有可从完整图片重建的项目。",
+                warning=True,
+            )
+            return
+        choices = self._confirm_unknown_formats(selected, dialog)
+        if choices is None:
+            return
+        dialog.set_loading(True, "正在后台重建所选章节…")
+        request_id = self._controller.rebuild_chapters(
+            dialog.album_id,
+            tuple(value.photo_id for value in selected),
+            choices,
+        )
+        self._remember_chapter_request(
+            request_id,
+            "rebuild_chapters",
+            dialog.album_id,
+            dialog,
+        )
+
+    def _request_chapter_repair(
+        self,
+        dialog: LibraryChapterDialog,
+        photo_ids,
+    ) -> None:
+        if self._controller is None or not photo_ids:
+            return
+        selected = dialog.selected_snapshots()
+        choices = self._confirm_unknown_formats(selected, dialog)
+        if choices is None:
+            return
+        dialog.set_loading(
+            True,
+            "正在后台规划修复；完整图片会本地重建，缺图章节会创建下载任务…",
+        )
+        request_id = self._controller.repair_chapters(
+            dialog.album_id,
+            tuple(value.photo_id for value in selected),
+            choices,
+            self._current_task_config(),
+        )
+        self._remember_chapter_request(
+            request_id,
+            "repair_chapters",
+            dialog.album_id,
+            dialog,
+        )
+
+    def _confirm_unknown_formats(
+        self,
+        snapshots,
+        parent,
+    ) -> dict[str, str] | None:
+        snapshots = tuple(snapshots)
+        inferred = {
+            value.photo_id: value.suggested_package_format
+            for value in snapshots
+            if (
+                value.package_format is None
+                and value.suggested_package_format is not None
+            )
+        }
+        unknown = tuple(
+            value
+            for value in snapshots
+            if (
+                value.package_format is None
+                and value.suggested_package_format is None
+            )
+        )
+        if not unknown:
+            return inferred
+        selected = PackageFormatConfirmationDialog.choose(
+            unknown,
+            self._current_task_config().package_format,
+            parent,
+        )
+        if selected is None:
+            return None
+        return {
+            **inferred,
+            **{value.photo_id: selected for value in unknown},
+        }
+
+    def _current_task_config(self) -> TaskConfig:
+        if self._settings_controller is not None:
+            return self._settings_controller.settings.task_config()
+        return TaskConfig()
+
+    def _confirm_chapter_delete(
+        self,
+        dialog: LibraryChapterDialog,
+        snapshot,
+        kind: str,
+    ) -> None:
+        if self._controller is None:
+            return
+        labels = {
+            "images": "图片",
+            "package": "打包产物",
+            "all": "全部内容及清单记录",
+        }
+        label = labels.get(kind)
+        if label is None:
+            return
+        answer = QMessageBox.question(
+            dialog,
+            "删除章节内容",
+            (
+                f"确定删除《{snapshot.title}》（章节 {snapshot.index}）的"
+                f"{label}吗？\n此操作无法撤销。"
+            ),
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        dialog.set_loading(True, f"正在删除章节{label}…")
+        request_id = self._controller.delete_chapter(
+            dialog.album_id,
+            snapshot.photo_id,
+            kind,
+            snapshot,
+        )
+        self._remember_chapter_request(
+            request_id,
+            f"delete_chapter_{kind}",
+            dialog.album_id,
+            dialog,
+        )
+
+    def _remember_chapter_request(
+        self,
+        request_id,
+        command: str,
+        album_id: str,
+        dialog,
+    ) -> None:
+        if request_id is None:
+            if dialog is not None and isValid(dialog):
+                dialog.show_result("操作未能启动。", warning=True)
+            return
+        self._chapter_requests[int(request_id)] = (
+            str(command),
+            str(album_id),
+            dialog,
+        )
+
+    def _on_library_request_completed(
+        self,
+        request_id: int,
+        command: str,
+        album_id: str,
+        result,
+    ) -> None:
+        context = self._chapter_requests.pop(request_id, None)
+        if context is None:
+            return
+        expected_command, expected_album, dialog = context
+        if command != expected_command or album_id != expected_album:
+            return
+
+        if command == "plan_legacy_migration":
+            preview = LegacyMigrationPreviewDialog(result, self)
+            if preview.exec() == preview.DialogCode.Accepted:
+                next_id = self._controller.migrate_legacy_layout(result)
+                self._remember_chapter_request(
+                    next_id,
+                    "migrate_legacy_layout",
+                    album_id,
+                    None,
+                )
+            return
+        if command == "migrate_legacy_layout":
+            QMessageBox.information(
+                self,
+                "章节迁移完成",
+                "旧版图片目录已转换为受管章节布局。",
+            )
+            self.refresh()
+            return
+        if not self._dialog_is_current(album_id, dialog):
+            return
+        if command == "check_chapters":
+            dialog.set_snapshots(result)
+            completion = self._chapter_completion_messages.pop(
+                album_id,
+                None,
+            )
+            if completion is not None:
+                dialog.show_result(completion[0], warning=completion[1])
+            return
+        if command.startswith("delete_chapter_"):
+            if getattr(result, "album_removed", False):
+                dialog.close()
+                QMessageBox.information(
+                    self,
+                    "章节删除完成",
+                    "最后一章已删除，漫画已从本地库移除。",
+                )
+                return
+            self._chapter_completion_messages[album_id] = (
+                "章节内容已删除，状态已重新检查。",
+                False,
+            )
+            self._request_chapter_check(dialog)
+            return
+        if command == "rebuild_chapters":
+            succeeded = len(result.succeeded)
+            failures = tuple(result.failures)
+            message = f"重建成功：{succeeded} 章"
+            if failures:
+                message += "\n" + "\n".join(
+                    f"{value.title or value.photo_id}：{value.message}"
+                    for value in failures
+                )
+            self._chapter_completion_messages[album_id] = (
+                message,
+                bool(failures),
+            )
+            self._request_chapter_check(dialog)
+            return
+        if command == "repair_chapters":
+            rebuilt = (
+                len(result.rebuild_result.succeeded)
+                if result.rebuild_result is not None
+                else 0
+            )
+            rebuild_failures = (
+                tuple(result.rebuild_result.failures)
+                if result.rebuild_result is not None
+                else ()
+            )
+            lines = [
+                f"本地重建成功：{rebuilt} 章",
+                f"新建重新下载任务：{len(result.created_tasks)} 个",
+                f"无需处理：{len(result.plan.unchanged_photo_ids)} 章",
+            ]
+            failures = (*result.plan.failures, *rebuild_failures)
+            if failures:
+                lines.append("未完成：")
+                lines.extend(
+                    f"{value.title or value.photo_id}：{value.message}"
+                    for value in failures
+                )
+            if result.task_error:
+                lines.append(f"下载任务未创建：{result.task_error}")
+            message = "\n".join(lines)
+            warning = bool(failures or result.task_error)
+            if result.created_tasks:
+                dialog.show_result(
+                    message
+                    + "\n重新下载完成后，请点击“重新检查”更新本地状态。",
+                    warning=warning,
+                )
+            else:
+                self._chapter_completion_messages[album_id] = (
+                    message,
+                    warning,
+                )
+                self._request_chapter_check(dialog)
+
+    def _on_library_request_failed(
+        self,
+        request_id: int,
+        command: str,
+        album_id: str,
+        message: str,
+    ) -> None:
+        context = self._chapter_requests.pop(request_id, None)
+        if context is None:
+            return
+        _expected_command, _expected_album, dialog = context
+        if self._dialog_is_current(album_id, dialog):
+            dialog.show_result(message, warning=True)
+        elif command in {"plan_legacy_migration", "migrate_legacy_layout"}:
+            QMessageBox.warning(self, "章节识别失败", message)
+
+    def _start_legacy_identification(self, item: LibraryItem) -> None:
+        if (
+            self._chapter_catalog_controller is None
+            or self._controller is None
+        ):
+            QMessageBox.warning(
+                self,
+                "无法识别章节",
+                "远端章节目录服务不可用。",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "识别旧版章节",
+            (
+                f"识别 JM {item.album_id} 的章节可能会访问网络读取远端目录。\n"
+                "此步骤不会下载漫画，也不会在预览确认前修改本地文件。是否继续？"
+            ),
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        request_id = self._chapter_catalog_controller.request(item.album_id)
+        if request_id is None:
+            QMessageBox.warning(self, "无法识别章节", "远端目录请求未能启动。")
+            return
+        self._catalog_requests[int(request_id)] = item.album_id
+        card = self._rows.get(item.album_id)
+        if card is not None:
+            card.chapter_button.setEnabled(False)
+            card.chapter_button.setToolTip("正在读取远端章节目录")
+
+    def _on_catalog_ready(self, request_id: int, catalog) -> None:
+        album_id = self._catalog_requests.pop(request_id, None)
+        if album_id is None or catalog.album_id != album_id:
+            return
+        self._restore_chapter_card(album_id)
+        plan_id = self._controller.plan_legacy_migration(album_id, catalog)
+        self._remember_chapter_request(
+            plan_id,
+            "plan_legacy_migration",
+            album_id,
+            None,
+        )
+
+    def _on_catalog_failed(
+        self,
+        request_id: int,
+        _error_code: str,
+        message: str,
+    ) -> None:
+        album_id = self._catalog_requests.pop(request_id, None)
+        if album_id is None:
+            return
+        self._restore_chapter_card(album_id)
+        QMessageBox.warning(self, "远端章节目录读取失败", message)
+
+    def _restore_chapter_card(self, album_id: str) -> None:
+        card = self._rows.get(album_id)
+        if card is None:
+            return
+        card.set_activity(
+            album_id in self._active_albums,
+            album_id in self._busy_albums,
+        )
+        card.chapter_button.setToolTip("识别章节（可能访问网络）")
+
     def _confirm_delete(self, album_id: str, kind: str) -> None:
         if self._controller is None:
             return
@@ -776,5 +1281,16 @@ class LibraryPage(SectionPage):
             self.error_label.setText(message)
             self.error_banner.setVisible(bool(self._items))
             self._sync_content_state()
+            return
+        if command in {
+            "check_chapters",
+            "rebuild_chapters",
+            "repair_chapters",
+            "delete_chapter_images",
+            "delete_chapter_package",
+            "delete_chapter_all",
+            "plan_legacy_migration",
+            "migrate_legacy_layout",
+        }:
             return
         QMessageBox.warning(self, "操作失败", message)

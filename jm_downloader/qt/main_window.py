@@ -110,7 +110,12 @@ class MainWindow(QMainWindow):
                 ),
                 chapter_catalog_controller=chapter_catalog_controller,
             ),
-            "library": LibraryPage(library_controller, self),
+            "library": LibraryPage(
+                library_controller,
+                self,
+                chapter_catalog_controller=chapter_catalog_controller,
+                settings_controller=settings_controller,
+            ),
             "settings": SettingsPage(
                 theme_manager,
                 self,

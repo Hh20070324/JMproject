@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Qt, Signal, Slot
 
 from ...library import LibraryError, LibraryService
-from ...models import LibraryItem, TaskStatus
+from ...models import (
+    ChapterRebuildResult,
+    ChapterRepairPlan,
+    LegacyMigrationPlan,
+    LibraryItem,
+    TaskConfig,
+    TaskStatus,
+)
 from ...tasks import TaskError, TaskManager
 
 
@@ -19,6 +26,22 @@ class BatchDeleteResult:
     kind: str
     succeeded: tuple[str, ...]
     failures: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterRepairExecutionResult:
+    album_id: str
+    plan: ChapterRepairPlan
+    rebuild_result: ChapterRebuildResult | None
+    created_tasks: tuple[object, ...]
+    task_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedChapterRepair:
+    plan: ChapterRepairPlan
+    rebuild_result: ChapterRebuildResult | None
+    base_config: TaskConfig
 
 
 class _LibraryWorkerSignals(QObject):
@@ -64,6 +87,8 @@ class LibraryController(QObject):
     active_albums_changed = Signal(object)
     operation_succeeded = Signal(str, str)
     operation_completed = Signal(str, str, object)
+    request_completed = Signal(int, str, str, object)
+    request_failed = Signal(int, str, str, str)
     command_failed = Signal(str, str, str)
     batch_delete_finished = Signal(str, object, object)
 
@@ -182,7 +207,7 @@ class LibraryController(QObject):
         photo_id: str,
         kind: str,
         expected=None,
-    ) -> None:
+    ) -> int | None:
         kind = str(kind)
         command = {
             "images": "delete_chapter_images",
@@ -195,8 +220,8 @@ class LibraryController(QObject):
                 str(album_id),
                 "不支持的章节删除类型",
             )
-            return
-        self._start_mutation(
+            return None
+        return self._start_mutation(
             command,
             album_id,
             function=lambda reserved_album_id: self.library.delete_chapter(
@@ -204,6 +229,116 @@ class LibraryController(QObject):
                 str(photo_id),
                 kind,
                 expected=expected,
+            ),
+        )
+
+    @Slot(str, result=object)
+    def check_chapters(self, album_id: str) -> int | None:
+        return self._start_mutation(
+            "check_chapters",
+            album_id,
+            function=lambda reserved_album_id: self.library.check_chapters(
+                reserved_album_id
+            ),
+        )
+
+    @Slot(str, object, object, result=object)
+    def rebuild_chapters(
+        self,
+        album_id: str,
+        photo_ids,
+        confirmed_formats=None,
+    ) -> int | None:
+        selected = tuple(str(value) for value in photo_ids)
+        choices = dict(confirmed_formats or {})
+        return self._start_mutation(
+            "rebuild_chapters",
+            album_id,
+            function=lambda reserved_album_id: self.library.rebuild_chapters(
+                reserved_album_id,
+                selected,
+                confirmed_formats=choices,
+            ),
+        )
+
+    @Slot(str, object, object, object, result=object)
+    def repair_chapters(
+        self,
+        album_id: str,
+        photo_ids,
+        confirmed_formats,
+        base_config,
+    ) -> int | None:
+        selected = tuple(str(value) for value in photo_ids)
+        choices = dict(confirmed_formats or {})
+        if not isinstance(base_config, TaskConfig):
+            self.command_failed.emit(
+                "repair_chapters",
+                str(album_id),
+                "当前下载设置无效",
+            )
+            return None
+        base_config.validate()
+
+        def execute(reserved_album_id: str):
+            plan = self.library.plan_chapter_repairs(
+                reserved_album_id,
+                selected,
+                confirmed_formats=choices,
+            )
+            rebuild_result = None
+            if plan.rebuild_photo_ids:
+                rebuild_result = self.library.rebuild_chapters(
+                    reserved_album_id,
+                    plan.rebuild_photo_ids,
+                    confirmed_formats=dict(plan.resolved_formats),
+                )
+            return _PreparedChapterRepair(
+                plan=plan,
+                rebuild_result=rebuild_result,
+                base_config=base_config,
+            )
+
+        return self._start_mutation(
+            "repair_chapters",
+            album_id,
+            function=execute,
+        )
+
+    @Slot(str, object, result=object)
+    def plan_legacy_migration(
+        self,
+        album_id: str,
+        catalog,
+    ) -> int | None:
+        return self._start_mutation(
+            "plan_legacy_migration",
+            album_id,
+            function=lambda reserved_album_id: (
+                self.library.plan_legacy_migration(
+                    reserved_album_id,
+                    catalog,
+                )
+            ),
+        )
+
+    @Slot(object, result=object)
+    def migrate_legacy_layout(
+        self,
+        plan: LegacyMigrationPlan,
+    ) -> int | None:
+        if not isinstance(plan, LegacyMigrationPlan):
+            self.command_failed.emit(
+                "migrate_legacy_layout",
+                "",
+                "迁移方案无效",
+            )
+            return None
+        return self._start_mutation(
+            "migrate_legacy_layout",
+            plan.album_id,
+            function=lambda _reserved_album_id: (
+                self.library.migrate_legacy_layout(plan)
             ),
         )
 
@@ -349,15 +484,26 @@ class LibraryController(QObject):
         album_id: str,
         *,
         function: Callable[[str], object] | None = None,
-    ) -> None:
+    ) -> int | None:
         if self._disposed:
-            return
+            return None
         album_id = str(album_id)
+        request_id = self._next_request_id()
         try:
             album_id = self.manager.begin_library_operation(album_id)
         except TaskError as error:
-            self.command_failed.emit(command, album_id, str(error))
-            return
+            message = str(error)
+            self.command_failed.emit(command, album_id, message)
+            QTimer.singleShot(
+                0,
+                lambda: self.request_failed.emit(
+                    request_id,
+                    command,
+                    album_id,
+                    message,
+                ),
+            )
+            return request_id
 
         with self._busy_lock:
             self._busy_albums.add(album_id)
@@ -383,7 +529,6 @@ class LibraryController(QObject):
             finally:
                 self.manager.end_library_operation(album_id)
 
-        request_id = self._next_request_id()
         try:
             self._submit(request_id, command, album_id, execute)
         except Exception as error:
@@ -392,7 +537,13 @@ class LibraryController(QObject):
                 self._busy_albums.discard(album_id)
                 busy = frozenset(self._busy_albums)
             self.busy_albums_changed.emit(busy)
-            self._report_error(command, album_id, error)
+            self._report_error(
+                command,
+                album_id,
+                error,
+                request_id=request_id,
+            )
+        return request_id
 
     def _submit(
         self,
@@ -453,11 +604,44 @@ class LibraryController(QObject):
         self.busy_albums_changed.emit(busy)
 
         if error is not None:
-            self._report_error(command, album_id, error)
+            self._report_error(
+                command,
+                album_id,
+                error,
+                request_id=request_id,
+            )
         else:
+            if (
+                command == "repair_chapters"
+                and isinstance(result, _PreparedChapterRepair)
+            ):
+                try:
+                    created = self.manager.add_repair_batches(
+                        album_id,
+                        result.plan.download_batches,
+                        base_config=result.base_config,
+                    )
+                    task_error = None
+                except TaskError as caught:
+                    created = ()
+                    task_error = str(caught) or "无法创建重新下载任务"
+                result = ChapterRepairExecutionResult(
+                    album_id=album_id,
+                    plan=result.plan,
+                    rebuild_result=result.rebuild_result,
+                    created_tasks=tuple(created),
+                    task_error=task_error,
+                )
             self.operation_succeeded.emit(command, album_id)
             self.operation_completed.emit(command, album_id, result)
-        self.refresh()
+            self.request_completed.emit(
+                request_id,
+                command,
+                album_id,
+                result,
+            )
+        if command not in {"check_chapters", "plan_legacy_migration"}:
+            self.refresh()
 
     def _finish_scan(self, request_id: int, result, error) -> None:
         self._scan_running = False
@@ -473,7 +657,14 @@ class LibraryController(QObject):
         else:
             self._set_loading(False)
 
-    def _report_error(self, command: str, album_id: str, error: Exception) -> None:
+    def _report_error(
+        self,
+        command: str,
+        album_id: str,
+        error: Exception,
+        *,
+        request_id: int | None = None,
+    ) -> None:
         if not isinstance(error, (LibraryError, TaskError, OSError)):
             LOGGER.error(
                 "Library command failed: %s %s",
@@ -481,7 +672,18 @@ class LibraryController(QObject):
                 album_id,
                 exc_info=(type(error), error, error.__traceback__),
             )
-        self.command_failed.emit(command, album_id, str(error) or "操作失败")
+        message = str(error) or "操作失败"
+        self.command_failed.emit(command, album_id, message)
+        if request_id is not None:
+            QTimer.singleShot(
+                0,
+                lambda: self.request_failed.emit(
+                    request_id,
+                    command,
+                    album_id,
+                    message,
+                ),
+            )
 
     @staticmethod
     def _batch_error_message(

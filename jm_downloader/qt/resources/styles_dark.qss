@@ -1465,6 +1465,94 @@ QPushButton#chapterCancelButton {
     color: #cbd2ce;
 }
 
+QDialog#libraryChapterDialog,
+QDialog#packageFormatConfirmationDialog,
+QDialog#legacyMigrationPreviewDialog {
+    background: #171a18;
+}
+
+QLabel#libraryChapterDialogTitle {
+    color: #edf2ef;
+    font-size: 18px;
+    font-weight: 650;
+}
+
+QLabel#libraryChapterDialogSummary,
+QLabel#libraryChapterUnknownList {
+    color: #a8b0ab;
+}
+
+QLabel#libraryChapterDialogSummary[warning="true"] {
+    color: #e3b76b;
+}
+
+QTableWidget#libraryChapterTable,
+QTableWidget#legacyMigrationTable {
+    background: #232725;
+    alternate-background-color: #202422;
+    border: 1px solid #3b423e;
+    border-radius: 6px;
+    gridline-color: #343a36;
+    color: #edf2ef;
+}
+
+QTableWidget#libraryChapterTable QHeaderView::section,
+QTableWidget#legacyMigrationTable QHeaderView::section {
+    background: #202422;
+    border: none;
+    border-right: 1px solid #3b423e;
+    border-bottom: 1px solid #3b423e;
+    color: #cbd2ce;
+    font-weight: 600;
+    padding: 7px;
+}
+
+QCheckBox#libraryChapterCheck::indicator,
+QRadioButton#libraryChapterFormatRadio::indicator {
+    width: 17px;
+    height: 17px;
+    border: 2px solid #58b989;
+    border-radius: 9px;
+    background: #232725;
+}
+
+QCheckBox#libraryChapterCheck::indicator:checked,
+QRadioButton#libraryChapterFormatRadio::indicator:checked {
+    background: #58b989;
+}
+
+QPushButton#libraryChapterPrimaryButton,
+QPushButton#libraryChapterSecondaryButton,
+QToolButton#libraryChapterActionButton {
+    min-height: 32px;
+    border-radius: 5px;
+    padding: 0 12px;
+}
+
+QPushButton#libraryChapterPrimaryButton {
+    background: #58b989;
+    border: 1px solid #58b989;
+    color: #101512;
+    font-weight: 600;
+}
+
+QPushButton#libraryChapterSecondaryButton,
+QToolButton#libraryChapterActionButton {
+    background: #232725;
+    border: 1px solid #454c48;
+    color: #cbd2ce;
+}
+
+QPushButton#libraryChapterPrimaryButton:hover {
+    background: #6bc697;
+}
+
+QPushButton#libraryChapterSecondaryButton:hover,
+QToolButton#libraryChapterActionButton:hover {
+    background: #343a36;
+    border-color: #69736d;
+}
+
 QPushButton#chapterCancelButton:hover {
     background: #343a36;
     border-color: #69736d;

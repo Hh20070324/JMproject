@@ -31,6 +31,7 @@ class LibraryItemCard(QFrame):
     open_requested = Signal(str, str)
     view_task_requested = Signal(str)
     delete_requested = Signal(str, str)
+    chapter_action_requested = Signal(str, str)
     selection_changed = Signal(str, bool)
 
     def __init__(self, item: LibraryItem, parent=None):
@@ -135,6 +136,24 @@ class LibraryItemCard(QFrame):
             lambda: self.view_task_requested.emit(self.item.album_id)
         )
         actions_layout.addWidget(self.view_task_button)
+
+        self.chapter_button = self._make_icon_button(
+            actions,
+            "libraryChapterButton",
+            "管理章节",
+            svg_icon("folder"),
+        )
+        self.chapter_button.clicked.connect(
+            lambda: self.chapter_action_requested.emit(
+                self.item.album_id,
+                (
+                    "identify"
+                    if self.item.layout is LibraryLayout.LEGACY
+                    else "manage"
+                ),
+            )
+        )
+        actions_layout.addWidget(self.chapter_button)
 
         self.delete_button = self._make_icon_button(
             actions,
@@ -252,6 +271,14 @@ class LibraryItemCard(QFrame):
         )
         self.delete_images_action.setVisible(item.has_images)
         self.delete_pdf_action.setVisible(item.has_pdf or item.has_cbz)
+        self.chapter_button.setVisible(
+            item.layout in {LibraryLayout.MANAGED, LibraryLayout.LEGACY}
+        )
+        self.chapter_button.setToolTip(
+            "识别章节（可能访问网络）"
+            if item.layout is LibraryLayout.LEGACY
+            else "管理章节"
+        )
         self._sync_activity()
         if not item.has_images:
             self.reset_preview()
@@ -269,6 +296,7 @@ class LibraryItemCard(QFrame):
             self._selection_mode and not locked
         )
         self.delete_button.setEnabled(not locked)
+        self.chapter_button.setEnabled(not locked)
         self.delete_images_action.setEnabled(not locked and self.item.has_images)
         self.delete_pdf_action.setEnabled(
             not locked and (self.item.has_pdf or self.item.has_cbz)
