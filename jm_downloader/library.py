@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import os
@@ -14,16 +16,19 @@ from .models import (
     ChapterImageStatus,
     ChapterManifest,
     ChapterManifestEntry,
+    ChapterOperationFailure,
     ChapterPackageStatus,
+    ChapterRebuildOutcome,
+    ChapterRebuildResult,
     LibraryChapterSnapshot,
     LibraryItem,
     LibraryLayout,
 )
-from .packaging import cbz_file_intact
+from .packaging import cbz_file_intact, chapter_to_cbz
 from .pdf import (
     IMAGE_EXTENSIONS,
     PART_FILE_MARKER,
-    album_to_pdf,
+    chapter_to_pdf,
     find_album_images,
     is_linked_directory,
     natural_key,
@@ -132,9 +137,9 @@ class ChapterManifestStore:
     def replace_exact(self, manifest: ChapterManifest) -> ChapterManifest:
         """Atomically publish an exact manifest without merging old chapters.
 
-        This is intentionally narrower than ``merge_and_save``.  It exists for
-        the managed "delete images" transaction, where keeping the album
-        identity but clearing every chapter is the desired state.
+        This is intentionally narrower than ``merge_and_save`` and is used by
+        managed library transactions that must preserve removals or per-chapter
+        metadata changes exactly.
         """
 
         manifest = self._upgrade_manifest(manifest)
@@ -922,24 +927,346 @@ class LibraryService:
                 raise LibraryNotFound("PDF 储存文件夹不存在")
             return item.pdf_directory
 
-    def rebuild_pdf(self, album_id: str) -> str:
-        """Retained temporarily for the hidden v2.7 whole-album action."""
+    def rebuild_chapters(
+        self,
+        album_id: str,
+        photo_ids,
+        *,
+        confirmed_formats: Mapping[str, str] | None = None,
+    ) -> ChapterRebuildResult:
+        """Rebuild selected managed chapters in their recorded formats.
 
+        Unknown legacy formats must be supplied explicitly in
+        ``confirmed_formats``.  Chapters are committed independently so one
+        failure does not undo earlier successful chapters.
+        """
         with self._lock:
             self._require_album_id(album_id)
-            album_dir = self._album_directory(self.paths.pictures, album_id)
-            if not self._list_images(album_dir):
-                raise LibraryNotFound("没有可用于生成 PDF 的图片")
+            selected_ids = self._normalize_photo_ids(photo_ids)
+            if not selected_ids:
+                raise LibraryError("请先选择要重建的章节")
+            choices = {
+                str(photo_id): str(package_format)
+                for photo_id, package_format in dict(
+                    confirmed_formats or {}
+                ).items()
+            }
             try:
-                result = album_to_pdf(
-                    str(album_dir),
-                    str(self.paths.pdfs.resolve()),
+                manifest = ChapterManifestStore(self.paths).load(album_id)
+            except ChapterManifestError as error:
+                raise LibraryError(
+                    "章节清单不可用，无法重建章节"
+                ) from error
+            if manifest is None:
+                raise LibraryNotFound("没有可用的章节清单")
+
+            album_dir = self._album_directory(self.paths.pictures, album_id)
+            title_dir = self._safe_child_directory(
+                album_dir,
+                manifest.album_dir_name,
+            )
+            package_album_dir = self._album_directory(
+                self.paths.pdfs,
+                album_id,
+            )
+            by_id = {
+                chapter.photo_id: chapter for chapter in manifest.chapters
+            }
+            succeeded = []
+            failures = []
+            working_manifest = manifest
+            for photo_id in selected_ids:
+                chapter = by_id.get(photo_id)
+                if chapter is None:
+                    failures.append(
+                        ChapterOperationFailure(
+                            photo_id=photo_id,
+                            title="",
+                            message="章节已不在当前清单中",
+                        )
+                    )
+                    continue
+                try:
+                    outcome, working_manifest = self._rebuild_chapter(
+                        album_id=album_id,
+                        manifest=working_manifest,
+                        chapter=chapter,
+                        title_dir=title_dir,
+                        package_album_dir=package_album_dir,
+                        confirmed_format=choices.get(photo_id),
+                    )
+                except Exception as error:
+                    message = str(error).strip() or "章节重建失败"
+                    failures.append(
+                        ChapterOperationFailure(
+                            photo_id=photo_id,
+                            title=chapter.title,
+                            message=message,
+                        )
+                    )
+                else:
+                    succeeded.append(outcome)
+                    by_id[photo_id] = next(
+                        value
+                        for value in working_manifest.chapters
+                        if value.photo_id == photo_id
+                    )
+            return ChapterRebuildResult(
+                album_id=album_id,
+                succeeded=tuple(succeeded),
+                failures=tuple(failures),
+            )
+
+    def _rebuild_chapter(
+        self,
+        *,
+        album_id: str,
+        manifest: ChapterManifest,
+        chapter: ChapterManifestEntry,
+        title_dir: Path | None,
+        package_album_dir: Path,
+        confirmed_format: str | None,
+    ) -> tuple[ChapterRebuildOutcome, ChapterManifest]:
+        snapshot = self._check_chapter(
+            album_id,
+            manifest,
+            chapter,
+            title_dir,
+            self._safe_child_directory(
+                package_album_dir,
+                manifest.album_dir_name,
+            ),
+        )
+        if snapshot.image_status is not ChapterImageStatus.COMPLETE:
+            raise LibraryError("章节图片不完整，请先重新下载")
+
+        package_format = chapter.package_format
+        format_was_unknown = package_format is None
+        if format_was_unknown:
+            if confirmed_format not in {"pdf", "cbz", "images"}:
+                raise LibraryError(
+                    "章节原打包格式未知，请先确认 PDF、CBZ 或仅图片"
                 )
-            except Exception as error:
-                raise LibraryError(f"PDF 生成失败：{error}") from error
+            package_format = confirmed_format
+
+        updated_manifest = manifest
+        if format_was_unknown:
+            updated_manifest = self._manifest_with_chapter_format(
+                manifest,
+                chapter.photo_id,
+                package_format,
+            )
+
+        if package_format == "images":
+            if format_was_unknown:
+                try:
+                    ChapterManifestStore(self.paths).replace_exact(
+                        updated_manifest
+                    )
+                except ChapterManifestError as error:
+                    raise LibraryError(
+                        f"无法保存章节原格式：{error}"
+                    ) from error
+            return (
+                ChapterRebuildOutcome(
+                    photo_id=chapter.photo_id,
+                    index=chapter.index,
+                    title=chapter.title,
+                    package_format=package_format,
+                    output_path=None,
+                ),
+                updated_manifest,
+            )
+
+        image_directory = snapshot.image_directory
+        if image_directory is None:
+            raise LibraryError("章节图片目录不可用")
+        package_dir, created_directories = self._prepare_package_directory(
+            package_album_dir,
+            manifest.album_dir_name,
+        )
+        target = self._validated_package_target(
+            package_dir,
+            manifest,
+            chapter,
+            package_format,
+        )
+        backup = None
+        if target.exists():
+            backup = target.with_name(
+                f".{target.name}.{uuid.uuid4().hex}.rebuild"
+            )
+            try:
+                os.replace(target, backup)
+            except OSError as error:
+                self._remove_empty_directories(created_directories)
+                raise LibraryError(
+                    f"无法暂存现有打包产物：{error}"
+                ) from error
+
+        published = False
+        try:
+            if package_format == "pdf":
+                result = chapter_to_pdf(image_directory, target)
+            else:
+                result = chapter_to_cbz(image_directory, target)
             if not result:
-                raise LibraryError("PDF 生成失败")
-            return result
+                raise LibraryError("章节打包未生成产物")
+            published = True
+            if format_was_unknown:
+                ChapterManifestStore(self.paths).replace_exact(
+                    updated_manifest
+                )
+        except Exception as error:
+            rollback_errors = self._rollback_rebuild_target(
+                target=target,
+                backup=backup,
+                published=published,
+            )
+            self._remove_empty_directories(created_directories)
+            if rollback_errors:
+                raise LibraryError(
+                    "章节重建失败，且无法完整回滚："
+                    + "; ".join(rollback_errors)
+                ) from error
+            if isinstance(error, LibraryError):
+                raise
+            raise LibraryError(f"章节重建失败：{error}") from error
+
+        warning = None
+        if backup is not None:
+            try:
+                backup.unlink()
+            except OSError as error:
+                warning = f"章节已重建，但旧产物备份清理失败：{error}"
+        return (
+            ChapterRebuildOutcome(
+                photo_id=chapter.photo_id,
+                index=chapter.index,
+                title=chapter.title,
+                package_format=package_format,
+                output_path=target,
+                warning=warning,
+            ),
+            updated_manifest,
+        )
+
+    @staticmethod
+    def _normalize_photo_ids(photo_ids) -> tuple[str, ...]:
+        values = (photo_ids,) if isinstance(photo_ids, str) else photo_ids
+        normalized = []
+        seen = set()
+        try:
+            iterator = iter(values)
+        except TypeError as error:
+            raise LibraryError("章节选择无效") from error
+        for value in iterator:
+            photo_id = str(value)
+            if photo_id in seen:
+                continue
+            seen.add(photo_id)
+            normalized.append(photo_id)
+        return tuple(normalized)
+
+    @staticmethod
+    def _manifest_with_chapter_format(
+        manifest: ChapterManifest,
+        photo_id: str,
+        package_format: str,
+    ) -> ChapterManifest:
+        return replace(
+            manifest,
+            chapters=tuple(
+                replace(chapter, package_format=package_format)
+                if chapter.photo_id == photo_id
+                else chapter
+                for chapter in manifest.chapters
+            ),
+        )
+
+    @staticmethod
+    def _prepare_package_directory(
+        package_album_dir: Path,
+        album_dir_name: str,
+    ) -> tuple[Path, tuple[Path, ...]]:
+        created = []
+        try:
+            if not package_album_dir.exists():
+                package_album_dir.mkdir()
+                created.append(package_album_dir)
+            if (
+                is_linked_directory(package_album_dir)
+                or not package_album_dir.is_dir()
+            ):
+                raise LibraryError("打包产物目录不可用")
+            resolved_album_dir = package_album_dir.resolve(strict=True)
+            package_dir = package_album_dir / album_dir_name
+            if not package_dir.exists():
+                package_dir.mkdir()
+                created.append(package_dir)
+            if is_linked_directory(package_dir) or not package_dir.is_dir():
+                raise LibraryError("打包产物目录不可用")
+            resolved_package_dir = package_dir.resolve(strict=True)
+            if resolved_package_dir.parent != resolved_album_dir:
+                raise LibraryError("打包产物目录超出受管范围")
+            return resolved_package_dir, tuple(created)
+        except LibraryError:
+            LibraryService._remove_empty_directories(tuple(created))
+            raise
+        except OSError as error:
+            LibraryService._remove_empty_directories(tuple(created))
+            raise LibraryError(f"无法准备打包产物目录：{error}") from error
+
+    @staticmethod
+    def _validated_package_target(
+        package_dir: Path,
+        manifest: ChapterManifest,
+        chapter: ChapterManifestEntry,
+        package_format: str,
+    ) -> Path:
+        name = chapter.dir_name or manifest.album_dir_name
+        target = package_dir / f"{name}.{package_format}"
+        if is_linked_directory(target):
+            raise LibraryError("打包产物路径不能是链接")
+        if target.exists():
+            if not target.is_file():
+                raise LibraryError("打包产物路径无效")
+            try:
+                resolved = target.resolve(strict=True)
+            except OSError as error:
+                raise LibraryError("打包产物路径无法安全解析") from error
+            if resolved.parent != package_dir:
+                raise LibraryError("打包产物路径超出受管范围")
+            return resolved
+        return target
+
+    @staticmethod
+    def _rollback_rebuild_target(
+        *,
+        target: Path,
+        backup: Path | None,
+        published: bool,
+    ) -> list[str]:
+        errors = []
+        if published or target.exists():
+            try:
+                target.unlink(missing_ok=True)
+            except OSError as error:
+                errors.append(str(error))
+        if backup is not None and backup.exists():
+            try:
+                os.replace(backup, target)
+            except OSError as error:
+                errors.append(str(error))
+        return errors
+
+    @staticmethod
+    def _remove_empty_directories(directories) -> None:
+        for directory in reversed(tuple(directories)):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
 
     def delete_images(self, album_id: str) -> None:
         with self._lock:

@@ -67,7 +67,6 @@ class LibraryController(QObject):
     batch_delete_finished = Signal(str, object, object)
 
     MUTATION_COMMANDS = {
-        "rebuild",
         "delete_images",
         "delete_pdf",
         "delete_all",
@@ -155,10 +154,6 @@ class LibraryController(QObject):
             self.library.open_location(album_id, kind)
         except (LibraryError, OSError) as error:
             self.command_failed.emit("open", str(album_id), str(error))
-
-    @Slot(str)
-    def rebuild_pdf(self, album_id: str) -> None:
-        self._start_mutation("rebuild", album_id)
 
     @Slot(str, str)
     def delete_item(self, album_id: str, kind: str) -> None:
@@ -332,7 +327,6 @@ class LibraryController(QObject):
         self._refresh_pending = False
 
         method = {
-            "rebuild": self.library.rebuild_pdf,
             "delete_images": self.library.delete_images,
             "delete_pdf": self.library.delete_pdf,
             "delete_all": self.library.delete_all,

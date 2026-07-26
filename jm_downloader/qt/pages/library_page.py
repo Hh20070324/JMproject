@@ -390,7 +390,6 @@ class LibraryPage(SectionPage):
                 row.view_task_requested.connect(
                     self.view_task_requested.emit
                 )
-                row.rebuild_requested.connect(self._rebuild_pdf)
                 row.delete_requested.connect(self._confirm_delete)
                 row.selection_changed.connect(
                     self._on_selection_changed
@@ -668,25 +667,6 @@ class LibraryPage(SectionPage):
     def _open_item(self, album_id: str, kind: str) -> None:
         if self._controller is not None:
             self._controller.open_item(album_id, kind)
-
-    def _rebuild_pdf(self, album_id: str) -> None:
-        if self._controller is None:
-            return
-        item = next(
-            (item for item in self._items if item.album_id == album_id),
-            None,
-        )
-        if item is not None and item.has_pdf:
-            answer = QMessageBox.question(
-                self,
-                "重新生成 PDF",
-                f"现有 JM {album_id} PDF 将被替换，确定继续吗？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        self._controller.rebuild_pdf(album_id)
 
     def _confirm_delete(self, album_id: str, kind: str) -> None:
         if self._controller is None:

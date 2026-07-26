@@ -55,9 +55,6 @@ class FakeLibraryController(QObject):
     def open_item(self, album_id, kind):
         self.calls.append(("open", album_id, kind))
 
-    def rebuild_pdf(self, album_id):
-        self.calls.append(("rebuild", album_id))
-
     def delete_item(self, album_id, kind):
         self.calls.append(("delete", album_id, kind))
 
@@ -199,7 +196,6 @@ class LibraryPageTests(unittest.TestCase):
         )
         self.controller.active = frozenset({"30"})
         self.controller.active_albums_changed.emit(self.controller.active)
-        self.assertFalse(card.rebuild_button.isEnabled())
         self.assertFalse(card.delete_button.isEnabled())
         self.assertTrue(card.open_pdf_button.isEnabled())
         self.assertEqual(card.state_label.text(), "任务占用")
@@ -210,9 +206,8 @@ class LibraryPageTests(unittest.TestCase):
         self.controller.busy_albums_changed.emit(self.controller.busy)
         self.assertEqual(card.state_label.text(), "处理中")
 
-    def test_delete_requires_native_confirmation_and_rebuild_is_hidden(self):
+    def test_delete_requires_native_confirmation(self):
         card = self.page.item_card("30")
-        self.assertTrue(card.rebuild_button.isHidden())
         with patch(
             "jm_downloader.qt.pages.library_page.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Cancel,

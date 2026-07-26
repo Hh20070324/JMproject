@@ -123,18 +123,6 @@ class LibraryServiceTests(unittest.TestCase):
         with self.assertRaises(LibraryNotFound):
             self.library.get_preview("../secret")
 
-    def test_hidden_rebuild_api_still_wraps_legacy_builder_failure(self):
-        self._write("Pictures/123/旧章节/1.jpg", b"image")
-        old_pdf = self._write("PDFs/123.pdf", b"old pdf")
-        with patch(
-            "jm_downloader.library.album_to_pdf",
-            side_effect=OSError("文件被占用"),
-        ):
-            with self.assertRaisesRegex(LibraryError, "PDF 生成失败"):
-                self.library.rebuild_pdf("123")
-
-        self.assertEqual(old_pdf.read_bytes(), b"old pdf")
-
     def test_open_pdf_uses_verified_managed_title_directory(self):
         self._save_manifest()
         self._write("Pictures/123/测试漫画/第1章/1.jpg", b"image")

@@ -153,6 +153,30 @@ class LibraryChapterSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class ChapterRebuildOutcome:
+    photo_id: str
+    index: int
+    title: str
+    package_format: str
+    output_path: Path | None
+    warning: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterOperationFailure:
+    photo_id: str
+    title: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterRebuildResult:
+    album_id: str
+    succeeded: tuple[ChapterRebuildOutcome, ...]
+    failures: tuple[ChapterOperationFailure, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterManifest:
     version: int
     album_id: str

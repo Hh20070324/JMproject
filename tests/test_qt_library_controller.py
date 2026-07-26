@@ -84,9 +84,6 @@ class ControlledLibrary:
     def open_location(self, album_id, kind):
         self.calls.append(("open", album_id, kind, threading.current_thread()))
 
-    def rebuild_pdf(self, album_id):
-        return self._mutate("rebuild", album_id)
-
     def delete_images(self, album_id):
         return self._mutate("delete_images", album_id)
 
@@ -226,10 +223,10 @@ class LibraryControllerTests(unittest.TestCase):
             )
         )
 
-        self.controller.rebuild_pdf("1")
+        self.controller.delete_item("1", "pdf")
         self.assertTrue(self._wait_until(lambda: bool(errors)))
 
-        self.assertEqual(errors, [("rebuild", "1", "PDF 文件被占用")])
+        self.assertEqual(errors, [("delete_pdf", "1", "PDF 文件被占用")])
         self.assertEqual(self.controller.busy_album_ids(), frozenset())
         self.assertFalse(self.manager.is_library_operation_active("1"))
 

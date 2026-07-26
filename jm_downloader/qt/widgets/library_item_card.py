@@ -30,7 +30,6 @@ def format_file_size(size: int) -> str:
 class LibraryItemCard(QFrame):
     open_requested = Signal(str, str)
     view_task_requested = Signal(str)
-    rebuild_requested = Signal(str)
     delete_requested = Signal(str, str)
     selection_changed = Signal(str, bool)
 
@@ -136,18 +135,6 @@ class LibraryItemCard(QFrame):
             lambda: self.view_task_requested.emit(self.item.album_id)
         )
         actions_layout.addWidget(self.view_task_button)
-
-        self.rebuild_button = QToolButton(actions)
-        self.rebuild_button.setObjectName("libraryRebuildButton")
-        self.rebuild_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
-        self.rebuild_button.setIcon(svg_icon("refresh"))
-        self.rebuild_button.setFixedSize(96, 34)
-        self.rebuild_button.clicked.connect(
-            lambda: self.rebuild_requested.emit(self.item.album_id)
-        )
-        actions_layout.addWidget(self.rebuild_button)
 
         self.delete_button = self._make_icon_button(
             actions,
@@ -263,8 +250,6 @@ class LibraryItemCard(QFrame):
                 and item.cbz_directory.is_dir()
             )
         )
-        self.rebuild_button.setVisible(False)
-        self.rebuild_button.setText("重建 PDF" if item.has_pdf else "生成 PDF")
         self.delete_images_action.setVisible(item.has_images)
         self.delete_pdf_action.setVisible(item.has_pdf or item.has_cbz)
         self._sync_activity()
@@ -283,7 +268,6 @@ class LibraryItemCard(QFrame):
         self.selection_checkbox.setEnabled(
             self._selection_mode and not locked
         )
-        self.rebuild_button.setEnabled(not locked)
         self.delete_button.setEnabled(not locked)
         self.delete_images_action.setEnabled(not locked and self.item.has_images)
         self.delete_pdf_action.setEnabled(
@@ -310,7 +294,6 @@ class LibraryItemCard(QFrame):
         self.state_label.setVisible(
             locked or self.item.layout is LibraryLayout.LEGACY
         )
-        self.rebuild_button.setToolTip(tooltip or self.rebuild_button.text())
         self.delete_button.setToolTip(tooltip or "删除本地文件")
         self.state_label.style().unpolish(self.state_label)
         self.state_label.style().polish(self.state_label)
