@@ -19,6 +19,7 @@ from jm_downloader.models import (
     ChapterSnapshot,
     SearchResultSnapshot,
 )
+from jm_downloader.qt.theme import Theme, load_stylesheet
 from jm_downloader.qt.widgets.chapter_selection_dialog import (
     ChapterSelectionDialog,
 )
@@ -105,6 +106,27 @@ class ChapterSelectionDialogTests(unittest.TestCase):
         )
         self.assertFalse(self.dialog.confirm_button.isEnabled())
         self.assertIn("0", self.dialog.confirm_button.text())
+
+    def test_both_themes_style_all_chapter_selection_indicators(self):
+        object_names = (
+            "chapterSelectAll",
+            "chapterIncludeDownloaded",
+            "chapterItemCheck",
+        )
+        for theme in (Theme.LIGHT, Theme.DARK):
+            stylesheet = load_stylesheet(theme)
+            with self.subTest(theme=theme):
+                for object_name in object_names:
+                    selector = f"QCheckBox#{object_name}::indicator"
+                    self.assertIn(selector, stylesheet)
+                self.assertIn(
+                    "QCheckBox#chapterItemCheck::indicator:checked",
+                    stylesheet,
+                )
+                self.assertIn(
+                    "QCheckBox#chapterItemCheck::indicator:disabled",
+                    stylesheet,
+                )
 
     def test_select_all_is_three_state_and_tracks_individual_choices(self):
         select_all = self.dialog.select_all_checkbox

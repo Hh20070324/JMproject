@@ -1492,6 +1492,33 @@ QCheckBox#chapterItemCheck[hovered="true"] {
     background: #303532;
 }
 
+QCheckBox#chapterSelectAll::indicator,
+QCheckBox#chapterIncludeDownloaded::indicator,
+QCheckBox#chapterItemCheck::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #58b989;
+    border-radius: 5px;
+    background: #20382d;
+}
+
+QCheckBox#chapterSelectAll::indicator:checked,
+QCheckBox#chapterIncludeDownloaded::indicator:checked,
+QCheckBox#chapterItemCheck::indicator:checked {
+    background: #58b989;
+}
+
+QCheckBox#chapterSelectAll::indicator:indeterminate {
+    background: #3f6b54;
+}
+
+QCheckBox#chapterSelectAll::indicator:disabled,
+QCheckBox#chapterIncludeDownloaded::indicator:disabled,
+QCheckBox#chapterItemCheck::indicator:disabled {
+    background: #1d2d25;
+    border-color: #3f6b54;
+}
+
 QPushButton#chapterCancelButton,
 QPushButton#chapterConfirmButton {
     border-radius: 6px;
