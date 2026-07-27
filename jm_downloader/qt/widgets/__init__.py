@@ -7,6 +7,8 @@ from .library_chapter_dialogs import (
 )
 from .search_cover_loader import SearchCoverLoader
 from .search_result_card import SearchResultCard
+from .reader_chapter_dialog import ReaderChapterDialog
+from .reader_graphics_view import ReaderGraphicsView
 from .thumbnail_loader import ThumbnailLoader
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     "PackageFormatConfirmationDialog",
     "SearchCoverLoader",
     "SearchResultCard",
+    "ReaderChapterDialog",
+    "ReaderGraphicsView",
     "ThumbnailLoader",
 ]

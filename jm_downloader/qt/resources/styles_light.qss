@@ -14,6 +14,155 @@ QWidget#settingsPage {
     background: #f5f7f6;
 }
 
+QWidget#readerPage {
+    background: #eef2f0;
+}
+
+QLabel#readerTitle {
+    color: #1d2320;
+    font-size: 18px;
+    font-weight: 650;
+}
+
+QFrame#readerRule {
+    border: 1px solid #2e7d57;
+}
+
+QGraphicsView#readerGraphicsView {
+    background: #e8edea;
+    border: 1px solid #d1d9d5;
+    border-radius: 6px;
+}
+
+QToolButton#readerBackButton,
+QToolButton#readerChapterButton,
+QToolButton#readerPreviousChapterButton,
+QToolButton#readerNextChapterButton,
+QToolButton#readerPreviousPageButton,
+QToolButton#readerNextPageButton,
+QToolButton#readerRetryButton,
+QToolButton#readerDownloadButton {
+    min-height: 34px;
+    background: #ffffff;
+    border: 1px solid #cbd5d0;
+    border-radius: 6px;
+    color: #26312c;
+    padding: 0 10px;
+}
+
+QToolButton#readerBackButton:hover,
+QToolButton#readerChapterButton:hover,
+QToolButton#readerPreviousChapterButton:hover,
+QToolButton#readerNextChapterButton:hover,
+QToolButton#readerPreviousPageButton:hover,
+QToolButton#readerNextPageButton:hover,
+QToolButton#readerRetryButton:hover,
+QToolButton#readerDownloadButton:hover {
+    background: #eaf4ef;
+    border-color: #2e7d57;
+}
+
+QToolButton#readerDownloadButton {
+    background: #2e7d57;
+    border-color: #2e7d57;
+    color: #ffffff;
+}
+
+QToolButton#readerBackButton:disabled,
+QToolButton#readerChapterButton:disabled,
+QToolButton#readerPreviousChapterButton:disabled,
+QToolButton#readerNextChapterButton:disabled,
+QToolButton#readerPreviousPageButton:disabled,
+QToolButton#readerNextPageButton:disabled,
+QToolButton#readerRetryButton:disabled,
+QToolButton#readerDownloadButton:disabled {
+    background: #e5eae7;
+    border-color: #d7ddd9;
+    color: #89938e;
+}
+
+QSlider#readerPageSlider::groove:horizontal {
+    height: 6px;
+    background: #cfd8d3;
+    border-radius: 3px;
+}
+
+QSlider#readerPageSlider::sub-page:horizontal {
+    background: #2e7d57;
+    border-radius: 3px;
+}
+
+QSlider#readerPageSlider::handle:horizontal {
+    width: 18px;
+    margin: -6px 0;
+    background: #2e7d57;
+    border: 2px solid #ffffff;
+    border-radius: 9px;
+}
+
+QLabel#readerErrorBanner {
+    background: #fff2ee;
+    border: 1px solid #d98268;
+    border-radius: 6px;
+    color: #8c3520;
+    padding: 7px 10px;
+}
+
+QDialog#readerChapterDialog,
+QDialog#readerChapterDialog QWidget#qt_scrollarea_viewport,
+QWidget#readerChapterCanvas {
+    background: #f7f9f8;
+    color: #1d2320;
+}
+
+QLabel#readerChapterDialogTitle {
+    font-size: 18px;
+    font-weight: 650;
+}
+
+QLabel#readerChapterDialogDetail {
+    color: #65706a;
+}
+
+QRadioButton#readerChapterOption {
+    background: #ffffff;
+    border: 1px solid #d7ddd9;
+    border-radius: 6px;
+    padding: 8px;
+    spacing: 10px;
+}
+
+QRadioButton#readerChapterOption:hover {
+    background: #eaf4ef;
+    border-color: #2e7d57;
+}
+
+QRadioButton#readerChapterOption::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #2e7d57;
+    border-radius: 9px;
+    background: transparent;
+}
+
+QRadioButton#readerChapterOption::indicator:checked {
+    background: qradialgradient(
+        cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+        stop: 0 #2e7d57,
+        stop: 0.44 #2e7d57,
+        stop: 0.45 transparent,
+        stop: 1 transparent
+    );
+}
+
+QPushButton#readerChapterCancelButton {
+    min-height: 34px;
+    min-width: 88px;
+    background: #ffffff;
+    border: 1px solid #cbd5d0;
+    border-radius: 6px;
+}
+
 QWidget#sidebar {
     background: #222624;
     border-right: 1px solid #161917;
