@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,7 @@ from ...models import (
     FavoritesFilterSnapshot,
     FavoritesSnapshot,
     FavoritesSyncProgress,
+    ReaderSource,
     SearchResultSnapshot,
 )
 from ..chapter_download_flow import ChapterDownloadFlow
@@ -53,6 +55,7 @@ FAVORITES_PAGE_SIZE = 20
 
 class FavoritesPage(SectionPage):
     view_task_requested = Signal(str)
+    read_requested = Signal(object, object)
 
     def __init__(
         self,
@@ -64,6 +67,7 @@ class FavoritesPage(SectionPage):
         cover_service=None,
         cover_loader: SearchCoverLoader | None = None,
         chapter_catalog_controller: "ChapterCatalogController | None" = None,
+        reader_available: bool = False,
     ):
         super().__init__("我的收藏", "favoritesPage", parent)
         self.controller = controller
@@ -101,6 +105,7 @@ class FavoritesPage(SectionPage):
         self._tasks_by_album = set()
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
         self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
+        self._reader_available = bool(reader_available)
         self._cover_generation = 0
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
@@ -1219,6 +1224,8 @@ class FavoritesPage(SectionPage):
             if cached_catalog is not None:
                 card.set_chapter_state(cached_catalog)
             card.set_action_available(self.download_controller is not None)
+            card.set_reading_available(self._reader_available)
+            card.read_requested.connect(self._read_favorite)
             card.download_requested.connect(self._download_favorite)
             card.view_task_requested.connect(self.view_task_requested)
             card.set_move_favorite_visible(True)
@@ -1311,6 +1318,26 @@ class FavoritesPage(SectionPage):
             return
         for card in self._cards_by_album.get(album_id, ()):
             card.clear_cover()
+
+    @Slot(str)
+    def _read_favorite(self, album_id: str) -> None:
+        cards = self._cards_by_album.get(album_id, ())
+        if not cards or not self._reader_available:
+            return
+        snapshot = cards[0].snapshot
+        catalog = self._chapter_catalogs.get(album_id)
+        if catalog is not None and snapshot.chapter_catalog is not catalog:
+            snapshot = replace(snapshot, chapter_catalog=catalog)
+        self.read_requested.emit(snapshot, ReaderSource.FAVORITES)
+
+    def focus_card(self, album_id: str) -> bool:
+        cards = self._cards_by_album.get(str(album_id), ())
+        if not cards:
+            return False
+        card = cards[0]
+        self.results_scroll.ensureWidgetVisible(card)
+        card.setFocus(Qt.FocusReason.OtherFocusReason)
+        return True
 
     @Slot(str)
     def _download_favorite(self, album_id: str) -> None:

@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -213,10 +214,15 @@ class ReaderPage(QWidget):
             raise TypeError("source must be ReaderSource")
         self._source = source
         self._catalog = catalog
+        self._chapter = None
         self._album_title = catalog.title or f"JM {catalog.album_id}"
         self.title_label.setText(self._album_title)
         self._pending_photo_id = photo_id
         self._pending_page = max(1, int(page_number))
+        self.view.clear_pages()
+        self._failed_pages.clear()
+        self._show_error("")
+        self._refresh_controls()
         self._select_initial_chapter()
 
     @property
@@ -226,6 +232,13 @@ class ReaderPage(QWidget):
     @property
     def current_photo_id(self) -> str | None:
         return self._chapter.photo_id if self._chapter else None
+
+    @property
+    def current_album_id(self) -> str | None:
+        return self._catalog.album_id if self._catalog else None
+
+    def show_notice(self, message: str) -> None:
+        self._show_error(message)
 
     def _select_initial_chapter(self) -> None:
         if self._catalog is None:
@@ -237,8 +250,20 @@ class ReaderPage(QWidget):
         ):
             self._load_chapter(photo_id)
             return
+        if photo_id is not None:
+            self._pending_photo_id = None
+            self._pending_page = 1
+            QMessageBox.information(
+                self,
+                "上次阅读章节已不可用",
+                "阅读历史中的章节已不在当前远端目录中。"
+                "请选择新的起始章节。",
+            )
         if len(self._catalog.chapters) == 1:
             self._load_chapter(self._catalog.chapters[0].photo_id)
+            return
+        if not self._catalog.chapters:
+            self._show_error("这部漫画当前没有可阅读章节")
             return
         self._show_chapter_dialog()
 

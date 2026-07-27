@@ -8,12 +8,12 @@ import sys
 import tempfile
 import traceback
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QMetaObject, QTimer, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 from ..desktop_runtime import SingleInstance, configure_logging
-from ..account import AccountService
+from ..account import AccountError, AccountService
 from ..credentials import CredentialStore
 from ..downloader import DownloadWorker
 from ..favorites import FavoritesService
@@ -21,6 +21,12 @@ from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
 from ..option_config import ApiRouteState
 from ..protected_store import ProtectedStore
+from ..reader import (
+    ReaderDiskCache,
+    ReaderHistoryStore,
+    ReaderService,
+    ReaderTempError,
+)
 from ..search import SearchService
 from ..search_history import SearchHistoryStore
 from ..settings import AppPaths, AppSettings, DEFAULT_PATHS, SettingsError
@@ -33,6 +39,7 @@ from .controllers import (
     DownloadController,
     FavoritesController,
     LibraryController,
+    ReaderController,
     SearchController,
     SettingsController,
 )
@@ -150,6 +157,7 @@ def run_qt_app(
     chapter_catalog_controller = None
     account_controller = None
     favorites_controller = None
+    reader_controller = None
     task_store = None
     try:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -264,6 +272,38 @@ def run_qt_app(
             ),
             account_controller,
         )
+        reader_history_store = ReaderHistoryStore(
+            ProtectedStore.reading_history(paths)
+        )
+
+        def reader_session_cookies():
+            try:
+                return account_service.current_session().cookie_dict()
+            except AccountError:
+                return None
+
+        def mark_reader_session_expired():
+            QMetaObject.invokeMethod(
+                account_controller,
+                "mark_expired",
+                Qt.ConnectionType.QueuedConnection,
+            )
+
+        try:
+            reader_service = ReaderService(
+                option_file=paths.option_file,
+                disk_cache=ReaderDiskCache(paths.reader_temp),
+                api_route_provider=api_route_state.get,
+                session_cookie_provider=reader_session_cookies,
+                session_expired_callback=mark_reader_session_expired,
+            )
+            reader_controller = ReaderController(
+                reader_service,
+                history_store=reader_history_store,
+            )
+        except ReaderTempError as error:
+            _show_startup_error(str(error))
+            return 1
         settings_controller = SettingsController(
             settings_store,
             settings_validator=partial(
@@ -294,6 +334,8 @@ def run_qt_app(
             account_controller=account_controller,
             favorites_controller=favorites_controller,
             settings_controller=settings_controller,
+            reader_controller=reader_controller,
+            reader_history_store=reader_history_store,
             persist_window_state=not smoke_test,
         )
         window.show()
@@ -316,6 +358,11 @@ def run_qt_app(
             )
         raise
     finally:
+        if reader_controller is not None:
+            if not reader_controller.shutdown(timeout=5.0):
+                logger.warning(
+                    "Online reader worker did not stop before shutdown timeout"
+                )
         if chapter_catalog_controller is not None:
             chapter_catalog_controller.dispose()
         if favorites_controller is not None:

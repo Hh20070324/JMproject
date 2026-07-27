@@ -1,6 +1,7 @@
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ...models import (
     ChapterCatalogSnapshot,
+    ReaderSource,
     SearchMode,
     SearchPageSnapshot,
     SearchRequest,
@@ -29,10 +31,11 @@ from ...models import (
 )
 from ...tasks import InvalidAlbumId, normalize_album_id
 from ..chapter_download_flow import ChapterDownloadFlow
-from ..icons import arrow_icon, search_icon
+from ..icons import arrow_icon, search_icon, svg_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
 from ..widgets.search_result_card import SearchResultCard
 from ..widgets.search_history_menu import SearchHistoryMenu
+from ..widgets.reader_history_dialog import ReaderHistoryDialog
 from ..widgets.favorite_folder_dialogs import FavoriteTargetDialog
 from ..widgets.task_row import DownloadTaskRow
 from ..widgets.thumbnail_loader import ThumbnailLoader
@@ -46,6 +49,9 @@ if TYPE_CHECKING:
 
 
 class DownloadPage(SectionPage):
+    read_requested = Signal(object, object)
+    reading_history_requested = Signal(object)
+
     _MODE_LABELS = {
         SearchMode.GENERAL: "综合",
         SearchMode.AUTHOR: "作者",
@@ -66,6 +72,8 @@ class DownloadPage(SectionPage):
         favorites_controller: "FavoritesController | None" = None,
         cover_loader: SearchCoverLoader | None = None,
         chapter_catalog_controller: "ChapterCatalogController | None" = None,
+        reader_history_store=None,
+        reader_available: bool = False,
     ):
         super().__init__("搜索与下载", "downloadPage", parent)
         self._controller = controller
@@ -83,6 +91,8 @@ class DownloadPage(SectionPage):
         self._completion_scheduled = set()
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
         self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
+        self._reader_history_store = reader_history_store
+        self._reader_available = bool(reader_available)
         self._direct_chapter_album_id: str | None = None
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
@@ -244,6 +254,23 @@ class DownloadPage(SectionPage):
             segment_layout.addWidget(button)
         self._mode_buttons[self._search_mode].setChecked(True)
         row.addWidget(segment)
+
+        self.reading_history_button = QToolButton(self.content)
+        self.reading_history_button.setObjectName("readingHistoryButton")
+        self.reading_history_button.setText("阅读历史")
+        self.reading_history_button.setIcon(svg_icon("document"))
+        self.reading_history_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.reading_history_button.setFixedHeight(32)
+        self.reading_history_button.setEnabled(
+            self._reader_history_store is not None
+            and self._reader_available
+        )
+        self.reading_history_button.clicked.connect(
+            self._show_reading_history
+        )
+        row.addWidget(self.reading_history_button)
 
         row.addStretch(1)
         self.results_summary = QLabel(self.content)
@@ -914,6 +941,8 @@ class DownloadPage(SectionPage):
             card.set_action_available(
                 self._controller is not None and not self._search_busy
             )
+            card.set_reading_available(self._reader_available)
+            card.read_requested.connect(self._read_search_result)
             card.download_requested.connect(self._download_search_result)
             card.view_task_requested.connect(self._view_search_task)
             if self._favorites_controller is not None:
@@ -930,6 +959,50 @@ class DownloadPage(SectionPage):
         enabled = self._controller is not None and not self._search_busy
         for card in self.comic_cards:
             card.set_action_available(enabled)
+
+    def _read_search_result(self, album_id: str) -> None:
+        cards = self._cards_by_album.get(album_id, ())
+        if not cards or not self._reader_available:
+            return
+        snapshot = cards[0].snapshot
+        catalog = self._chapter_catalogs.get(album_id)
+        if catalog is not None and snapshot.chapter_catalog is not catalog:
+            snapshot = replace(snapshot, chapter_catalog=catalog)
+        source = (
+            ReaderSource.EXACT_SEARCH
+            if (
+                self._search_snapshot is not None
+                and self._search_snapshot.request.mode is SearchMode.EXACT_ID
+            )
+            else ReaderSource.SEARCH
+        )
+        self.read_requested.emit(snapshot, source)
+
+    def _show_reading_history(self) -> None:
+        if (
+            self._reader_history_store is None
+            or not self._reader_available
+        ):
+            return
+        dialog = ReaderHistoryDialog(
+            self._reader_history_store,
+            self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        entry = dialog.selected_entry()
+        if entry is not None:
+            self.reading_history_requested.emit(entry)
+
+    def focus_card(self, album_id: str) -> bool:
+        cards = self._cards_by_album.get(str(album_id), ())
+        if not cards:
+            return False
+        card = cards[0]
+        self.view_tabs.setCurrentIndex(0)
+        self.results_scroll.ensureWidgetVisible(card)
+        card.setFocus(Qt.FocusReason.OtherFocusReason)
+        return True
 
     def _add_search_favorite(self, album_id: str) -> None:
         if self._favorites_controller is None:

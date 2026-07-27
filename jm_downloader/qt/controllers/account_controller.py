@@ -394,6 +394,7 @@ class AccountController(QObject):
             force=True,
         )
 
+    @Slot()
     def mark_expired(self) -> None:
         if self._disposed:
             return

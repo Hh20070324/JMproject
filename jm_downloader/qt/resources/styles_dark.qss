@@ -1564,20 +1564,20 @@ QToolButton#searchFavoriteButton:focus {
 }
 
 QPushButton#searchResultActionButton {
-    background: #58b989;
+    background: #202422;
     border: 1px solid #58b989;
     border-radius: 6px;
-    color: #101512;
+    color: #79cfa3;
     font-weight: 600;
 }
 
 QPushButton#searchResultActionButton:hover {
-    background: #6bc697;
+    background: #263c30;
     border-color: #6bc697;
 }
 
 QPushButton#searchResultActionButton:pressed {
-    background: #48a97a;
+    background: #244a37;
     border-color: #48a97a;
 }
 
@@ -1585,6 +1585,79 @@ QPushButton#searchResultActionButton:disabled {
     background: #2a2f2c;
     border-color: #3b423e;
     color: #777f7a;
+}
+
+QPushButton#searchResultReadButton {
+    background: #58b989;
+    border: 1px solid #58b989;
+    border-radius: 6px;
+    color: #101512;
+    font-weight: 600;
+}
+
+QPushButton#searchResultReadButton:hover {
+    background: #6bc697;
+    border-color: #6bc697;
+}
+
+QPushButton#searchResultReadButton:pressed {
+    background: #48a97a;
+    border-color: #48a97a;
+}
+
+QPushButton#searchResultReadButton:disabled {
+    background: #2a2f2c;
+    border-color: #3b423e;
+    color: #777f7a;
+}
+
+QToolButton#readingHistoryButton {
+    background: #202422;
+    border: 1px solid #46504a;
+    border-radius: 6px;
+    color: #79cfa3;
+    padding: 4px 10px;
+}
+
+QToolButton#readingHistoryButton:hover {
+    background: #263c30;
+    border-color: #58b989;
+}
+
+QDialog#readerHistoryDialog {
+    background: #171a18;
+}
+
+QLabel#readerHistoryDialogTitle {
+    color: #edf2ef;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+QLabel#readerHistoryDialogDetail {
+    color: #a8b0ab;
+}
+
+QListWidget#readerHistoryList {
+    background: #202422;
+    border: 1px solid #343a36;
+    border-radius: 8px;
+    color: #edf2ef;
+    outline: none;
+}
+
+QListWidget#readerHistoryList::item {
+    border-bottom: 1px solid #2d332f;
+    padding: 10px;
+}
+
+QListWidget#readerHistoryList::item:hover {
+    background: #263c30;
+}
+
+QListWidget#readerHistoryList::item:selected {
+    background: #244a37;
+    color: #b9e6ce;
 }
 
 QDialog#chapterSelectionDialog {

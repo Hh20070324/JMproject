@@ -111,9 +111,10 @@ class ElidedTextLabel(QLabel):
 
 class SearchResultCard(QFrame):
     WIDTH = 184
-    HEIGHT = 348
+    HEIGHT = 388
     COVER_HEIGHT = 182
 
+    read_requested = Signal(str)
     download_requested = Signal(str)
     view_task_requested = Signal(str)
     favorite_requested = Signal(str)
@@ -128,6 +129,7 @@ class SearchResultCard(QFrame):
         self._chapter_catalog: ChapterCatalogSnapshot | None = None
         self._chapter_loading = False
         self._action_available = True
+        self._reading_available = False
         self._favorite_visible = False
         self._favorite_available = False
         self._favorite_busy = False
@@ -178,6 +180,14 @@ class SearchResultCard(QFrame):
         self.tags_label.setFixedHeight(20)
         info_layout.addWidget(self.tags_label)
         info_layout.addStretch(1)
+
+        self.read_button = QPushButton("在线阅读", info)
+        self.read_button.setObjectName("searchResultReadButton")
+        self.read_button.setFixedHeight(32)
+        self.read_button.setIcon(svg_icon("document"))
+        self.read_button.setToolTip("在线打开此漫画，不创建下载任务")
+        self.read_button.clicked.connect(self._emit_read)
+        info_layout.addWidget(self.read_button)
 
         action_row = QWidget(info)
         action_row.setObjectName("searchResultActions")
@@ -260,6 +270,10 @@ class SearchResultCard(QFrame):
     def set_action_available(self, available: bool) -> None:
         self._action_available = bool(available)
         self._render_action_state()
+
+    def set_reading_available(self, available: bool) -> None:
+        self._reading_available = bool(available)
+        self.read_button.setEnabled(self._reading_available)
 
     def _render_action_state(self) -> None:
         if self._task_present:
@@ -353,6 +367,10 @@ class SearchResultCard(QFrame):
             self.view_task_requested.emit(self.snapshot.album_id)
         else:
             self.download_requested.emit(self.snapshot.album_id)
+
+    def _emit_read(self) -> None:
+        if self._reading_available:
+            self.read_requested.emit(self.snapshot.album_id)
 
     def _emit_favorite(self) -> None:
         if self.favorite_button.isEnabled() and not self._favorited:
