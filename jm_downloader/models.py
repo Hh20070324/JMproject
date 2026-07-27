@@ -66,6 +66,37 @@ class ChapterPackageStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ReaderPageState(str, Enum):
+    PLACEHOLDER = "placeholder"
+    LOADING = "loading"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class ReaderErrorKind(str, Enum):
+    NOT_FOUND = "not_found"
+    CHAPTER_UNAVAILABLE = "chapter_unavailable"
+    SESSION_EXPIRED = "session_expired"
+    NETWORK_UNAVAILABLE = "network_unavailable"
+    ROUTE_UNAVAILABLE = "route_unavailable"
+    IMAGE_EMPTY = "image_empty"
+    IMAGE_TOO_LARGE = "image_too_large"
+    IMAGE_DAMAGED = "image_damaged"
+    IMAGE_DECODE_FAILED = "image_decode_failed"
+    IMAGE_DIMENSIONS_EXCEEDED = "image_dimensions_exceeded"
+    TEMP_UNAVAILABLE = "temp_unavailable"
+    CACHE_EXHAUSTED = "cache_exhausted"
+    SUPERSEDED = "superseded"
+    INTERNAL = "internal"
+
+
+class ReaderSource(str, Enum):
+    SEARCH = "search"
+    FAVORITES = "favorites"
+    HISTORY = "history"
+    EXACT_SEARCH = "exact_search"
+
+
 @dataclass(frozen=True, slots=True)
 class TaskConfig:
     download_engine: str = "async"
@@ -113,6 +144,51 @@ class ChapterCatalogSnapshot:
     album_id: str
     title: str | None
     chapters: tuple[ChapterSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderChapterSnapshot:
+    photo_id: str
+    index: int
+    title: str
+    page_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderPageSnapshot:
+    photo_id: str
+    page_number: int
+    total_pages: int
+    state: ReaderPageState
+    width: int | None = None
+    height: int | None = None
+    cache_path: Path | None = None
+    error_kind: ReaderErrorKind | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderSessionSnapshot:
+    generation: int
+    album_id: str
+    title: str
+    chapters: tuple[ReaderChapterSnapshot, ...]
+    current_chapter_id: str
+    pages: tuple[ReaderPageSnapshot, ...]
+    current_page: int
+    error_kind: ReaderErrorKind | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderHistoryEntry:
+    album_id: str
+    title: str
+    photo_id: str
+    chapter_title: str
+    chapter_index: int
+    page_number: int
+    page_count: int
+    read_at_utc: str
+    source: ReaderSource
 
 
 @dataclass(frozen=True, slots=True)

@@ -318,6 +318,14 @@ class AppPaths:
         return self.root / "search_history.dat"
 
     @property
+    def reading_history_file(self) -> Path:
+        return self.root / "reading_history.dat"
+
+    @property
+    def reader_temp(self) -> Path:
+        return self.root / "ReaderTemp"
+
+    @property
     def credentials_file(self) -> Path:
         return self.root / "credentials.dat"
 

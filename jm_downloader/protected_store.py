@@ -22,6 +22,7 @@ CRYPTPROTECT_UI_FORBIDDEN = 0x1
 ACCOUNT_MAX_PLAINTEXT_BYTES = 256 * 1024
 FAVORITES_MAX_PLAINTEXT_BYTES = 32 * 1024 * 1024
 SEARCH_HISTORY_MAX_PLAINTEXT_BYTES = 64 * 1024
+READING_HISTORY_MAX_PLAINTEXT_BYTES = 256 * 1024
 CREDENTIALS_MAX_PLAINTEXT_BYTES = 16 * 1024
 DPAPI_MAX_OVERHEAD_BYTES = 64 * 1024
 
@@ -66,6 +67,7 @@ class ProtectedStoreKind(Enum):
     ACCOUNT = "account"
     FAVORITES = "favorites"
     SEARCH_HISTORY = "search_history"
+    READING_HISTORY = "reading_history"
     CREDENTIALS = "credentials"
 
 
@@ -224,6 +226,13 @@ _STORE_SPECS = {
         frozenset({1}),
         SEARCH_HISTORY_MAX_PLAINTEXT_BYTES,
     ),
+    ProtectedStoreKind.READING_HISTORY: _StoreSpec(
+        ProtectedStoreKind.READING_HISTORY,
+        "reading_history.dat",
+        1,
+        frozenset({1}),
+        READING_HISTORY_MAX_PLAINTEXT_BYTES,
+    ),
     ProtectedStoreKind.CREDENTIALS: _StoreSpec(
         ProtectedStoreKind.CREDENTIALS,
         "credentials.dat",
@@ -290,6 +299,18 @@ class ProtectedStore:
     ) -> "ProtectedStore":
         return cls(ProtectedStoreKind.CREDENTIALS, paths, protector)
 
+    @classmethod
+    def reading_history(
+        cls,
+        paths: AppPaths = DEFAULT_PATHS,
+        protector: DataProtector | None = None,
+    ) -> "ProtectedStore":
+        return cls(
+            ProtectedStoreKind.READING_HISTORY,
+            paths,
+            protector,
+        )
+
     @property
     def kind(self) -> ProtectedStoreKind:
         return self.spec.kind
@@ -301,6 +322,9 @@ class ProtectedStore:
             ProtectedStoreKind.FAVORITES: self.paths.favorites_file,
             ProtectedStoreKind.SEARCH_HISTORY: (
                 self.paths.search_history_file
+            ),
+            ProtectedStoreKind.READING_HISTORY: (
+                self.paths.reading_history_file
             ),
             ProtectedStoreKind.CREDENTIALS: self.paths.credentials_file,
         }[self.kind]
