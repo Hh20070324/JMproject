@@ -20,9 +20,10 @@ from PySide6.QtWidgets import (
 )
 
 from ...models import ReaderPageSnapshot, ReaderPageState
+from ...settings import READER_LAYOUT_MODES
 
 
-PAGE_GAP = 16
+PAGE_GAP = 0
 PAGE_MARGIN = 16
 DEFAULT_PAGE_RATIO = 1.42
 MIN_PAGE_WIDTH = 240
@@ -36,6 +37,7 @@ class _PageVisual:
     message: QGraphicsSimpleTextItem
     display_width: float = 0
     display_height: float = 0
+    slot_height: float = 0
     image_bytes: int = 0
 
 
@@ -67,7 +69,11 @@ class ReaderGraphicsView(QGraphicsView):
         )
         self._pages: list[_PageVisual] = []
         self._tops: list[float] = []
+        self._loaded_pages: set[int] = set()
+        self._loaded_image_bytes = 0
         self._target_width = MIN_PAGE_WIDTH
+        self._viewport_height = MIN_PAGE_WIDTH
+        self._layout_mode = "fit_width"
         self._viewport_timer = QTimer(self)
         self._viewport_timer.setSingleShot(True)
         self._viewport_timer.setInterval(25)
@@ -86,7 +92,22 @@ class ReaderGraphicsView(QGraphicsView):
 
     @property
     def loaded_image_bytes(self) -> int:
-        return sum(page.image_bytes for page in self._pages)
+        return self._loaded_image_bytes
+
+    @property
+    def layout_mode(self) -> str:
+        return self._layout_mode
+
+    def set_layout_mode(self, mode: str) -> None:
+        if mode not in READER_LAYOUT_MODES:
+            raise ValueError("reader layout mode is invalid")
+        if mode == self._layout_mode:
+            return
+        current_page = self.current_page()
+        self._layout_mode = mode
+        self._relayout(preserve_anchor=False)
+        if current_page > 0:
+            self.scroll_to_page(current_page)
 
     def set_pages(
         self,
@@ -95,6 +116,8 @@ class ReaderGraphicsView(QGraphicsView):
         self.scene().clear()
         self._pages.clear()
         self._tops.clear()
+        self._loaded_pages.clear()
+        self._loaded_image_bytes = 0
         for snapshot in pages:
             if not isinstance(snapshot, ReaderPageSnapshot):
                 raise TypeError("pages must contain ReaderPageSnapshot")
@@ -122,6 +145,8 @@ class ReaderGraphicsView(QGraphicsView):
         self.scene().clear()
         self._pages.clear()
         self._tops.clear()
+        self._loaded_pages.clear()
+        self._loaded_image_bytes = 0
         self._schedule_viewport()
 
     def set_page_loading(self, page_number: int) -> None:
@@ -140,6 +165,8 @@ class ReaderGraphicsView(QGraphicsView):
 
     def set_page_failed(self, page_number: int, message: str) -> None:
         page = self._page(page_number)
+        self._loaded_image_bytes -= page.image_bytes
+        self._loaded_pages.discard(page_number)
         page.pixmap.setPixmap(QPixmap())
         page.image_bytes = 0
         page.snapshot = ReaderPageSnapshot(
@@ -170,9 +197,12 @@ class ReaderGraphicsView(QGraphicsView):
             return
         page = self._page(snapshot.page_number)
         anchor = self._anchor()
+        self._loaded_image_bytes -= page.image_bytes
         page.snapshot = snapshot
         page.pixmap.setPixmap(QPixmap.fromImage(image))
         page.image_bytes = max(0, image.sizeInBytes())
+        self._loaded_image_bytes += page.image_bytes
+        self._loaded_pages.add(snapshot.page_number)
         page.message.hide()
         self._relayout(anchor=anchor)
         self._schedule_viewport()
@@ -187,14 +217,14 @@ class ReaderGraphicsView(QGraphicsView):
         released = []
         lower = max(1, current_page - keep_before)
         upper = min(self.page_count, current_page + keep_after)
-        for page_number, page in enumerate(self._pages, start=1):
-            if (
-                lower <= page_number <= upper
-                or page.pixmap.pixmap().isNull()
-            ):
+        for page_number in tuple(self._loaded_pages):
+            if lower <= page_number <= upper:
                 continue
+            page = self._pages[page_number - 1]
             page.pixmap.setPixmap(QPixmap())
+            self._loaded_image_bytes -= page.image_bytes
             page.image_bytes = 0
+            self._loaded_pages.discard(page_number)
             page.message.setText("滚动到此页时加载")
             page.message.show()
             released.append(page_number)
@@ -219,7 +249,7 @@ class ReaderGraphicsView(QGraphicsView):
             candidates,
             key=lambda value: abs(
                 self._tops[value]
-                + self._pages[value].display_height / 2
+                + self._pages[value].slot_height / 2
                 - center_y
             ),
         )
@@ -241,14 +271,14 @@ class ReaderGraphicsView(QGraphicsView):
             page = self._pages[index]
             if top > viewport_rect.bottom():
                 break
-            if top + page.display_height >= viewport_rect.top():
+            if top + page.slot_height >= viewport_rect.top():
                 values.append(index + 1)
         return tuple(values) or (self.current_page(),)
 
     def scroll_to_page(self, page_number: int) -> None:
-        page = self._page(page_number)
+        self._page(page_number)
         self.verticalScrollBar().setValue(
-            int(round(page.background.pos().y()))
+            int(round(self._tops[page_number - 1]))
         )
         self._schedule_viewport()
 
@@ -262,8 +292,16 @@ class ReaderGraphicsView(QGraphicsView):
             MIN_PAGE_WIDTH,
             self.viewport().width() - PAGE_MARGIN * 2,
         )
-        if width != self._target_width:
+        height = max(
+            MIN_PAGE_WIDTH,
+            self.viewport().height(),
+        )
+        if (
+            width != self._target_width
+            or height != self._viewport_height
+        ):
             self._target_width = width
+            self._viewport_height = height
             self._relayout()
         self._schedule_viewport()
 
@@ -307,30 +345,53 @@ class ReaderGraphicsView(QGraphicsView):
         self._tops = []
         for page in self._pages:
             self._tops.append(y)
-            width = float(self._target_width)
+            source_width = (
+                float(page.snapshot.width)
+                if page.snapshot.width and page.snapshot.width > 0
+                else 1.0
+            )
+            source_height = (
+                float(page.snapshot.height)
+                if page.snapshot.height and page.snapshot.height > 0
+                else source_width * DEFAULT_PAGE_RATIO
+            )
             if (
-                page.snapshot.width
-                and page.snapshot.height
-                and page.snapshot.width > 0
-                and page.snapshot.height > 0
+                self._layout_mode == "fit_page"
             ):
-                height = (
-                    width
-                    * page.snapshot.height
-                    / page.snapshot.width
+                scale = min(
+                    float(self._target_width) / source_width,
+                    float(self._viewport_height) / source_height,
                 )
+                width = max(1.0, source_width * scale)
+                height = max(1.0, source_height * scale)
+                slot_height = float(self._viewport_height)
             else:
-                height = width * DEFAULT_PAGE_RATIO
+                width = float(self._target_width)
+                height = width * source_height / source_width
+                slot_height = max(120.0, height)
             page.display_width = width
-            page.display_height = max(120.0, height)
+            page.display_height = (
+                max(1.0, height)
+                if self._layout_mode == "fit_page"
+                else max(120.0, height)
+            )
+            page.slot_height = max(page.display_height, slot_height)
+            x = PAGE_MARGIN + max(
+                0.0,
+                (self._target_width - page.display_width) / 2,
+            )
+            image_y = y + max(
+                0.0,
+                (page.slot_height - page.display_height) / 2,
+            )
             page.background.setRect(
                 0,
                 0,
                 page.display_width,
                 page.display_height,
             )
-            page.background.setPos(PAGE_MARGIN, y)
-            page.pixmap.setPos(PAGE_MARGIN, y)
+            page.background.setPos(x, image_y)
+            page.pixmap.setPos(x, image_y)
             pixmap = page.pixmap.pixmap()
             if not pixmap.isNull():
                 page.pixmap.setScale(
@@ -338,16 +399,16 @@ class ReaderGraphicsView(QGraphicsView):
                 )
             text_rect = page.message.boundingRect()
             page.message.setPos(
-                PAGE_MARGIN + max(
+                x + max(
                     12,
                     (page.display_width - text_rect.width()) / 2,
                 ),
-                y + max(
+                image_y + max(
                     12,
                     (page.display_height - text_rect.height()) / 2,
                 ),
             )
-            y += page.display_height + PAGE_GAP
+            y += page.slot_height + PAGE_GAP
         scene_width = self._target_width + PAGE_MARGIN * 2
         self.scene().setSceneRect(
             0,
@@ -391,7 +452,7 @@ class ReaderGraphicsView(QGraphicsView):
         if index >= len(self._pages):
             return 0
         page = self._pages[index]
-        if scene_y <= self._tops[index] + page.display_height:
+        if scene_y <= self._tops[index] + page.slot_height:
             return index + 1
         return 0
 
@@ -411,11 +472,10 @@ class ReaderGraphicsView(QGraphicsView):
     def _apply_palette(self) -> None:
         palette = self.palette()
         background = palette.color(palette.ColorRole.Base)
-        border = palette.color(palette.ColorRole.Mid)
         text = palette.color(palette.ColorRole.Text)
         for page in self._pages:
             page.background.setBrush(QBrush(background))
-            page.background.setPen(QPen(border, 1))
+            page.background.setPen(QPen(Qt.PenStyle.NoPen))
             page.message.setBrush(QBrush(text))
 
     @staticmethod

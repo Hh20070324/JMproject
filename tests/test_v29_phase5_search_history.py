@@ -12,7 +12,7 @@ if os.name != "nt":
 from PySide6.QtCore import QEvent, QEventLoop, QTimer, Qt
 from PySide6.QtGui import QFocusEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QToolButton
 
 from jm_downloader.models import (
     SearchMode,
@@ -234,6 +234,38 @@ class SearchHistoryControllerTests(unittest.TestCase):
                 page.keyword_history_menu.entries[0]
             )
             self.assertEqual(controller.history_entries(), ())
+        finally:
+            page.dispose()
+            page.close()
+            page.deleteLater()
+
+    def test_native_window_press_does_not_cancel_history_row_click(self):
+        self.history.record("keyword", "alpha")
+        service = ControlledSearchService()
+        controller = self.make_controller(service)
+        page = DownloadPage(search_controller=controller)
+        page.resize(900, 640)
+        page.show()
+        self.app.processEvents()
+        try:
+            page._show_history(page.general_search_input)
+            self.assertTrue(page.keyword_history_menu.isVisible())
+            page.keyword_history_menu.eventFilter(
+                page.windowHandle(),
+                QEvent(QEvent.Type.MouseButtonPress),
+            )
+            self.assertTrue(page.keyword_history_menu.isVisible())
+
+            button = page.keyword_history_menu.findChild(
+                QToolButton,
+                "searchHistoryEntryButton",
+            )
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            self.process_for(30)
+
+            self.assertEqual(page.general_search_input.text(), "alpha")
+            self.assertTrue(service.calls)
+            self.assertEqual(service.calls[0].query, "alpha")
         finally:
             page.dispose()
             page.close()

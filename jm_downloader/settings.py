@@ -14,6 +14,7 @@ from .models import (
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_SCHEMA_VERSION = 1
+READER_LAYOUT_MODES = frozenset({"fit_width", "fit_page"})
 
 
 class SettingsError(Exception):
@@ -94,6 +95,7 @@ class AppSettings:
     window_height: int = 720
     startup_page: str = "downloads"
     theme: str = "light"
+    reader_layout: str = "fit_width"
 
     def validate(self) -> None:
         if type(self.schema_version) is not int:
@@ -159,6 +161,11 @@ class AppSettings:
             "dark",
         }:
             raise SettingsValidationError("主题模式无效")
+        if (
+            not isinstance(self.reader_layout, str)
+            or self.reader_layout not in READER_LAYOUT_MODES
+        ):
+            raise SettingsValidationError("阅读视图无效")
 
     def to_dict(self) -> dict:
         self.validate()
@@ -186,7 +193,10 @@ class AppSettings:
                 "height": self.window_height,
                 "startup_page": self.startup_page,
             },
-            "appearance": {"theme": self.theme},
+            "appearance": {
+                "theme": self.theme,
+                "reader_layout": self.reader_layout,
+            },
         }
 
     @classmethod
@@ -245,6 +255,10 @@ class AppSettings:
             window_height=window.get("height", defaults.window_height),
             startup_page=window.get("startup_page", defaults.startup_page),
             theme=appearance.get("theme", defaults.theme),
+            reader_layout=appearance.get(
+                "reader_layout",
+                defaults.reader_layout,
+            ),
         )
         settings.validate()
         return settings

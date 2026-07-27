@@ -144,7 +144,11 @@ class MainWindow(QMainWindow):
             ),
         }
         if reader_controller is not None:
-            self._pages["reader"] = ReaderPage(reader_controller, self)
+            self._pages["reader"] = ReaderPage(
+                reader_controller,
+                self,
+                settings_controller=settings_controller,
+            )
 
         root_layout.addWidget(self._create_sidebar(root))
 

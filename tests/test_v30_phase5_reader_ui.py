@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QDialog, QToolButton
@@ -18,7 +19,9 @@ from jm_downloader.models import (
     ReaderSource,
 )
 from jm_downloader.qt.controllers.reader_controller import ReaderController
+from jm_downloader.qt.controllers.settings_controller import SettingsController
 from jm_downloader.qt.pages.reader_page import ReaderPage
+from jm_downloader.qt.settings_store import SettingsStore
 from jm_downloader.qt.theme import ThemeManager
 from jm_downloader.qt.widgets.reader_chapter_dialog import (
     ReaderChapterDialog,
@@ -26,6 +29,7 @@ from jm_downloader.qt.widgets.reader_chapter_dialog import (
 from jm_downloader.qt.widgets.reader_graphics_view import (
     ReaderGraphicsView,
 )
+from jm_downloader.settings import AppPaths
 
 
 def make_pages(count=100):
@@ -98,6 +102,44 @@ class ReaderGraphicsViewTests(unittest.TestCase):
         self.assertEqual(view.loaded_image_bytes, 0)
         view.close()
 
+    def test_fit_width_has_no_page_gap_and_fit_page_uses_viewport_slots(self):
+        view = ReaderGraphicsView()
+        view.resize(800, 600)
+        view.show()
+        self.app.processEvents()
+        view.set_pages(make_pages(2))
+        image = QImage(600, 1200, QImage.Format.Format_RGB32)
+        image.fill(0xFF2E7D57)
+        for page_number in (1, 2):
+            view.set_page_ready(
+                ReaderPageSnapshot(
+                    "301",
+                    page_number,
+                    2,
+                    ReaderPageState.READY,
+                    width=600,
+                    height=1200,
+                    cache_path=Path(f"{page_number}.png"),
+                ),
+                image,
+            )
+
+        self.assertEqual(
+            view.page_top(2),
+            view._pages[0].slot_height,
+        )
+        view.set_layout_mode("fit_page")
+
+        first = view._pages[0]
+        self.assertLessEqual(
+            first.display_height,
+            view.viewport().height(),
+        )
+        self.assertLess(first.display_width, view.target_width)
+        self.assertEqual(first.slot_height, view.viewport().height())
+        self.assertEqual(view.page_top(2), first.slot_height)
+        view.close()
+
 
 class FakeReaderService:
     async def fetch_catalog(self, _album_id):
@@ -121,12 +163,20 @@ class ReaderPageTests(unittest.TestCase):
         )
 
     def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.paths = AppPaths(Path(self.temporary.name))
+        self.settings_controller = SettingsController(
+            SettingsStore(self.paths)
+        )
         self.controller = ReaderController(
             FakeReaderService(),
             result_interval_ms=5,
             memory_budget_bytes=1024,
         )
-        self.page = ReaderPage(self.controller)
+        self.page = ReaderPage(
+            self.controller,
+            settings_controller=self.settings_controller,
+        )
         self.page.resize(900, 700)
         self.page.show()
         self.catalog = ChapterCatalogSnapshot(
@@ -145,6 +195,7 @@ class ReaderPageTests(unittest.TestCase):
         self.page.deleteLater()
         self.controller.deleteLater()
         self.app.processEvents()
+        self.temporary.cleanup()
 
     def test_chapter_selector_is_tool_button_and_dialog_selects_once(self):
         self.assertIsInstance(self.page.chapter_button, QToolButton)
@@ -181,6 +232,52 @@ class ReaderPageTests(unittest.TestCase):
         self.page._apply_slider()
         self.app.processEvents()
         self.assertIn(self.page.view.current_page(), {14, 15, 16})
+
+    def test_slider_drag_is_not_overwritten_by_old_viewport_updates(self):
+        self.page._catalog = self.catalog
+        self.page._generation = 7
+        chapter = ReaderChapterSnapshot("302", 2, "第二章", 20)
+        self.page._on_chapter_ready(7, chapter, make_pages(20))
+        self.page.page_slider.setValue(10)
+        self.page.page_slider.setSliderDown(True)
+        self.page.page_slider.setSliderPosition(15)
+        self.page._preview_slider(15)
+
+        self.page._on_viewport(
+            10,
+            (10,),
+            self.page.view.target_width,
+        )
+
+        self.assertEqual(self.page.page_slider.sliderPosition(), 15)
+        self.assertEqual(self.page.page_label.text(), "15 / 20")
+        with patch.object(self.page.view, "scroll_to_page") as scroll:
+            self.page._apply_slider()
+        scroll.assert_called_once_with(15)
+        self.page.page_slider.setSliderDown(False)
+
+    def test_reader_layout_selector_persists_global_preference(self):
+        self.assertIsInstance(self.page.layout_button, QToolButton)
+        self.assertEqual(
+            self.page.layout_button.popupMode(),
+            QToolButton.ToolButtonPopupMode.InstantPopup,
+        )
+
+        self.page.layout_action("fit_page").trigger()
+
+        self.assertEqual(self.page.view.layout_mode, "fit_page")
+        self.assertEqual(
+            self.page.layout_button.text(),
+            "阅读视图：单页视图",
+        )
+        self.assertEqual(
+            self.settings_controller.settings.reader_layout,
+            "fit_page",
+        )
+        self.assertEqual(
+            SettingsStore(self.paths).load().reader_layout,
+            "fit_page",
+        )
 
     def test_theme_and_scale_layouts_do_not_overlap_controls(self):
         manager = ThemeManager()

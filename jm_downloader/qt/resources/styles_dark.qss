@@ -40,6 +40,7 @@ QToolButton#readerPreviousChapterButton,
 QToolButton#readerNextChapterButton,
 QToolButton#readerPreviousPageButton,
 QToolButton#readerNextPageButton,
+QToolButton#readerLayoutButton,
 QToolButton#readerRetryButton,
 QToolButton#readerDownloadButton {
     min-height: 34px;
@@ -56,6 +57,7 @@ QToolButton#readerPreviousChapterButton:hover,
 QToolButton#readerNextChapterButton:hover,
 QToolButton#readerPreviousPageButton:hover,
 QToolButton#readerNextPageButton:hover,
+QToolButton#readerLayoutButton:hover,
 QToolButton#readerRetryButton:hover,
 QToolButton#readerDownloadButton:hover {
     background: #273a30;
@@ -74,11 +76,40 @@ QToolButton#readerPreviousChapterButton:disabled,
 QToolButton#readerNextChapterButton:disabled,
 QToolButton#readerPreviousPageButton:disabled,
 QToolButton#readerNextPageButton:disabled,
+QToolButton#readerLayoutButton:disabled,
 QToolButton#readerRetryButton:disabled,
 QToolButton#readerDownloadButton:disabled {
     background: #1b1f1d;
     border-color: #2c332f;
     color: #69736d;
+}
+
+QMenu#readerLayoutMenu {
+    background: #202421;
+    border: 1px solid #454c48;
+    padding: 4px;
+}
+
+QMenu#readerLayoutMenu::item {
+    border-radius: 5px;
+    padding: 7px 24px 7px 10px;
+}
+
+QMenu#readerLayoutMenu::item:selected {
+    background: #273a30;
+    color: #b9e6ce;
+}
+
+QMenu#readerLayoutMenu::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #58b989;
+    border-radius: 5px;
+    background: #20382d;
+}
+
+QMenu#readerLayoutMenu::indicator:checked {
+    background: #58b989;
 }
 
 QSlider#readerPageSlider::groove:horizontal {

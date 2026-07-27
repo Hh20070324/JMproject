@@ -73,6 +73,7 @@ class AppSettingsTests(unittest.TestCase):
             window_height=800,
             startup_page="library",
             theme="dark",
+            reader_layout="fit_page",
         )
         data = settings.to_dict()
         data["future_field"] = {"ignored": True}
@@ -91,6 +92,14 @@ class AppSettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.multi_chapter_download_behavior, "parallel")
         self.assertEqual(settings.schema_version, 1)
+
+    def test_old_appearance_group_uses_fit_width_reader_default(self):
+        payload = AppSettings().to_dict()
+        del payload["appearance"]["reader_layout"]
+
+        settings = AppSettings.from_dict(payload)
+
+        self.assertEqual(settings.reader_layout, "fit_width")
 
     def test_queued_chapter_behavior_round_trips_in_schema_v1(self):
         settings = replace(
@@ -136,6 +145,8 @@ class AppSettingsTests(unittest.TestCase):
             replace(AppSettings(), startup_page={}),
             replace(AppSettings(), theme="system"),
             replace(AppSettings(), theme=[]),
+            replace(AppSettings(), reader_layout="spread"),
+            replace(AppSettings(), reader_layout=[]),
             replace(AppSettings(), pictures_directory="../outside"),
             replace(
                 AppSettings(), pictures_directory=r"nested\..\..\outside"

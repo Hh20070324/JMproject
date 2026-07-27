@@ -1,9 +1,14 @@
+from dataclasses import replace
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QSignalBlocker, Qt, Signal, Slot
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -18,26 +23,37 @@ from ...models import (
     ReaderPageSnapshot,
     ReaderSource,
 )
+from ...settings import READER_LAYOUT_MODES
 from ..controllers.reader_controller import ReaderController
 from ..icons import svg_icon
 from ..widgets.reader_chapter_dialog import ReaderChapterDialog
 from ..widgets.reader_graphics_view import ReaderGraphicsView
+
+if TYPE_CHECKING:
+    from ..controllers.settings_controller import SettingsController
 
 
 class ReaderPage(QWidget):
     back_requested = Signal()
     download_chapter_requested = Signal(str)
     chapter_selected = Signal(str)
+    _LAYOUT_LABELS = {
+        "fit_width": "适合宽度",
+        "fit_page": "单页视图",
+    }
 
     def __init__(
         self,
         controller: ReaderController,
         parent=None,
+        *,
+        settings_controller: "SettingsController | None" = None,
     ):
         super().__init__(parent)
         if not isinstance(controller, ReaderController):
             raise TypeError("controller must be ReaderController")
         self.controller = controller
+        self.settings_controller = settings_controller
         self.setObjectName("readerPage")
         self._catalog: ChapterCatalogSnapshot | None = None
         self._chapter: ReaderChapterSnapshot | None = None
@@ -47,6 +63,11 @@ class ReaderPage(QWidget):
         self._pending_photo_id: str | None = None
         self._pending_page = 1
         self._failed_pages: set[int] = set()
+        self._layout_mode = (
+            settings_controller.settings.reader_layout
+            if settings_controller is not None
+            else "fit_width"
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
@@ -139,6 +160,35 @@ class ReaderPage(QWidget):
         self.error_banner.setWordWrap(True)
         self.error_banner.hide()
         action_row.addWidget(self.error_banner, 1)
+        self.layout_button = QToolButton(self)
+        self.layout_button.setObjectName("readerLayoutButton")
+        self.layout_button.setIcon(svg_icon("image"))
+        self.layout_button.setToolTip("切换在线阅读的图片缩放布局")
+        self.layout_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.layout_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.layout_menu = QMenu(self.layout_button)
+        self.layout_menu.setObjectName("readerLayoutMenu")
+        self._layout_action_group = QActionGroup(self)
+        self._layout_action_group.setExclusive(True)
+        self._layout_actions = {}
+        for mode, label in self._LAYOUT_LABELS.items():
+            action = self.layout_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda checked=False, selected=mode: (
+                    self._select_layout_mode(selected)
+                    if checked
+                    else None
+                )
+            )
+            self._layout_action_group.addAction(action)
+            self._layout_actions[mode] = action
+        self.layout_button.setMenu(self.layout_menu)
+        action_row.addWidget(self.layout_button)
         self.retry_button = self._tool_button(
             "readerRetryButton",
             "重试失败页",
@@ -162,6 +212,7 @@ class ReaderPage(QWidget):
         root.addWidget(rule)
 
         self.view = ReaderGraphicsView(self)
+        self._select_layout_mode(self._layout_mode, persist=False)
         root.addWidget(self.view, 1)
 
         self.view.viewport_changed.connect(self._on_viewport)
@@ -173,6 +224,10 @@ class ReaderPage(QWidget):
         controller.page_failed.connect(self._on_page_failed)
         controller.operation_failed.connect(self._on_operation_failed)
         controller.history_failed.connect(self._show_error)
+        if settings_controller is not None:
+            settings_controller.settings_changed.connect(
+                self._on_settings_changed
+            )
         self._refresh_controls()
 
     def open_album(
@@ -443,7 +498,11 @@ class ReaderPage(QWidget):
 
     def _apply_slider(self) -> None:
         if self._chapter is not None:
-            self.view.scroll_to_page(self.page_slider.value())
+            target = self.page_slider.sliderPosition()
+            blocker = QSignalBlocker(self.page_slider)
+            self.page_slider.setValue(target)
+            del blocker
+            self.view.scroll_to_page(target)
 
     def _retry_page(self, page_number: int) -> None:
         if self._chapter is None:
@@ -479,12 +538,51 @@ class ReaderPage(QWidget):
         total = self._chapter.page_count if self._chapter else 0
         blocker = QSignalBlocker(self.page_slider)
         self.page_slider.setRange(1, max(1, total))
-        self.page_slider.setValue(max(1, current))
+        if not self.page_slider.isSliderDown():
+            self.page_slider.setValue(max(1, current))
         del blocker
-        self.page_label.setText(
-            f"{current} / {total}" if total else "0 / 0"
-        )
+        if not self.page_slider.isSliderDown():
+            self.page_label.setText(
+                f"{current} / {total}" if total else "0 / 0"
+            )
         self._refresh_controls()
+
+    def layout_action(self, mode: str):
+        return self._layout_actions[mode]
+
+    def _select_layout_mode(
+        self,
+        mode: str,
+        *,
+        persist: bool = True,
+    ) -> None:
+        if mode not in READER_LAYOUT_MODES:
+            raise ValueError("reader layout mode is invalid")
+        self._layout_mode = mode
+        if hasattr(self, "view"):
+            self.view.set_layout_mode(mode)
+        self.layout_button.setText(
+            f"阅读视图：{self._LAYOUT_LABELS[mode]}"
+        )
+        for value, action in self._layout_actions.items():
+            action.setChecked(value == mode)
+        if not persist or self.settings_controller is None:
+            return
+        current = self.settings_controller.settings
+        if current.reader_layout == mode:
+            return
+        if not self.settings_controller.save(
+            replace(current, reader_layout=mode)
+        ):
+            fallback = self.settings_controller.settings.reader_layout
+            self._select_layout_mode(fallback, persist=False)
+            self._show_error("阅读视图设置无法保存")
+
+    @Slot(object)
+    def _on_settings_changed(self, settings) -> None:
+        mode = getattr(settings, "reader_layout", "fit_width")
+        if mode in READER_LAYOUT_MODES:
+            self._select_layout_mode(mode, persist=False)
 
     def _refresh_controls(self) -> None:
         total = self._chapter.page_count if self._chapter else 0

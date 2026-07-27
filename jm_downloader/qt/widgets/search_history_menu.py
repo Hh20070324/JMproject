@@ -95,9 +95,8 @@ class SearchHistoryMenu(QFrame):
             select.setToolTip(entry.text)
             select.setFixedHeight(34)
             select.clicked.connect(
-                lambda _checked=False, value=entry: (
-                    self.close(),
-                    self.entry_selected.emit(value),
+                lambda _checked=False, value=entry: self._select_entry(
+                    value
                 )
             )
             layout.addWidget(select, 1)
@@ -161,12 +160,30 @@ class SearchHistoryMenu(QFrame):
             return False
         if watched is self._anchor:
             return False
-        if isinstance(watched, QWidget) and (
-            watched is self or self.isAncestorOf(watched)
-        ):
+        if not isinstance(watched, QWidget):
+            global_position = getattr(event, "globalPosition", None)
+            if callable(global_position):
+                target = QApplication.widgetAt(
+                    global_position().toPoint()
+                )
+                if target is self._anchor or (
+                    target is not None
+                    and (
+                        target is self
+                        or self.isAncestorOf(target)
+                    )
+                ):
+                    return False
+            else:
+                return False
+        elif watched is self or self.isAncestorOf(watched):
             return False
         self.close()
         return False
+
+    def _select_entry(self, entry) -> None:
+        self.entry_selected.emit(entry)
+        self.close()
 
 
 __all__ = ["SearchHistoryMenu"]
