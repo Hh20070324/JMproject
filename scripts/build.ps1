@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ReleaseVersion = "2.9.1"
+$ReleaseVersion = "3.0.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -23,7 +23,8 @@ $HistoricalArchives = @(
     (Join-Path $ReleaseDir "JM-Downloader-v2.5.1-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.7.0-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.8.0-Windows-x64.zip"),
-    (Join-Path $ReleaseDir "JM-Downloader-v2.9.0-Windows-x64.zip")
+    (Join-Path $ReleaseDir "JM-Downloader-v2.9.0-Windows-x64.zip"),
+    (Join-Path $ReleaseDir "JM-Downloader-v2.9.1-Windows-x64.zip")
 )
 $LicensesDir = Join-Path $ProjectRoot "LICENSES"
 $RequiredLicenseFiles = @(
@@ -84,7 +85,7 @@ function Remove-BuildFile
 
 function Remove-RuntimeArtifacts
 {
-    foreach ($Name in @("logs", "Pictures", "PDFs"))
+    foreach ($Name in @("logs", "Pictures", "PDFs", "ReaderTemp"))
     {
         Remove-BuildDirectory (Join-Path $AppDir $Name)
     }
@@ -96,7 +97,8 @@ function Remove-RuntimeArtifacts
         "account.dat",
         "favorites.dat",
         "search_history.dat",
-        "credentials.dat"
+        "credentials.dat",
+        "reading_history.dat"
     ))
     {
         Remove-BuildFile (Join-Path $AppDir $Name)
@@ -111,10 +113,12 @@ function Remove-RuntimeArtifacts
             $_.Name -like "favorites.dat.corrupt-*" -or
             $_.Name -like "search_history.dat.corrupt-*" -or
             $_.Name -like "credentials.dat.corrupt-*" -or
+            $_.Name -like "reading_history.dat.corrupt-*" -or
             $_.Name -like ".account.dat.*.tmp" -or
             $_.Name -like ".favorites.dat.*.tmp" -or
             $_.Name -like ".search_history.dat.*.tmp" -or
             $_.Name -like ".credentials.dat.*.tmp" -or
+            $_.Name -like ".reading_history.dat.*.tmp" -or
             $_.Name -like "*.jm-part-*"
         }
     foreach ($RuntimeFile in $RuntimeFiles)
@@ -130,13 +134,15 @@ function Assert-NoRuntimeArtifacts
         "logs",
         "Pictures",
         "PDFs",
+        "ReaderTemp",
         "settings.json",
         "settings.ini",
         "tasks.json",
         "account.dat",
         "favorites.dat",
         "search_history.dat",
-        "credentials.dat"
+        "credentials.dat",
+        "reading_history.dat"
     ))
     {
         $Path = Join-Path $AppDir $Name
@@ -155,10 +161,12 @@ function Assert-NoRuntimeArtifacts
             $_.Name -like "favorites.dat.corrupt-*" -or
             $_.Name -like "search_history.dat.corrupt-*" -or
             $_.Name -like "credentials.dat.corrupt-*" -or
+            $_.Name -like "reading_history.dat.corrupt-*" -or
             $_.Name -like ".account.dat.*.tmp" -or
             $_.Name -like ".favorites.dat.*.tmp" -or
             $_.Name -like ".search_history.dat.*.tmp" -or
             $_.Name -like ".credentials.dat.*.tmp" -or
+            $_.Name -like ".reading_history.dat.*.tmp" -or
             $_.Name -like "*.jm-part-*"
         } | Select-Object -ExpandProperty FullName
     if ($Artifacts)
@@ -238,15 +246,15 @@ function Assert-ArchiveContents
         }
 
         $RuntimeArtifacts = $Entries | Where-Object {
-            $_ -match "^JM-Downloader/(?:Pictures|PDFs|logs)(?:/|$)" -or
+            $_ -match "^JM-Downloader/(?:Pictures|PDFs|logs|ReaderTemp)(?:/|$)" -or
             $_ -match "^JM-Downloader/settings\.(?:json|ini)$" -or
             $_ -match "^JM-Downloader/settings\.json\.corrupt-" -or
             $_ -match "^JM-Downloader/tasks\.json$" -or
             $_ -match "^JM-Downloader/tasks\.json\.corrupt-" -or
             $_ -match "^JM-Downloader/\.tasks\.json\..*\.tmp$" -or
-            $_ -match "^JM-Downloader/(?:account|favorites|search_history|credentials)\.dat$" -or
-            $_ -match "^JM-Downloader/(?:account|favorites|search_history|credentials)\.dat\.corrupt-" -or
-            $_ -match "^JM-Downloader/\.(?:account|favorites|search_history|credentials)\.dat\..*\.tmp$" -or
+            $_ -match "^JM-Downloader/(?:account|favorites|search_history|credentials|reading_history)\.dat$" -or
+            $_ -match "^JM-Downloader/(?:account|favorites|search_history|credentials|reading_history)\.dat\.corrupt-" -or
+            $_ -match "^JM-Downloader/\.(?:account|favorites|search_history|credentials|reading_history)\.dat\..*\.tmp$" -or
             $_ -match "\.jm-part-[^/]*$"
         }
         if ($RuntimeArtifacts)
