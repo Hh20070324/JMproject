@@ -667,6 +667,10 @@ class ReaderService:
         self._anonymous_fallback_used = False
         self._route = "auto"
         self._photos: dict[str, object] = {}
+        self._page_disk_keys: dict[tuple[str, int], str] = {}
+        self._page_snapshots: dict[
+            tuple[str, int], ReaderPageSnapshot
+        ] = {}
         self._client_lock: asyncio.Lock | None = None
         self._closed = False
 
@@ -701,6 +705,8 @@ class ReaderService:
         client = self._client
         self._client = None
         self._photos.clear()
+        self._page_disk_keys.clear()
+        self._page_snapshots.clear()
         client_closed = await self._close_client(client)
         cache_closed = await asyncio.to_thread(self.disk_cache.close)
         return client_closed and cache_closed
@@ -833,6 +839,15 @@ class ReaderService:
             page_count = len(photo.page_arr)
             if page_number > page_count:
                 raise ValueError("page out of range")
+            page_identity = (normalized_id, page_number)
+            cached_key = self._page_disk_keys.get(page_identity)
+            cached_snapshot = self._page_snapshots.get(page_identity)
+            if cached_key is not None and cached_snapshot is not None:
+                cached_path = self.disk_cache.path_for(cached_key)
+                if cached_path is not None:
+                    return cached_key, cached_snapshot
+                self._page_disk_keys.pop(page_identity, None)
+                self._page_snapshots.pop(page_identity, None)
             image = photo.create_image_detail(page_number - 1)
             image_url = image.download_url
             suffix = str(getattr(image, "img_file_suffix", "")).lower()
@@ -877,11 +892,22 @@ class ReaderService:
                 image,
                 reservation,
             )
-            key, _evicted = await asyncio.to_thread(
+            page_cache_key = f"{normalized_id}:{page_number}"
+            disk_pins = {
+                self._page_disk_keys[value]
+                for value in self._page_disk_keys
+                if (
+                    f"{value[0]}:{value[1]}" in pinned_keys
+                    and self._page_disk_keys[value]
+                )
+            }
+            if page_cache_key in pinned_keys:
+                disk_pins.add(reservation.key)
+            key, evicted = await asyncio.to_thread(
                 self.disk_cache.publish,
                 reservation,
                 current_page=current_page,
-                pinned_keys=pinned_keys,
+                pinned_keys=disk_pins,
             )
         except ReaderServiceError:
             self.disk_cache._unlink_part(reservation.part_path)
@@ -902,7 +928,7 @@ class ReaderService:
                 ReaderErrorKind.IMAGE_DECODE_FAILED,
                 "图片还原失败",
             ) from None
-        return key, ReaderPageSnapshot(
+        snapshot = ReaderPageSnapshot(
             normalized_id,
             page_number,
             page_count,
@@ -911,6 +937,49 @@ class ReaderService:
             height=height,
             cache_path=reservation.final_path,
         )
+        self._page_disk_keys[(normalized_id, page_number)] = key
+        self._page_snapshots[(normalized_id, page_number)] = snapshot
+        if evicted:
+            evicted_set = frozenset(evicted)
+            for identity, disk_key in tuple(self._page_disk_keys.items()):
+                if disk_key in evicted_set:
+                    self._page_disk_keys.pop(identity, None)
+                    self._page_snapshots.pop(identity, None)
+        return key, snapshot
+
+    def update_cache_window(
+        self,
+        photo_id: str,
+        *,
+        current_page: int,
+        visible_pages,
+    ) -> tuple[str, ...]:
+        normalized_id = self._normalize_id(photo_id, "章节 JM 号")
+        _validate_page_number(current_page)
+        visible = {
+            (normalized_id, page)
+            for page in visible_pages
+            if (
+                type(page) is int
+                and 1 <= page <= MAX_READER_CHAPTER_PAGES
+            )
+        }
+        pinned = {
+            self._page_disk_keys[identity]
+            for identity in visible
+            if identity in self._page_disk_keys
+        }
+        evicted = self.disk_cache.update_window(
+            current_page=current_page,
+            pinned_keys=pinned,
+        )
+        if evicted:
+            evicted_set = frozenset(evicted)
+            for identity, disk_key in tuple(self._page_disk_keys.items()):
+                if disk_key in evicted_set:
+                    self._page_disk_keys.pop(identity, None)
+                    self._page_snapshots.pop(identity, None)
+        return evicted
 
     def _decode_validate_and_stage(
         self,

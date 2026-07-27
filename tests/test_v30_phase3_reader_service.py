@@ -194,6 +194,14 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.state, ReaderPageState.READY)
         self.assertEqual(client.image_calls, 3)
 
+        _cached_key, cached_page = await service.fetch_page(
+            "301",
+            1,
+            current_page=1,
+        )
+        self.assertEqual(cached_page.state, ReaderPageState.READY)
+        self.assertEqual(client.image_calls, 3)
+
     async def test_oversize_and_damaged_pages_have_stable_categories(self):
         responses = {
             "001.png": FakeImageResponse(b"x" * 11),
