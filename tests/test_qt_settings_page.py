@@ -235,7 +235,7 @@ class SettingsPageTests(unittest.TestCase):
         ]
         self.assertEqual(
             section_titles,
-            ["存储位置", "下载性能", "应用", "主题模式"],
+            ["存储位置", "下载性能", "应用", "在线阅读", "主题模式"],
         )
 
         theme_control = self.page.theme_button(Theme.LIGHT).parentWidget()

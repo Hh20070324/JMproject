@@ -15,6 +15,10 @@ from .models import (
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
 SETTINGS_SCHEMA_VERSION = 1
 READER_LAYOUT_MODES = frozenset({"fit_width", "fit_page"})
+READER_ZOOM_LEVELS = frozenset({25, 50, 75, 100, 125, 150})
+DEFAULT_READER_WINDOW_WIDTH = 1000
+DEFAULT_READER_WINDOW_HEIGHT = 760
+MAX_WINDOW_COORDINATE = 100_000
 
 
 class SettingsError(Exception):
@@ -96,6 +100,11 @@ class AppSettings:
     startup_page: str = "downloads"
     theme: str = "light"
     reader_layout: str = "fit_width"
+    reader_zoom_percent: int = 100
+    reader_window_width: int = DEFAULT_READER_WINDOW_WIDTH
+    reader_window_height: int = DEFAULT_READER_WINDOW_HEIGHT
+    reader_window_x: int | None = None
+    reader_window_y: int | None = None
 
     def validate(self) -> None:
         if type(self.schema_version) is not int:
@@ -166,6 +175,31 @@ class AppSettings:
             or self.reader_layout not in READER_LAYOUT_MODES
         ):
             raise SettingsValidationError("阅读视图无效")
+        if (
+            type(self.reader_zoom_percent) is not int
+            or self.reader_zoom_percent not in READER_ZOOM_LEVELS
+        ):
+            raise SettingsValidationError("阅读缩放比例无效")
+        self._validate_integer(
+            "阅读窗口宽度",
+            self.reader_window_width,
+            minimum=760,
+            maximum=10000,
+        )
+        self._validate_integer(
+            "阅读窗口高度",
+            self.reader_window_height,
+            minimum=520,
+            maximum=10000,
+        )
+        self._validate_optional_coordinate(
+            "阅读窗口横坐标",
+            self.reader_window_x,
+        )
+        self._validate_optional_coordinate(
+            "阅读窗口纵坐标",
+            self.reader_window_y,
+        )
 
     def to_dict(self) -> dict:
         self.validate()
@@ -192,10 +226,15 @@ class AppSettings:
                 "width": self.window_width,
                 "height": self.window_height,
                 "startup_page": self.startup_page,
+                "reader_width": self.reader_window_width,
+                "reader_height": self.reader_window_height,
+                "reader_x": self.reader_window_x,
+                "reader_y": self.reader_window_y,
             },
             "appearance": {
                 "theme": self.theme,
                 "reader_layout": self.reader_layout,
+                "reader_zoom_percent": self.reader_zoom_percent,
             },
         }
 
@@ -259,6 +298,26 @@ class AppSettings:
                 "reader_layout",
                 defaults.reader_layout,
             ),
+            reader_zoom_percent=appearance.get(
+                "reader_zoom_percent",
+                defaults.reader_zoom_percent,
+            ),
+            reader_window_width=window.get(
+                "reader_width",
+                defaults.reader_window_width,
+            ),
+            reader_window_height=window.get(
+                "reader_height",
+                defaults.reader_window_height,
+            ),
+            reader_window_x=window.get(
+                "reader_x",
+                defaults.reader_window_x,
+            ),
+            reader_window_y=window.get(
+                "reader_y",
+                defaults.reader_window_y,
+            ),
         )
         settings.validate()
         return settings
@@ -292,6 +351,21 @@ class AppSettings:
             raise SettingsValidationError(
                 f"{label}必须在 {minimum} 到 {maximum} 之间"
             )
+
+    @staticmethod
+    def _validate_optional_coordinate(
+        label: str,
+        value: int | None,
+    ) -> None:
+        if value is None:
+            return
+        if (
+            type(value) is not int
+            or not -MAX_WINDOW_COORDINATE
+            <= value
+            <= MAX_WINDOW_COORDINATE
+        ):
+            raise SettingsValidationError(f"{label}无效")
 
 @dataclass(frozen=True)
 class AppPaths:

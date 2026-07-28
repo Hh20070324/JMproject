@@ -23,7 +23,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...settings import AppSettings, serialize_portable_path
+from ...settings import (
+    READER_LAYOUT_MODES,
+    READER_ZOOM_LEVELS,
+    AppSettings,
+    serialize_portable_path,
+)
 from ...option_config import API_ROUTE_LABELS
 from ..controllers.settings_controller import SettingsController
 from ..icons import svg_icon
@@ -32,6 +37,11 @@ from .base import SectionPage
 
 
 class SettingsPage(SectionPage):
+    _READER_LAYOUT_LABELS = {
+        "fit_width": "适合宽度",
+        "fit_page": "单页视图",
+    }
+
     def __init__(
         self,
         theme_manager: ThemeManager | None = None,
@@ -62,6 +72,7 @@ class SettingsPage(SectionPage):
         self._create_storage_section(canvas_layout)
         self._create_download_section(canvas_layout)
         self._create_application_section(canvas_layout)
+        self._create_reader_section(canvas_layout)
         self._create_theme_section(canvas_layout)
         canvas_layout.addStretch(1)
         self.settings_scroll.setWidget(self.settings_canvas)
@@ -486,6 +497,75 @@ class SettingsPage(SectionPage):
         theme_layout.addStretch(1)
         self._add_row(section, "明暗切换", theme_control)
 
+    def _create_reader_section(self, layout: QVBoxLayout) -> None:
+        section = self._create_section(layout, "在线阅读")
+
+        layout_control = QWidget(section)
+        layout_control.setObjectName("settingsReaderControl")
+        layout_row = QHBoxLayout(layout_control)
+        layout_row.setContentsMargins(0, 0, 0, 0)
+        layout_row.setSpacing(8)
+        self.reader_layout_button = QToolButton(layout_control)
+        self.reader_layout_button.setObjectName("settingsReaderLayoutButton")
+        self.reader_layout_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.reader_layout_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.reader_layout_button.setIcon(svg_icon("image"))
+        self.reader_layout_button.setToolTip("选择在线阅读的默认视图")
+        self.reader_layout_menu = QMenu(self.reader_layout_button)
+        self.reader_layout_menu.setObjectName("settingsReaderLayoutMenu")
+        self._reader_layout_group = QActionGroup(self)
+        self._reader_layout_group.setExclusive(True)
+        self._reader_layout_actions = {}
+        for mode, label in self._READER_LAYOUT_LABELS.items():
+            action = self.reader_layout_menu.addAction(label)
+            action.setData(mode)
+            action.setCheckable(True)
+            self._reader_layout_group.addAction(action)
+            self._reader_layout_actions[mode] = action
+        self._reader_layout_group.triggered.connect(
+            self._select_reader_layout
+        )
+        self.reader_layout_button.setMenu(self.reader_layout_menu)
+        layout_row.addWidget(self.reader_layout_button)
+        layout_row.addStretch(1)
+        self._add_row(section, "默认阅读视图", layout_control)
+
+        zoom_control = QWidget(section)
+        zoom_control.setObjectName("settingsReaderControl")
+        zoom_row = QHBoxLayout(zoom_control)
+        zoom_row.setContentsMargins(0, 0, 0, 0)
+        zoom_row.setSpacing(8)
+        self.reader_zoom_button = QToolButton(zoom_control)
+        self.reader_zoom_button.setObjectName("settingsReaderZoomButton")
+        self.reader_zoom_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.reader_zoom_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.reader_zoom_button.setIcon(svg_icon("search"))
+        self.reader_zoom_button.setToolTip("选择在线阅读的默认缩放比例")
+        self.reader_zoom_menu = QMenu(self.reader_zoom_button)
+        self.reader_zoom_menu.setObjectName("settingsReaderZoomMenu")
+        self._reader_zoom_group = QActionGroup(self)
+        self._reader_zoom_group.setExclusive(True)
+        self._reader_zoom_actions = {}
+        for percent in sorted(READER_ZOOM_LEVELS):
+            action = self.reader_zoom_menu.addAction(f"{percent}%")
+            action.setData(percent)
+            action.setCheckable(True)
+            self._reader_zoom_group.addAction(action)
+            self._reader_zoom_actions[percent] = action
+        self._reader_zoom_group.triggered.connect(self._select_reader_zoom)
+        self.reader_zoom_button.setMenu(self.reader_zoom_menu)
+        zoom_row.addWidget(self.reader_zoom_button)
+        zoom_row.addStretch(1)
+        self._add_row(section, "默认缩放比例", zoom_control)
+
     def _create_action_bar(self) -> None:
         action_bar = QFrame(self.content)
         action_bar.setObjectName("settingsActionBar")
@@ -705,6 +785,8 @@ class SettingsPage(SectionPage):
         self._api_route_group.triggered.connect(self._mark_dirty)
         self._package_format_group.triggered.connect(self._mark_dirty)
         self._image_format_group.triggered.connect(self._mark_dirty)
+        self._reader_layout_group.triggered.connect(self._mark_dirty)
+        self._reader_zoom_group.triggered.connect(self._mark_dirty)
         self._theme_group.buttonClicked.connect(self._mark_dirty)
 
     def _mark_dirty(self, *_args) -> None:
@@ -785,6 +867,8 @@ class SettingsPage(SectionPage):
             window_height=self.window_height_spin.value(),
             startup_page=str(self.startup_page_combo.currentData()),
             theme=checked_theme,
+            reader_layout=self._selected_reader_layout(),
+            reader_zoom_percent=self._selected_reader_zoom(),
             remember_credentials=(
                 self.remember_credentials_checkbox.isChecked()
             ),
@@ -822,6 +906,8 @@ class SettingsPage(SectionPage):
             self.remember_credentials_checkbox.setChecked(
                 settings.remember_credentials
             )
+            self._set_reader_layout(settings.reader_layout)
+            self._set_reader_zoom(settings.reader_zoom_percent)
             self._sync_theme(settings.theme)
         finally:
             self._loading = False
@@ -962,6 +1048,34 @@ class SettingsPage(SectionPage):
     def _selected_image_format(self) -> str:
         checked = self._image_format_group.checkedAction()
         return str(checked.data()) if checked is not None else "jpg"
+
+    def _select_reader_layout(self, action: QAction) -> None:
+        self._set_reader_layout(str(action.data()))
+
+    def _set_reader_layout(self, mode: str) -> None:
+        if mode not in READER_LAYOUT_MODES:
+            mode = "fit_width"
+        action = self._reader_layout_actions[mode]
+        action.setChecked(True)
+        self.reader_layout_button.setText(f"{action.text()} ▾")
+
+    def _selected_reader_layout(self) -> str:
+        checked = self._reader_layout_group.checkedAction()
+        return str(checked.data()) if checked is not None else "fit_width"
+
+    def _select_reader_zoom(self, action: QAction) -> None:
+        self._set_reader_zoom(int(action.data()))
+
+    def _set_reader_zoom(self, percent: int) -> None:
+        if percent not in READER_ZOOM_LEVELS:
+            percent = 100
+        action = self._reader_zoom_actions[percent]
+        action.setChecked(True)
+        self.reader_zoom_button.setText(f"{action.text()} ▾")
+
+    def _selected_reader_zoom(self) -> int:
+        checked = self._reader_zoom_group.checkedAction()
+        return int(checked.data()) if checked is not None else 100
 
     def _on_save_succeeded(self, _settings: AppSettings) -> None:
         self._set_actions_enabled(True)
