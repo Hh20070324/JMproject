@@ -136,9 +136,8 @@ class FavoritesPage(SectionPage):
             self._cover_loader.cover_ready.connect(self._on_cover_ready)
             self._cover_loader.cover_failed.connect(self._on_cover_failed)
 
-        history_row = QHBoxLayout()
-        history_row.setContentsMargins(0, 0, 0, 0)
-        history_row.addStretch(1)
+        self._history_fallback_row = QHBoxLayout()
+        self._history_fallback_row.setContentsMargins(0, 0, 0, 0)
         self.reading_history_button = QToolButton(self.content)
         self.reading_history_button.setObjectName("readingHistoryButton")
         self.reading_history_button.setText("阅读历史")
@@ -146,15 +145,16 @@ class FavoritesPage(SectionPage):
         self.reading_history_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        self.reading_history_button.setFixedHeight(32)
+        self.reading_history_button.setFixedHeight(36)
         self.reading_history_button.setEnabled(
             self._reading_history_available
         )
         self.reading_history_button.clicked.connect(
             self._request_reading_history
         )
-        history_row.addWidget(self.reading_history_button)
-        self.content_layout.addLayout(history_row)
+        self._history_fallback_row.addWidget(self.reading_history_button)
+        self._history_fallback_row.addStretch(1)
+        self.content_layout.addLayout(self._history_fallback_row)
 
         self.state_stack = QStackedWidget(self.content)
         self.state_stack.setObjectName("accountStateStack")
@@ -239,6 +239,33 @@ class FavoritesPage(SectionPage):
     def _request_reading_history(self) -> None:
         if self._reading_history_available:
             self.reading_history_requested.emit()
+
+    def _place_reading_history_button(
+        self,
+        status: AccountStatus,
+    ) -> None:
+        account_toolbar_visible = status in {
+            AccountStatus.SAVED_SESSION,
+            AccountStatus.SIGNED_IN,
+            AccountStatus.EXPIRED,
+        }
+        target_layout = (
+            self._favorites_filter_row
+            if account_toolbar_visible
+            else self._history_fallback_row
+        )
+        if target_layout.indexOf(self.reading_history_button) >= 0:
+            return
+        self._history_fallback_row.removeWidget(
+            self.reading_history_button
+        )
+        self._favorites_filter_row.removeWidget(
+            self.reading_history_button
+        )
+        self.reading_history_button.setParent(target_layout.parentWidget())
+        insert_at = 3 if account_toolbar_visible else 0
+        target_layout.insertWidget(insert_at, self.reading_history_button)
+        self.reading_history_button.show()
 
     def _create_loading_state(self) -> QWidget:
         state = QWidget(self)
@@ -430,9 +457,9 @@ class FavoritesPage(SectionPage):
         self.favorites_error_banner.hide()
         layout.addWidget(self.favorites_error_banner)
 
-        filter_row = QHBoxLayout()
-        filter_row.setContentsMargins(0, 0, 0, 0)
-        filter_row.setSpacing(8)
+        self._favorites_filter_row = QHBoxLayout()
+        self._favorites_filter_row.setContentsMargins(0, 0, 0, 0)
+        self._favorites_filter_row.setSpacing(8)
         self.folder_button = QToolButton(state)
         self.folder_button.setObjectName("favoritesFolderButton")
         self.folder_button.setPopupMode(
@@ -441,14 +468,14 @@ class FavoritesPage(SectionPage):
         self.folder_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextOnly
         )
-        self.folder_button.setMinimumWidth(220)
+        self.folder_button.setMinimumWidth(160)
         self.folder_button.setMaximumWidth(360)
         self.folder_button.setFixedHeight(36)
         self.folder_menu = QMenu(self.folder_button)
         self.folder_menu.setObjectName("favoritesFolderMenu")
         self.folder_menu.triggered.connect(self._select_folder)
         self.folder_button.setMenu(self.folder_menu)
-        filter_row.addWidget(self.folder_button)
+        self._favorites_filter_row.addWidget(self.folder_button)
         self.sort_button = QToolButton(state)
         self.sort_button.setObjectName("favoritesSortButton")
         self.sort_button.setPopupMode(
@@ -467,7 +494,7 @@ class FavoritesPage(SectionPage):
         self.sort_menu.triggered.connect(self._select_sort)
         self.sort_button.setMenu(self.sort_menu)
         self._update_sort_selection(self._pending_order_by)
-        filter_row.addWidget(self.sort_button)
+        self._favorites_filter_row.addWidget(self.sort_button)
         self.manage_folders_button = QToolButton(state)
         self.manage_folders_button.setObjectName("favoritesManageButton")
         self.manage_folders_button.setIcon(svg_icon("folder"))
@@ -479,9 +506,9 @@ class FavoritesPage(SectionPage):
         )
         self.manage_folders_button.setMouseTracking(True)
         self.manage_folders_button.clicked.connect(self._open_folder_manager)
-        filter_row.addWidget(self.manage_folders_button)
-        filter_row.addStretch(1)
-        layout.addLayout(filter_row)
+        self._favorites_filter_row.addWidget(self.manage_folders_button)
+        self._favorites_filter_row.addStretch(1)
+        layout.addLayout(self._favorites_filter_row)
 
         search_row = QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
@@ -897,6 +924,7 @@ class FavoritesPage(SectionPage):
                 status is AccountStatus.LOCAL_DATA_UNREADABLE
             )
             self.state_stack.setCurrentWidget(self.login_state)
+        self._place_reading_history_button(status)
         self._render_controls()
 
     def _render_controls(self) -> None:

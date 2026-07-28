@@ -10,6 +10,7 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from jm_downloader.models import (
@@ -117,6 +118,26 @@ class V31ReaderWindowTests(unittest.TestCase):
             (12, 18),
         )
         self.assertIsNone(window.session_album_id)
+        window.deleteLater()
+
+    def test_escape_does_not_hide_or_end_the_active_session(self):
+        window = ReaderWindow(
+            self.controller,
+            settings_controller=self.settings,
+        )
+        window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        window.begin_session("100", "测试漫画")
+        self.app.processEvents()
+        generation = self.controller.generation
+
+        QTest.keyClick(window, Qt.Key.Key_Escape)
+        self.app.processEvents()
+
+        self.assertTrue(window.isVisible())
+        self.assertTrue(window.has_session)
+        self.assertEqual(window.session_album_id, "100")
+        self.assertEqual(self.controller.generation, generation)
+        window.close()
         window.deleteLater()
 
     def test_offscreen_saved_geometry_is_clamped_to_an_available_screen(self):

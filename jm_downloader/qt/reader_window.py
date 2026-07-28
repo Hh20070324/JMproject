@@ -88,6 +88,10 @@ class ReaderWindow(QDialog):
         event.accept()
         self.closed.emit()
 
+    def reject(self) -> None:
+        """Keep QDialog's implicit Escape action from hiding the reader."""
+        return
+
     def _show_and_activate(self) -> None:
         if self.isMinimized():
             self.showNormal()

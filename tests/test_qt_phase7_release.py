@@ -452,11 +452,19 @@ class PhaseSevenReleaseTests(unittest.TestCase):
                     favorites_page.folder_button,
                     favorites_page.sort_button,
                     favorites_page.manage_folders_button,
+                    favorites_page.reading_history_button,
                 ]
                 for index, control in enumerate(favorite_toolbar):
                     assert control.geometry().right() <= favorites_page.account_state.width()
                     for other in favorite_toolbar[index + 1:]:
-                        assert not control.geometry().intersects(other.geometry())
+                        assert not control.geometry().intersects(
+                            other.geometry()
+                        ), (
+                            control.objectName(),
+                            control.geometry().getRect(),
+                            other.objectName(),
+                            other.geometry().getRect(),
+                        )
                 assert not favorites_page.keyword_input.geometry().intersects(
                     favorites_page.favorites_summary.geometry()
                 )

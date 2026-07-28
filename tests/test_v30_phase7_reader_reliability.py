@@ -123,6 +123,8 @@ class ReaderScaleAndMemoryTests(unittest.TestCase):
         self.assertLess(elapsed, 1.0)
         self.assertLessEqual(view.loaded_image_bytes, expected_max)
         view.close()
+        view.deleteLater()
+        self.app.processEvents()
 
     def test_failed_page_does_not_release_successful_neighbor(self):
         view = ReaderGraphicsView()
@@ -150,6 +152,8 @@ class ReaderScaleAndMemoryTests(unittest.TestCase):
         self.assertFalse(view._pages[0].pixmap.pixmap().isNull())
         self.assertIn("图片损坏", view._pages[1].message.text())
         view.close()
+        view.deleteLater()
+        self.app.processEvents()
 
     def test_card_actions_do_not_overlap_in_both_themes(self):
         manager = ThemeManager()
@@ -176,6 +180,8 @@ class ReaderScaleAndMemoryTests(unittest.TestCase):
                 )
             )
             card.close()
+            card.deleteLater()
+            self.app.processEvents()
 
 
 class ReaderCrossTrackReliabilityTests(unittest.TestCase):
@@ -218,6 +224,8 @@ class ReaderCrossTrackReliabilityTests(unittest.TestCase):
         self.window._shutdown_complete = True
         self.window.close()
         self.controller.shutdown(timeout=2.0)
+        self.window.deleteLater()
+        self.controller.deleteLater()
         self.app.processEvents()
         self.temporary.cleanup()
 

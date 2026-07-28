@@ -11,7 +11,7 @@ if os.name != "nt":
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from jm_downloader.models import ReaderSource
+from jm_downloader.models import AccountSnapshot, AccountStatus, ReaderSource
 from jm_downloader.protected_store import ProtectedStore
 from jm_downloader.qt.controllers.reader_controller import ReaderController
 from jm_downloader.qt.main_window import MainWindow
@@ -94,6 +94,12 @@ class V31SharedReaderHistoryTests(unittest.TestCase):
         favorites = self.window.page("favorites")
         self.assertTrue(search.reading_history_button.isEnabled())
         self.assertTrue(favorites.reading_history_button.isEnabled())
+        self.assertGreaterEqual(
+            favorites._history_fallback_row.indexOf(
+                favorites.reading_history_button
+            ),
+            0,
+        )
 
         with patch.object(
             ReaderHistoryDialog,
@@ -110,6 +116,34 @@ class V31SharedReaderHistoryTests(unittest.TestCase):
 
         self.assertEqual(execute.call_count, 2)
         self.assertTrue(favorites.reading_history_button.isVisible())
+
+    def test_signed_in_favorites_history_joins_the_filter_toolbar(self):
+        favorites = self.window.page("favorites")
+
+        self.window.select_page("favorites")
+        favorites._on_snapshot(
+            AccountSnapshot(AccountStatus.SIGNED_IN, "saved-user")
+        )
+        self.app.processEvents()
+
+        self.assertGreaterEqual(
+            favorites._favorites_filter_row.indexOf(
+                favorites.reading_history_button
+            ),
+            0,
+        )
+        self.assertEqual(
+            favorites.reading_history_button.height(),
+            favorites.folder_button.height(),
+        )
+        self.assertEqual(
+            favorites.reading_history_button.mapToGlobal(
+                favorites.reading_history_button.rect().center()
+            ).y(),
+            favorites.folder_button.mapToGlobal(
+                favorites.folder_button.rect().center()
+            ).y(),
+        )
 
     def test_selected_entry_from_either_button_uses_shared_reader_entry(self):
         entry = self.history.record(
