@@ -234,7 +234,8 @@ class PhaseFiveAcceptanceTests(unittest.TestCase):
 
             self.assertEqual(first_window.current_page, "library")
             self.assertEqual(first_theme.theme, Theme.DARK)
-            first_window.resize(820, 620)
+            available = first_window.screen().availableGeometry()
+            first_window.resize(min(820, available.width()), 620)
             self.app.processEvents()
             saved_size = (first_window.width(), first_window.height())
             self.assertTrue(first_window.close())

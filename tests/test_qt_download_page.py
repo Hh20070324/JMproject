@@ -132,6 +132,7 @@ class DownloadPageTests(unittest.TestCase):
         self.controller.tasks = []
         self.window._shutdown_complete = True
         self.window.close()
+        self.window.deleteLater()
         self.app.processEvents()
         self.temp_dir.cleanup()
 

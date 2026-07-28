@@ -177,11 +177,14 @@ class LibraryPageTests(unittest.TestCase):
             self.controller.calls,
             [("batch_delete", ("10", "30"), "all")],
         )
-        self.controller.batch_delete_finished.emit(
-            "all",
-            ("10",),
-            (("30", "文件被占用"),),
-        )
+        with patch(
+            "jm_downloader.qt.pages.library_page.QMessageBox.warning"
+        ):
+            self.controller.batch_delete_finished.emit(
+                "all",
+                ("10",),
+                (("30", "文件被占用"),),
+            )
         self.assertEqual(self.page.selected_count_label.text(), "已选 1 本")
 
     def test_card_actions_and_activity_state(self):
