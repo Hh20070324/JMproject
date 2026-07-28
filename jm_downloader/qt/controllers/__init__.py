@@ -4,6 +4,7 @@ from .download_controller import DownloadController
 from .favorites_controller import FavoritesController
 from .library_controller import LibraryController
 from .reader_controller import ReaderController
+from .reader_download_controller import ReaderDownloadController
 from .search_controller import SearchController
 from .settings_controller import SettingsController
 
@@ -14,6 +15,7 @@ __all__ = [
     "FavoritesController",
     "LibraryController",
     "ReaderController",
+    "ReaderDownloadController",
     "SearchController",
     "SettingsController",
 ]

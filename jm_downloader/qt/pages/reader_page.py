@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 
 from ...models import (
     ChapterCatalogSnapshot,
+    ReaderChapterDownloadSnapshot,
+    ReaderChapterDownloadState,
     ReaderChapterSnapshot,
     ReaderPageSnapshot,
     ReaderSource,
@@ -30,6 +32,9 @@ from ..widgets.reader_chapter_dialog import ReaderChapterDialog
 from ..widgets.reader_graphics_view import ReaderGraphicsView
 
 if TYPE_CHECKING:
+    from ..controllers.reader_download_controller import (
+        ReaderDownloadController,
+    )
     from ..controllers.settings_controller import SettingsController
 
 
@@ -48,12 +53,14 @@ class ReaderPage(QWidget):
         parent=None,
         *,
         settings_controller: "SettingsController | None" = None,
+        download_state_controller: "ReaderDownloadController | None" = None,
     ):
         super().__init__(parent)
         if not isinstance(controller, ReaderController):
             raise TypeError("controller must be ReaderController")
         self.controller = controller
         self.settings_controller = settings_controller
+        self.download_state_controller = download_state_controller
         self.setObjectName("readerPage")
         self._catalog: ChapterCatalogSnapshot | None = None
         self._chapter: ReaderChapterSnapshot | None = None
@@ -63,6 +70,9 @@ class ReaderPage(QWidget):
         self._pending_photo_id: str | None = None
         self._pending_page = 1
         self._failed_pages: set[int] = set()
+        self._download_photo_id: str | None = None
+        self._download_state = ReaderChapterDownloadState.UNKNOWN
+        self._download_state_message = "下载状态不可用"
         self._layout_mode = (
             settings_controller.settings.reader_layout
             if settings_controller is not None
@@ -263,6 +273,10 @@ class ReaderPage(QWidget):
             settings_controller.settings_changed.connect(
                 self._on_settings_changed
             )
+        if download_state_controller is not None:
+            download_state_controller.state_changed.connect(
+                self._on_download_state_changed
+            )
         self._refresh_controls()
 
     def open_album(
@@ -283,6 +297,7 @@ class ReaderPage(QWidget):
         self._pending_page = max(1, int(preferred_page))
         self._catalog = None
         self._chapter = None
+        self._reset_download_state()
         self.view.clear_pages()
         self._failed_pages.clear()
         self._show_error("")
@@ -305,6 +320,7 @@ class ReaderPage(QWidget):
         self._source = source
         self._catalog = catalog
         self._chapter = None
+        self._reset_download_state()
         self._album_title = catalog.title or f"JM {catalog.album_id}"
         self.title_label.setText(self._album_title)
         self._pending_photo_id = photo_id
@@ -330,10 +346,15 @@ class ReaderPage(QWidget):
     def show_notice(self, message: str) -> None:
         self._show_error(message)
 
+    @property
+    def download_state(self) -> ReaderChapterDownloadState:
+        return self._download_state
+
     def end_session(self, generation: int) -> None:
         self._generation = int(generation)
         self._catalog = None
         self._chapter = None
+        self._reset_download_state()
         self._pending_photo_id = None
         self._pending_page = 1
         self._failed_pages.clear()
@@ -374,6 +395,7 @@ class ReaderPage(QWidget):
     def _load_chapter(self, photo_id: str) -> None:
         if self._catalog is None:
             return
+        self._request_download_state(photo_id)
         self._generation = self.controller.load_chapter(
             self._catalog,
             photo_id,
@@ -582,8 +604,55 @@ class ReaderPage(QWidget):
         )
 
     def _download_current(self) -> None:
-        if self._chapter is not None:
+        if (
+            self._download_state is ReaderChapterDownloadState.UNKNOWN
+            and self.download_state_controller is not None
+        ):
+            self.download_state_controller.retry()
+            return
+        if (
+            self._chapter is not None
+            and self._download_state
+            is ReaderChapterDownloadState.AVAILABLE
+        ):
             self.download_chapter_requested.emit(self._chapter.photo_id)
+
+    @Slot(object)
+    def _on_download_state_changed(
+        self,
+        snapshot: ReaderChapterDownloadSnapshot,
+    ) -> None:
+        if (
+            not isinstance(snapshot, ReaderChapterDownloadSnapshot)
+            or self._catalog is None
+            or snapshot.album_id != self._catalog.album_id
+            or snapshot.photo_id != self._download_photo_id
+        ):
+            return
+        self._download_state = snapshot.state
+        self._download_state_message = snapshot.message
+        self._refresh_controls()
+
+    def _request_download_state(self, photo_id: str) -> None:
+        self._download_photo_id = photo_id
+        self._download_state = ReaderChapterDownloadState.CHECKING
+        self._download_state_message = "正在检查下载状态…"
+        if self.download_state_controller is None:
+            self._download_state = ReaderChapterDownloadState.UNKNOWN
+            self._download_state_message = "下载状态不可用"
+        else:
+            self.download_state_controller.request(
+                self._catalog.album_id,
+                photo_id,
+            )
+        self._refresh_controls()
+
+    def _reset_download_state(self) -> None:
+        self._download_photo_id = None
+        self._download_state = ReaderChapterDownloadState.UNKNOWN
+        self._download_state_message = "下载状态不可用"
+        if self.download_state_controller is not None:
+            self.download_state_controller.clear()
 
     def _back(self) -> None:
         self.back_requested.emit()
@@ -689,7 +758,20 @@ class ReaderPage(QWidget):
             self._adjacent_chapter(1) is not None
         )
         self.retry_button.setEnabled(bool(self._failed_pages))
-        self.download_button.setEnabled(self._chapter is not None)
+        if self._chapter is None:
+            self.download_button.setText("下载当前章节")
+            self.download_button.setEnabled(False)
+        elif self._download_state is ReaderChapterDownloadState.AVAILABLE:
+            self.download_button.setText("下载当前章节")
+            self.download_button.setEnabled(True)
+        elif self._download_state is ReaderChapterDownloadState.UNKNOWN:
+            self.download_button.setText("重新检查下载状态")
+            self.download_button.setEnabled(
+                self.download_state_controller is not None
+            )
+        else:
+            self.download_button.setText(self._download_state_message)
+            self.download_button.setEnabled(False)
         if self._chapter is not None:
             self.chapter_button.setText(
                 f"第 {self._chapter.index} 章 · {self._chapter.title}"

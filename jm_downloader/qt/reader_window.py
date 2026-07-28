@@ -5,6 +5,7 @@ from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout
 
 from .controllers.reader_controller import ReaderController
+from .controllers.reader_download_controller import ReaderDownloadController
 from .controllers.settings_controller import SettingsController
 from .pages.reader_page import ReaderPage
 
@@ -20,6 +21,7 @@ class ReaderWindow(QDialog):
         parent=None,
         *,
         settings_controller: SettingsController | None = None,
+        download_state_controller: ReaderDownloadController | None = None,
         persist_geometry: bool = True,
     ):
         super().__init__(parent, Qt.WindowType.Window)
@@ -39,6 +41,7 @@ class ReaderWindow(QDialog):
             controller,
             self,
             settings_controller=settings_controller,
+            download_state_controller=download_state_controller,
         )
         layout.addWidget(self.page)
         self.page.back_requested.connect(self.close)

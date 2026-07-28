@@ -97,6 +97,14 @@ class ReaderSource(str, Enum):
     EXACT_SEARCH = "exact_search"
 
 
+class ReaderChapterDownloadState(str, Enum):
+    CHECKING = "checking"
+    AVAILABLE = "available"
+    TASK_RESERVED = "task_reserved"
+    DOWNLOADED = "downloaded"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class TaskConfig:
     download_engine: str = "async"
@@ -164,6 +172,15 @@ class ReaderPageSnapshot:
     height: int | None = None
     cache_path: Path | None = None
     error_kind: ReaderErrorKind | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderChapterDownloadSnapshot:
+    album_id: str
+    photo_id: str
+    state: ReaderChapterDownloadState
+    message: str
+    task_status: TaskStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

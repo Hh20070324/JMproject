@@ -18,7 +18,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..desktop_runtime import WINDOW_TITLE
-from ..models import ReaderHistoryEntry, ReaderSource, SearchResultSnapshot
+from ..models import (
+    ReaderChapterDownloadState,
+    ReaderHistoryEntry,
+    ReaderSource,
+    SearchResultSnapshot,
+)
 from ..reader import ReaderHistoryStore
 from .icons import svg_icon
 from .controllers.account_controller import AccountController
@@ -27,6 +32,7 @@ from .controllers.download_controller import DownloadController
 from .controllers.favorites_controller import FavoritesController
 from .controllers.library_controller import LibraryController
 from .controllers.reader_controller import ReaderController
+from .controllers.reader_download_controller import ReaderDownloadController
 from .controllers.search_controller import SearchController
 from .controllers.settings_controller import SettingsController
 from .pages import (
@@ -69,6 +75,7 @@ class MainWindow(QMainWindow):
         self.reader_controller = reader_controller
         self.reader_history_store = reader_history_store
         self.reader_window: ReaderWindow | None = None
+        self.reader_download_controller: ReaderDownloadController | None = None
         self._reader_shutdown_requested = False
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
@@ -142,10 +149,26 @@ class MainWindow(QMainWindow):
             ),
         }
         if reader_controller is not None:
+            if (
+                download_controller is not None
+                and callable(
+                    getattr(
+                        getattr(download_controller, "library", None),
+                        "completed_chapter_ids",
+                        None,
+                    )
+                )
+            ):
+                self.reader_download_controller = ReaderDownloadController(
+                    download_controller.library.completed_chapter_ids,
+                    download_controller,
+                    self,
+                )
             self.reader_window = ReaderWindow(
                 reader_controller,
                 self,
                 settings_controller=settings_controller,
+                download_state_controller=self.reader_download_controller,
                 persist_geometry=persist_window_state,
             )
             self._pages["reader"] = self.reader_window.page
@@ -522,6 +545,12 @@ class MainWindow(QMainWindow):
         if self.download_controller is None or self.reader_window is None:
             return
         reader = self._pages["reader"]
+        if (
+            self.reader_download_controller is not None
+            and reader.download_state
+            is not ReaderChapterDownloadState.AVAILABLE
+        ):
+            return
         album_id = reader.current_album_id
         if album_id is None:
             return
@@ -533,6 +562,8 @@ class MainWindow(QMainWindow):
         if outcome.snapshots:
             reader.show_notice("当前章节已加入正式下载任务")
             return
+        if self.reader_download_controller is not None:
+            self.reader_download_controller.refresh_tasks()
         message = outcome.error or "\n".join(
             issue.message for issue in outcome.issues
         )
@@ -570,3 +601,5 @@ class MainWindow(QMainWindow):
             self.favorites_controller.dispose()
         if self.account_controller is not None:
             self.account_controller.dispose()
+        if self.reader_download_controller is not None:
+            self.reader_download_controller.dispose()
