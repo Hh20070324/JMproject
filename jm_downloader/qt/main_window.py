@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,9 +33,9 @@ from .pages import (
     DownloadPage,
     FavoritesPage,
     LibraryPage,
-    ReaderPage,
     SettingsPage,
 )
+from .reader_window import ReaderWindow
 from .theme import ThemeManager
 
 
@@ -68,9 +68,7 @@ class MainWindow(QMainWindow):
         self.chapter_catalog_controller = chapter_catalog_controller
         self.reader_controller = reader_controller
         self.reader_history_store = reader_history_store
-        self._reader_source_page = "downloads"
-        self._reader_focus_album_id: str | None = None
-        self._reader_history_focus = False
+        self.reader_window: ReaderWindow | None = None
         self._reader_shutdown_requested = False
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
@@ -144,11 +142,13 @@ class MainWindow(QMainWindow):
             ),
         }
         if reader_controller is not None:
-            self._pages["reader"] = ReaderPage(
+            self.reader_window = ReaderWindow(
                 reader_controller,
                 self,
                 settings_controller=settings_controller,
+                persist_geometry=persist_window_state,
             )
+            self._pages["reader"] = self.reader_window.page
 
         root_layout.addWidget(self._create_sidebar(root))
 
@@ -159,8 +159,6 @@ class MainWindow(QMainWindow):
         )
         for key in self.PAGE_ORDER:
             self.stack.addWidget(self._pages[key])
-        if "reader" in self._pages:
-            self.stack.addWidget(self._pages["reader"])
         root_layout.addWidget(self.stack, 1)
 
         startup_page = (
@@ -193,9 +191,6 @@ class MainWindow(QMainWindow):
             self._pages["favorites"].read_requested.connect(
                 self._open_reader
             )
-            self._pages["reader"].back_requested.connect(
-                self._return_from_reader
-            )
             self._pages["reader"].download_chapter_requested.connect(
                 self._download_reader_chapter
             )
@@ -211,12 +206,6 @@ class MainWindow(QMainWindow):
     def select_page(self, page: str) -> None:
         if page not in self.PAGE_ORDER:
             raise ValueError(f"Unknown page: {page}")
-        if (
-            "reader" in self._pages
-            and self.stack.currentWidget() is self._pages["reader"]
-            and self.reader_controller is not None
-        ):
-            self.reader_controller.leave()
         self.stack.setCurrentWidget(self._pages[page])
         self._nav_buttons[page].setChecked(True)
         activate = getattr(self._pages[page], "activate", None)
@@ -425,23 +414,25 @@ class MainWindow(QMainWindow):
         snapshot: SearchResultSnapshot,
         source: ReaderSource,
     ) -> None:
-        if "reader" not in self._pages:
+        if self.reader_window is None:
             return
         if not isinstance(snapshot, SearchResultSnapshot):
             return
         if not isinstance(source, ReaderSource):
             source = ReaderSource.SEARCH
-        current = self.current_page
-        if current in self.PAGE_ORDER:
-            self._reader_source_page = current
-        else:
-            self._reader_source_page = (
-                "favorites"
-                if source is ReaderSource.FAVORITES
-                else "downloads"
-            )
-        self._reader_focus_album_id = snapshot.album_id
-        self._reader_history_focus = False
+        if (
+            self.reader_window.has_session
+            and self.reader_window.session_album_id == snapshot.album_id
+        ):
+            self.reader_window.activate_session()
+            return
+        if (
+            self.reader_window.has_session
+            and not self._confirm_reader_reuse(snapshot.title)
+        ):
+            return
+        if self.reader_window.has_session:
+            self.reader_window.end_session()
         history = (
             self.reader_history_store.find(snapshot.album_id)
             if self.reader_history_store is not None
@@ -450,7 +441,10 @@ class MainWindow(QMainWindow):
         preferred_photo_id = history.photo_id if history else None
         preferred_page = history.page_number if history else 1
         reader = self._pages["reader"]
-        self.stack.setCurrentWidget(reader)
+        self.reader_window.begin_session(
+            snapshot.album_id,
+            snapshot.title,
+        )
         if snapshot.chapter_catalog is not None:
             reader.open_catalog(
                 snapshot.chapter_catalog,
@@ -469,15 +463,25 @@ class MainWindow(QMainWindow):
 
     def _open_reader_history(self, entry: ReaderHistoryEntry) -> None:
         if (
-            "reader" not in self._pages
+            self.reader_window is None
             or not isinstance(entry, ReaderHistoryEntry)
         ):
             return
-        self._reader_source_page = "downloads"
-        self._reader_focus_album_id = None
-        self._reader_history_focus = True
+        if (
+            self.reader_window.has_session
+            and self.reader_window.session_album_id == entry.album_id
+        ):
+            self.reader_window.activate_session()
+            return
+        if (
+            self.reader_window.has_session
+            and not self._confirm_reader_reuse(entry.title)
+        ):
+            return
+        if self.reader_window.has_session:
+            self.reader_window.end_session()
         reader = self._pages["reader"]
-        self.stack.setCurrentWidget(reader)
+        self.reader_window.begin_session(entry.album_id, entry.title)
         reader.open_album(
             entry.album_id,
             title=entry.title,
@@ -486,35 +490,36 @@ class MainWindow(QMainWindow):
             preferred_page=entry.page_number,
         )
 
-    def _return_from_reader(self) -> None:
-        page = (
-            self._reader_source_page
-            if self._reader_source_page in self.PAGE_ORDER
-            else "downloads"
+    def _confirm_reader_reuse(self, next_title: str | None) -> bool:
+        if self.reader_window is None:
+            return False
+        dialog = QMessageBox(self.reader_window)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("切换在线阅读")
+        target = (
+            f"《{next_title.strip()}》"
+            if isinstance(next_title, str) and next_title.strip()
+            else "另一部漫画"
         )
-        self.stack.setCurrentWidget(self._pages[page])
-        self._nav_buttons[page].setChecked(True)
-        activate = getattr(self._pages[page], "activate", None)
-        if activate is not None:
-            activate()
-        QTimer.singleShot(0, self._restore_reader_focus)
-
-    def _restore_reader_focus(self) -> None:
-        page = self._pages.get(self._reader_source_page)
-        if self._reader_history_focus and self._reader_source_page == "downloads":
-            page.reading_history_button.setFocus(
-                Qt.FocusReason.OtherFocusReason
-            )
-            return
-        focus_card = getattr(page, "focus_card", None)
-        if (
-            focus_card is not None
-            and self._reader_focus_album_id is not None
-        ):
-            focus_card(self._reader_focus_album_id)
+        dialog.setText(f"当前阅读窗口将切换到{target}。")
+        dialog.setInformativeText(
+            "当前阅读进度会先保存，现有阅读窗口将被复用。"
+        )
+        switch_button = dialog.addButton(
+            "切换阅读",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = dialog.addButton(
+            "取消",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        dialog.exec()
+        return dialog.clickedButton() is switch_button
 
     def _download_reader_chapter(self, photo_id: str) -> None:
-        if self.download_controller is None or "reader" not in self._pages:
+        if self.download_controller is None or self.reader_window is None:
             return
         reader = self._pages["reader"]
         album_id = reader.current_album_id
@@ -532,7 +537,7 @@ class MainWindow(QMainWindow):
             issue.message for issue in outcome.issues
         )
         QMessageBox.warning(
-            self,
+            self.reader_window,
             "无法创建下载任务",
             message or "当前章节暂时无法加入下载任务。",
         )
@@ -543,6 +548,8 @@ class MainWindow(QMainWindow):
             or self._reader_shutdown_requested
         ):
             return
+        if self.reader_window is not None:
+            self.reader_window.close()
         self._reader_shutdown_requested = True
         self.reader_controller.request_shutdown(timeout=5.0)
 

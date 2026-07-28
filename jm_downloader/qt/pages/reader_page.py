@@ -77,7 +77,7 @@ class ReaderPage(QWidget):
         header.setSpacing(8)
         self.back_button = QToolButton(self)
         self.back_button.setObjectName("readerBackButton")
-        self.back_button.setText("返回")
+        self.back_button.setText("关闭阅读")
         self.back_button.setIcon(svg_icon("arrow-left"))
         self.back_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
@@ -294,6 +294,20 @@ class ReaderPage(QWidget):
 
     def show_notice(self, message: str) -> None:
         self._show_error(message)
+
+    def end_session(self, generation: int) -> None:
+        self._generation = int(generation)
+        self._catalog = None
+        self._chapter = None
+        self._pending_photo_id = None
+        self._pending_page = 1
+        self._failed_pages.clear()
+        self._album_title = ""
+        self.title_label.setText("在线阅读")
+        self.view.clear_pages()
+        self._show_error("")
+        self._update_page_display(0)
+        self._refresh_controls()
 
     def _select_initial_chapter(self) -> None:
         if self._catalog is None:
@@ -531,7 +545,6 @@ class ReaderPage(QWidget):
             self.download_chapter_requested.emit(self._chapter.photo_id)
 
     def _back(self) -> None:
-        self.controller.leave()
         self.back_requested.emit()
 
     def _update_page_display(self, current: int) -> None:

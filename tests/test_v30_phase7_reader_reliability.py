@@ -247,7 +247,7 @@ class ReaderCrossTrackReliabilityTests(unittest.TestCase):
         self.assertTrue(self.controller._shutdown_requested)
         self.assertEqual(begin_calls, [5.0])
 
-    def test_sidebar_navigation_leaves_reader_generation(self):
+    def test_sidebar_navigation_keeps_non_modal_reader_session(self):
         catalog = ChapterCatalogSnapshot(
             "100",
             "测试漫画",
@@ -265,7 +265,8 @@ class ReaderCrossTrackReliabilityTests(unittest.TestCase):
         self.window.select_page("settings")
 
         self.assertEqual(self.window.current_page, "settings")
-        self.assertGreater(self.controller.generation, generation)
+        self.assertEqual(self.controller.generation, generation)
+        self.assertTrue(self.window.reader_window.isVisible())
 
     def test_logout_preserves_encrypted_reading_history(self):
         self.history.record(

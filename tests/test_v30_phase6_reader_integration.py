@@ -241,7 +241,7 @@ class ReaderMainWindowIntegrationTests(unittest.TestCase):
         self.app.processEvents()
         self.temporary.cleanup()
 
-    def test_reader_is_temporary_and_return_preserves_source_page(self):
+    def test_reader_is_non_modal_and_close_preserves_source_page(self):
         source_page = self.window.page("downloads")
         source_page.general_search_input.setText("保留搜索状态")
         snapshot = SearchResultSnapshot(
@@ -251,12 +251,17 @@ class ReaderMainWindowIntegrationTests(unittest.TestCase):
         )
 
         self.window._open_reader(snapshot, ReaderSource.SEARCH)
-        self.assertEqual(self.window.current_page, "reader")
+        self.app.processEvents()
+        self.assertEqual(self.window.current_page, "downloads")
+        self.assertTrue(self.window.reader_window.isVisible())
+        self.assertFalse(self.window.reader_window.isModal())
+        self.assertTrue(self.window.isEnabled())
         self.assertIs(self.window.page("downloads"), source_page)
         self.window.page("reader").back_button.click()
         self.app.processEvents()
 
         self.assertEqual(self.window.current_page, "downloads")
+        self.assertFalse(self.window.reader_window.isVisible())
         self.assertEqual(
             source_page.general_search_input.text(),
             "保留搜索状态",
