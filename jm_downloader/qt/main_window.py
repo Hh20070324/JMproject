@@ -43,6 +43,7 @@ from .pages import (
 )
 from .reader_window import ReaderWindow
 from .theme import ThemeManager
+from .widgets.reader_history_dialog import ReaderHistoryDialog
 
 
 class MainWindow(QMainWindow):
@@ -134,6 +135,7 @@ class MainWindow(QMainWindow):
                 ),
                 chapter_catalog_controller=chapter_catalog_controller,
                 reader_available=reader_controller is not None,
+                reader_history_store=reader_history_store,
             ),
             "library": LibraryPage(
                 library_controller,
@@ -209,10 +211,13 @@ class MainWindow(QMainWindow):
                 self._open_reader
             )
             self._pages["downloads"].reading_history_requested.connect(
-                self._open_reader_history
+                self._show_reader_history
             )
             self._pages["favorites"].read_requested.connect(
                 self._open_reader
+            )
+            self._pages["favorites"].reading_history_requested.connect(
+                self._show_reader_history
             )
             self._pages["reader"].download_chapter_requested.connect(
                 self._download_reader_chapter
@@ -483,6 +488,22 @@ class MainWindow(QMainWindow):
                 preferred_photo_id=preferred_photo_id,
                 preferred_page=preferred_page,
             )
+
+    def _show_reader_history(self) -> None:
+        if (
+            self.reader_window is None
+            or self.reader_history_store is None
+        ):
+            return
+        dialog = ReaderHistoryDialog(
+            self.reader_history_store,
+            self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        entry = dialog.selected_entry()
+        if entry is not None:
+            self._open_reader_history(entry)
 
     def _open_reader_history(self, entry: ReaderHistoryEntry) -> None:
         if (

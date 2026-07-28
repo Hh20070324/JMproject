@@ -3,7 +3,6 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
-from unittest.mock import patch
 
 
 if os.name != "nt":
@@ -30,9 +29,6 @@ from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.pages.download_page import DownloadPage
 from jm_downloader.qt.pages.favorites_page import FavoritesPage
 from jm_downloader.qt.theme import ThemeManager
-from jm_downloader.qt.widgets.reader_history_dialog import (
-    ReaderHistoryDialog,
-)
 from jm_downloader.qt.widgets.search_result_card import SearchResultCard
 from jm_downloader.reader import ReaderHistoryStore
 from jm_downloader.settings import AppPaths
@@ -181,22 +177,15 @@ class ReaderEntryPointTests(unittest.TestCase):
                 reader_available=True,
             )
             self.assertTrue(page.reading_history_button.isEnabled())
+            requests = []
+            page.reading_history_requested.connect(
+                lambda: requests.append(True)
+            )
             page.general_search_input.setFocus()
             self.app.processEvents()
-            self.assertFalse(
-                any(
-                    isinstance(widget, ReaderHistoryDialog)
-                    and widget.isVisible()
-                    for widget in self.app.topLevelWidgets()
-                )
-            )
-            with patch.object(
-                ReaderHistoryDialog,
-                "exec",
-                return_value=ReaderHistoryDialog.DialogCode.Rejected,
-            ) as execute:
-                page.reading_history_button.click()
-            execute.assert_called_once_with()
+            self.assertEqual(requests, [])
+            page.reading_history_button.click()
+            self.assertEqual(requests, [True])
             page.dispose()
             page.close()
 
@@ -238,6 +227,8 @@ class ReaderMainWindowIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
         self.controller.shutdown(timeout=2.0)
+        self.window.deleteLater()
+        self.controller.deleteLater()
         self.app.processEvents()
         self.temporary.cleanup()
 

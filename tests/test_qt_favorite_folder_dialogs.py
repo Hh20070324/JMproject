@@ -71,6 +71,8 @@ class FavoriteFolderDialogTests(unittest.TestCase):
         self.assertEqual(dialog.selected_folder_id, "9")
         self.assertEqual(sum(option.isChecked() for option in options), 1)
         dialog.close()
+        dialog.deleteLater()
+        self.app.processEvents()
 
     def test_target_dialog_canvas_follows_both_themes(self):
         previous_stylesheet = self.app.styleSheet()
@@ -93,6 +95,8 @@ class FavoriteFolderDialogTests(unittest.TestCase):
                     image.height() - 2,
                 )
                 dialog.close()
+                dialog.deleteLater()
+                self.app.processEvents()
         finally:
             self.app.setStyleSheet(previous_stylesheet)
             self.app.processEvents()
@@ -133,7 +137,9 @@ class FavoriteFolderDialogTests(unittest.TestCase):
             dialog.delete_button.click()
         controller.delete_folder.assert_called_once_with("8")
         dialog.close()
+        dialog.deleteLater()
         controller.deleteLater()
+        self.app.processEvents()
 
 
 if __name__ == "__main__":

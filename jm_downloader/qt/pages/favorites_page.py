@@ -56,6 +56,7 @@ FAVORITES_PAGE_SIZE = 20
 class FavoritesPage(SectionPage):
     view_task_requested = Signal(str)
     read_requested = Signal(object, object)
+    reading_history_requested = Signal()
 
     def __init__(
         self,
@@ -68,6 +69,7 @@ class FavoritesPage(SectionPage):
         cover_loader: SearchCoverLoader | None = None,
         chapter_catalog_controller: "ChapterCatalogController | None" = None,
         reader_available: bool = False,
+        reader_history_store=None,
     ):
         super().__init__("我的收藏", "favoritesPage", parent)
         self.controller = controller
@@ -106,6 +108,9 @@ class FavoritesPage(SectionPage):
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
         self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
         self._reader_available = bool(reader_available)
+        self._reading_history_available = bool(
+            reader_available and reader_history_store is not None
+        )
         self._cover_generation = 0
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
@@ -130,6 +135,26 @@ class FavoritesPage(SectionPage):
         if self._cover_loader is not None:
             self._cover_loader.cover_ready.connect(self._on_cover_ready)
             self._cover_loader.cover_failed.connect(self._on_cover_failed)
+
+        history_row = QHBoxLayout()
+        history_row.setContentsMargins(0, 0, 0, 0)
+        history_row.addStretch(1)
+        self.reading_history_button = QToolButton(self.content)
+        self.reading_history_button.setObjectName("readingHistoryButton")
+        self.reading_history_button.setText("阅读历史")
+        self.reading_history_button.setIcon(svg_icon("document"))
+        self.reading_history_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.reading_history_button.setFixedHeight(32)
+        self.reading_history_button.setEnabled(
+            self._reading_history_available
+        )
+        self.reading_history_button.clicked.connect(
+            self._request_reading_history
+        )
+        history_row.addWidget(self.reading_history_button)
+        self.content_layout.addLayout(history_row)
 
         self.state_stack = QStackedWidget(self.content)
         self.state_stack.setObjectName("accountStateStack")
@@ -209,6 +234,11 @@ class FavoritesPage(SectionPage):
         ):
             QTimer.singleShot(0, controller.request_credentials)
         QTimer.singleShot(0, self._reflow_cards)
+
+    @Slot()
+    def _request_reading_history(self) -> None:
+        if self._reading_history_available:
+            self.reading_history_requested.emit()
 
     def _create_loading_state(self) -> QWidget:
         state = QWidget(self)

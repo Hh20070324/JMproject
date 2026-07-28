@@ -35,7 +35,6 @@ from ..icons import arrow_icon, search_icon, svg_icon
 from ..widgets.search_cover_loader import SearchCoverLoader
 from ..widgets.search_result_card import SearchResultCard
 from ..widgets.search_history_menu import SearchHistoryMenu
-from ..widgets.reader_history_dialog import ReaderHistoryDialog
 from ..widgets.favorite_folder_dialogs import FavoriteTargetDialog
 from ..widgets.task_row import DownloadTaskRow
 from ..widgets.thumbnail_loader import ThumbnailLoader
@@ -50,7 +49,7 @@ if TYPE_CHECKING:
 
 class DownloadPage(SectionPage):
     read_requested = Signal(object, object)
-    reading_history_requested = Signal(object)
+    reading_history_requested = Signal()
 
     _MODE_LABELS = {
         SearchMode.GENERAL: "综合",
@@ -984,15 +983,7 @@ class DownloadPage(SectionPage):
             or not self._reader_available
         ):
             return
-        dialog = ReaderHistoryDialog(
-            self._reader_history_store,
-            self,
-        )
-        if dialog.exec() != dialog.DialogCode.Accepted:
-            return
-        entry = dialog.selected_entry()
-        if entry is not None:
-            self.reading_history_requested.emit(entry)
+        self.reading_history_requested.emit()
 
     def focus_card(self, album_id: str) -> bool:
         cards = self._cards_by_album.get(str(album_id), ())
