@@ -10,6 +10,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QResizeEvent,
+    QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
@@ -20,13 +21,14 @@ from PySide6.QtWidgets import (
 )
 
 from ...models import ReaderPageSnapshot, ReaderPageState
-from ...settings import READER_LAYOUT_MODES
+from ...settings import READER_LAYOUT_MODES, READER_ZOOM_LEVELS
 
 
 PAGE_GAP = 0
 PAGE_MARGIN = 16
 DEFAULT_PAGE_RATIO = 1.42
 MIN_PAGE_WIDTH = 240
+MAX_DECODE_TARGET_WIDTH = 4_096
 
 
 @dataclass(slots=True)
@@ -55,7 +57,7 @@ class ReaderGraphicsView(QGraphicsView):
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
         )
         self.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
@@ -71,9 +73,12 @@ class ReaderGraphicsView(QGraphicsView):
         self._tops: list[float] = []
         self._loaded_pages: set[int] = set()
         self._loaded_image_bytes = 0
+        self._base_width = MIN_PAGE_WIDTH
+        self._content_width = MIN_PAGE_WIDTH
         self._target_width = MIN_PAGE_WIDTH
         self._viewport_height = MIN_PAGE_WIDTH
         self._layout_mode = "fit_width"
+        self._zoom_percent = 100
         self._viewport_timer = QTimer(self)
         self._viewport_timer.setSingleShot(True)
         self._viewport_timer.setInterval(25)
@@ -95,19 +100,40 @@ class ReaderGraphicsView(QGraphicsView):
         return self._loaded_image_bytes
 
     @property
+    def content_width(self) -> int:
+        return self._content_width
+
+    @property
     def layout_mode(self) -> str:
         return self._layout_mode
+
+    @property
+    def zoom_percent(self) -> int:
+        return self._zoom_percent
 
     def set_layout_mode(self, mode: str) -> None:
         if mode not in READER_LAYOUT_MODES:
             raise ValueError("reader layout mode is invalid")
         if mode == self._layout_mode:
             return
-        current_page = self.current_page()
+        anchor = self._anchor()
         self._layout_mode = mode
-        self._relayout(preserve_anchor=False)
-        if current_page > 0:
-            self.scroll_to_page(current_page)
+        self._relayout(anchor=anchor)
+        self._schedule_viewport()
+
+    def set_zoom_percent(self, percent: int) -> None:
+        if (
+            type(percent) is not int
+            or percent not in READER_ZOOM_LEVELS
+        ):
+            raise ValueError("reader zoom percent is invalid")
+        if percent == self._zoom_percent:
+            return
+        anchor = self._anchor()
+        self._zoom_percent = percent
+        self._update_scaled_width()
+        self._relayout(anchor=anchor)
+        self._schedule_viewport()
 
     def set_pages(
         self,
@@ -288,7 +314,7 @@ class ReaderGraphicsView(QGraphicsView):
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
-        width = max(
+        base_width = max(
             MIN_PAGE_WIDTH,
             self.viewport().width() - PAGE_MARGIN * 2,
         )
@@ -297,11 +323,12 @@ class ReaderGraphicsView(QGraphicsView):
             self.viewport().height(),
         )
         if (
-            width != self._target_width
+            base_width != self._base_width
             or height != self._viewport_height
         ):
-            self._target_width = width
+            self._base_width = base_width
             self._viewport_height = height
+            self._update_scaled_width()
             self._relayout()
         self._schedule_viewport()
 
@@ -318,6 +345,20 @@ class ReaderGraphicsView(QGraphicsView):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        pixel_delta = event.pixelDelta()
+        if not pixel_delta.isNull():
+            vertical = self.verticalScrollBar()
+            horizontal = self.horizontalScrollBar()
+            if pixel_delta.y():
+                vertical.setValue(vertical.value() - pixel_delta.y())
+            if pixel_delta.x():
+                horizontal.setValue(horizontal.value() - pixel_delta.x())
+            event.accept()
+            self._schedule_viewport()
+            return
+        super().wheelEvent(event)
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
@@ -358,15 +399,20 @@ class ReaderGraphicsView(QGraphicsView):
             if (
                 self._layout_mode == "fit_page"
             ):
-                scale = min(
-                    float(self._target_width) / source_width,
+                base_scale = min(
+                    float(self._base_width) / source_width,
                     float(self._viewport_height) / source_height,
                 )
+                scale = base_scale * self._zoom_percent / 100.0
                 width = max(1.0, source_width * scale)
                 height = max(1.0, source_height * scale)
-                slot_height = float(self._viewport_height)
+                slot_height = (
+                    float(self._viewport_height)
+                    * self._zoom_percent
+                    / 100.0
+                )
             else:
-                width = float(self._target_width)
+                width = float(self._content_width)
                 height = width * source_height / source_width
                 slot_height = max(120.0, height)
             page.display_width = width
@@ -378,7 +424,7 @@ class ReaderGraphicsView(QGraphicsView):
             page.slot_height = max(page.display_height, slot_height)
             x = PAGE_MARGIN + max(
                 0.0,
-                (self._target_width - page.display_width) / 2,
+                (self._content_width - page.display_width) / 2,
             )
             image_y = y + max(
                 0.0,
@@ -409,7 +455,7 @@ class ReaderGraphicsView(QGraphicsView):
                 ),
             )
             y += page.slot_height + PAGE_GAP
-        scene_width = self._target_width + PAGE_MARGIN * 2
+        scene_width = self._content_width + PAGE_MARGIN * 2
         self.scene().setSceneRect(
             0,
             0,
@@ -417,9 +463,13 @@ class ReaderGraphicsView(QGraphicsView):
             max(0.0, y - PAGE_GAP),
         )
         if anchor is not None:
-            page_number, offset = anchor
+            page_number, offset_ratio = anchor
             if 1 <= page_number <= len(self._pages):
-                target_center = self._tops[page_number - 1] + offset
+                target_center = (
+                    self._tops[page_number - 1]
+                    + self._pages[page_number - 1].slot_height
+                    * offset_ratio
+                )
                 current_center = self.mapToScene(
                     self.viewport().rect().center()
                 ).y()
@@ -435,7 +485,24 @@ class ReaderGraphicsView(QGraphicsView):
         center_y = self.mapToScene(
             self.viewport().rect().center()
         ).y()
-        return page_number, center_y - self._tops[page_number - 1]
+        slot_height = max(
+            1.0,
+            self._pages[page_number - 1].slot_height,
+        )
+        return (
+            page_number,
+            (center_y - self._tops[page_number - 1]) / slot_height,
+        )
+
+    def _update_scaled_width(self) -> None:
+        self._content_width = max(
+            1,
+            int(round(self._base_width * self._zoom_percent / 100.0)),
+        )
+        self._target_width = min(
+            self._content_width,
+            MAX_DECODE_TARGET_WIDTH,
+        )
 
     def _page(self, page_number: int) -> _PageVisual:
         if (

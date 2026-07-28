@@ -1,7 +1,7 @@
 from dataclasses import replace
 
 from PySide6.QtCore import QRect, Qt, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout
 
 from .controllers.reader_controller import ReaderController
@@ -42,6 +42,11 @@ class ReaderWindow(QDialog):
         )
         layout.addWidget(self.page)
         self.page.back_requested.connect(self.close)
+        self._shortcuts = []
+        for sequence in ("Left", "PgUp", "Shift+Space"):
+            self._add_shortcut(sequence, self.page.previous_page)
+        for sequence in ("Right", "PgDown", "Space"):
+            self._add_shortcut(sequence, self.page.next_page)
 
     @property
     def session_album_id(self) -> str | None:
@@ -87,6 +92,12 @@ class ReaderWindow(QDialog):
             self.show()
         self.raise_()
         self.activateWindow()
+
+    def _add_shortcut(self, sequence: str, callback) -> None:
+        shortcut = QShortcut(QKeySequence(sequence), self)
+        shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        shortcut.activated.connect(callback)
+        self._shortcuts.append(shortcut)
 
     def _restore_saved_geometry(self) -> None:
         settings = (

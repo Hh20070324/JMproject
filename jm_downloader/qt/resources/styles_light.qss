@@ -41,6 +41,7 @@ QToolButton#readerNextChapterButton,
 QToolButton#readerPreviousPageButton,
 QToolButton#readerNextPageButton,
 QToolButton#readerLayoutButton,
+QToolButton#readerZoomButton,
 QToolButton#readerRetryButton,
 QToolButton#readerDownloadButton {
     min-height: 34px;
@@ -58,6 +59,7 @@ QToolButton#readerNextChapterButton:hover,
 QToolButton#readerPreviousPageButton:hover,
 QToolButton#readerNextPageButton:hover,
 QToolButton#readerLayoutButton:hover,
+QToolButton#readerZoomButton:hover,
 QToolButton#readerRetryButton:hover,
 QToolButton#readerDownloadButton:hover {
     background: #eaf4ef;
@@ -77,6 +79,7 @@ QToolButton#readerNextChapterButton:disabled,
 QToolButton#readerPreviousPageButton:disabled,
 QToolButton#readerNextPageButton:disabled,
 QToolButton#readerLayoutButton:disabled,
+QToolButton#readerZoomButton:disabled,
 QToolButton#readerRetryButton:disabled,
 QToolButton#readerDownloadButton:disabled {
     background: #e5eae7;
@@ -84,23 +87,27 @@ QToolButton#readerDownloadButton:disabled {
     color: #89938e;
 }
 
-QMenu#readerLayoutMenu {
+QMenu#readerLayoutMenu,
+QMenu#readerZoomMenu {
     background: #ffffff;
     border: 1px solid #cbd5d0;
     padding: 4px;
 }
 
-QMenu#readerLayoutMenu::item {
+QMenu#readerLayoutMenu::item,
+QMenu#readerZoomMenu::item {
     border-radius: 5px;
     padding: 7px 24px 7px 10px;
 }
 
-QMenu#readerLayoutMenu::item:selected {
+QMenu#readerLayoutMenu::item:selected,
+QMenu#readerZoomMenu::item:selected {
     background: #eaf4ef;
     color: #1f5c3f;
 }
 
-QMenu#readerLayoutMenu::indicator {
+QMenu#readerLayoutMenu::indicator,
+QMenu#readerZoomMenu::indicator {
     width: 18px;
     height: 18px;
     border: 2px solid #2e7d57;
@@ -108,7 +115,8 @@ QMenu#readerLayoutMenu::indicator {
     background: #e4f2ea;
 }
 
-QMenu#readerLayoutMenu::indicator:checked {
+QMenu#readerLayoutMenu::indicator:checked,
+QMenu#readerZoomMenu::indicator:checked {
     background: #2e7d57;
 }
 
@@ -947,7 +955,9 @@ QToolButton#settingsComboButton:disabled {
     border-color: #e1e6e3;
 }
 
-QToolButton#multiChapterBehaviorButton {
+QToolButton#multiChapterBehaviorButton,
+QToolButton#settingsReaderLayoutButton,
+QToolButton#settingsReaderZoomButton {
     background: #ffffff;
     border: 1px solid #cdd5d0;
     border-radius: 6px;
@@ -959,16 +969,26 @@ QToolButton#multiChapterBehaviorButton {
 
 QToolButton#multiChapterBehaviorButton:hover,
 QToolButton#multiChapterBehaviorButton:focus,
-QToolButton#multiChapterBehaviorButton:open {
+QToolButton#multiChapterBehaviorButton:open,
+QToolButton#settingsReaderLayoutButton:hover,
+QToolButton#settingsReaderLayoutButton:focus,
+QToolButton#settingsReaderLayoutButton:open,
+QToolButton#settingsReaderZoomButton:hover,
+QToolButton#settingsReaderZoomButton:focus,
+QToolButton#settingsReaderZoomButton:open {
     border-color: #2e7d57;
 }
 
-QToolButton#multiChapterBehaviorButton::menu-indicator {
+QToolButton#multiChapterBehaviorButton::menu-indicator,
+QToolButton#settingsReaderLayoutButton::menu-indicator,
+QToolButton#settingsReaderZoomButton::menu-indicator {
     image: none;
     width: 0;
 }
 
-QMenu#multiChapterBehaviorMenu {
+QMenu#multiChapterBehaviorMenu,
+QMenu#settingsReaderLayoutMenu,
+QMenu#settingsReaderZoomMenu {
     background: #ffffff;
     border: 1px solid #cdd5d0;
     border-radius: 6px;
@@ -976,19 +996,25 @@ QMenu#multiChapterBehaviorMenu {
     padding: 4px;
 }
 
-QMenu#multiChapterBehaviorMenu::item {
+QMenu#multiChapterBehaviorMenu::item,
+QMenu#settingsReaderLayoutMenu::item,
+QMenu#settingsReaderZoomMenu::item {
     min-height: 28px;
     margin: 2px;
     padding: 5px 28px 5px 12px;
     border-radius: 5px;
 }
 
-QMenu#multiChapterBehaviorMenu::item:selected {
+QMenu#multiChapterBehaviorMenu::item:selected,
+QMenu#settingsReaderLayoutMenu::item:selected,
+QMenu#settingsReaderZoomMenu::item:selected {
     background: #dfeee6;
     color: #174a32;
 }
 
-QMenu#multiChapterBehaviorMenu::item:checked {
+QMenu#multiChapterBehaviorMenu::item:checked,
+QMenu#settingsReaderLayoutMenu::item:checked,
+QMenu#settingsReaderZoomMenu::item:checked {
     color: #2e7d57;
     font-weight: 600;
 }

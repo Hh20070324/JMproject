@@ -23,7 +23,7 @@ from ...models import (
     ReaderPageSnapshot,
     ReaderSource,
 )
-from ...settings import READER_LAYOUT_MODES
+from ...settings import READER_LAYOUT_MODES, READER_ZOOM_LEVELS
 from ..controllers.reader_controller import ReaderController
 from ..icons import svg_icon
 from ..widgets.reader_chapter_dialog import ReaderChapterDialog
@@ -67,6 +67,11 @@ class ReaderPage(QWidget):
             settings_controller.settings.reader_layout
             if settings_controller is not None
             else "fit_width"
+        )
+        self._zoom_percent = (
+            settings_controller.settings.reader_zoom_percent
+            if settings_controller is not None
+            else 100
         )
 
         root = QVBoxLayout(self)
@@ -189,6 +194,35 @@ class ReaderPage(QWidget):
             self._layout_actions[mode] = action
         self.layout_button.setMenu(self.layout_menu)
         action_row.addWidget(self.layout_button)
+        self.zoom_button = QToolButton(self)
+        self.zoom_button.setObjectName("readerZoomButton")
+        self.zoom_button.setIcon(svg_icon("search"))
+        self.zoom_button.setToolTip("切换在线阅读的图片缩放比例")
+        self.zoom_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.zoom_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.zoom_menu = QMenu(self.zoom_button)
+        self.zoom_menu.setObjectName("readerZoomMenu")
+        self._zoom_action_group = QActionGroup(self)
+        self._zoom_action_group.setExclusive(True)
+        self._zoom_actions = {}
+        for percent in sorted(READER_ZOOM_LEVELS):
+            action = self.zoom_menu.addAction(f"{percent}%")
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda checked=False, selected=percent: (
+                    self._select_zoom_percent(selected)
+                    if checked
+                    else None
+                )
+            )
+            self._zoom_action_group.addAction(action)
+            self._zoom_actions[percent] = action
+        self.zoom_button.setMenu(self.zoom_menu)
+        action_row.addWidget(self.zoom_button)
         self.retry_button = self._tool_button(
             "readerRetryButton",
             "重试失败页",
@@ -213,6 +247,7 @@ class ReaderPage(QWidget):
 
         self.view = ReaderGraphicsView(self)
         self._select_layout_mode(self._layout_mode, persist=False)
+        self._select_zoom_percent(self._zoom_percent, persist=False)
         root.addWidget(self.view, 1)
 
         self.view.viewport_changed.connect(self._on_viewport)
@@ -455,11 +490,17 @@ class ReaderPage(QWidget):
         )
 
     def _previous_page(self) -> None:
+        self.previous_page()
+
+    def previous_page(self) -> None:
         current = self.view.current_page()
         if current > 1:
             self.view.scroll_to_page(current - 1)
 
     def _next_page(self) -> None:
+        self.next_page()
+
+    def next_page(self) -> None:
         current = self.view.current_page()
         if self._chapter and current < self._chapter.page_count:
             self.view.scroll_to_page(current + 1)
@@ -563,6 +604,9 @@ class ReaderPage(QWidget):
     def layout_action(self, mode: str):
         return self._layout_actions[mode]
 
+    def zoom_action(self, percent: int):
+        return self._zoom_actions[percent]
+
     def _select_layout_mode(
         self,
         mode: str,
@@ -591,11 +635,43 @@ class ReaderPage(QWidget):
             self._select_layout_mode(fallback, persist=False)
             self._show_error("阅读视图设置无法保存")
 
+    def _select_zoom_percent(
+        self,
+        percent: int,
+        *,
+        persist: bool = True,
+    ) -> None:
+        if (
+            type(percent) is not int
+            or percent not in READER_ZOOM_LEVELS
+        ):
+            raise ValueError("reader zoom percent is invalid")
+        self._zoom_percent = percent
+        if hasattr(self, "view"):
+            self.view.set_zoom_percent(percent)
+        self.zoom_button.setText(f"缩放：{percent}%")
+        for value, action in self._zoom_actions.items():
+            action.setChecked(value == percent)
+        if not persist or self.settings_controller is None:
+            return
+        current = self.settings_controller.settings
+        if current.reader_zoom_percent == percent:
+            return
+        if not self.settings_controller.save(
+            replace(current, reader_zoom_percent=percent)
+        ):
+            fallback = self.settings_controller.settings.reader_zoom_percent
+            self._select_zoom_percent(fallback, persist=False)
+            self._show_error("阅读缩放设置无法保存")
+
     @Slot(object)
     def _on_settings_changed(self, settings) -> None:
         mode = getattr(settings, "reader_layout", "fit_width")
         if mode in READER_LAYOUT_MODES:
             self._select_layout_mode(mode, persist=False)
+        percent = getattr(settings, "reader_zoom_percent", 100)
+        if percent in READER_ZOOM_LEVELS:
+            self._select_zoom_percent(percent, persist=False)
 
     def _refresh_controls(self) -> None:
         total = self._chapter.page_count if self._chapter else 0
