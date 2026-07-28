@@ -489,6 +489,63 @@ QPushButton#startDownloadButton:disabled {
     color: #7b857f;
 }
 
+QToolButton#taskBatchManageButton,
+QToolButton#taskBatchSelectAllButton,
+QToolButton#taskBatchPauseButton,
+QToolButton#taskBatchResumeButton,
+QToolButton#taskBatchCancelButton,
+QToolButton#taskBatchExitButton {
+    background: #ffffff;
+    border: 1px solid #cdd5d0;
+    border-radius: 6px;
+    color: #1d2320;
+    min-height: 30px;
+    padding: 0 9px;
+}
+
+QToolButton#taskBatchManageButton:hover,
+QToolButton#taskBatchSelectAllButton:hover,
+QToolButton#taskBatchPauseButton:hover,
+QToolButton#taskBatchResumeButton:hover,
+QToolButton#taskBatchCancelButton:hover,
+QToolButton#taskBatchExitButton:hover {
+    background: #eef1ef;
+    border-color: #aeb9b2;
+}
+
+QToolButton#taskBatchManageButton:checked,
+QToolButton#taskBatchCancelButton {
+    background: #2e7d57;
+    border-color: #2e7d57;
+    color: #ffffff;
+}
+
+QToolButton#taskBatchManageButton:disabled,
+QToolButton#taskBatchSelectAllButton:disabled,
+QToolButton#taskBatchPauseButton:disabled,
+QToolButton#taskBatchResumeButton:disabled,
+QToolButton#taskBatchCancelButton:disabled {
+    background: #eef1ef;
+    border-color: #d7ddd9;
+    color: #9aa39e;
+}
+
+QFrame#taskBatchSelectionBar {
+    background: #f4f8f6;
+    border: 1px solid #c7ddd1;
+    border-radius: 6px;
+}
+
+QLabel#taskBatchSelectedCount {
+    color: #236745;
+    font-weight: 600;
+}
+
+QLabel#taskBatchFeedback {
+    color: #65706a;
+    font-size: 12px;
+}
+
 QFrame#downloadTaskRow {
     background: #ffffff;
     border: 1px solid #d7ddd9;
@@ -519,6 +576,23 @@ QFrame#downloadTaskRow[status="completed"] {
 
 QFrame#downloadTaskRow[status="failed"] {
     border-left-color: #b74b4b;
+}
+
+QFrame#downloadTaskRow[selected="true"] {
+    border: 2px solid #2e7d57;
+    border-left: 3px solid #2e7d57;
+}
+
+QCheckBox#batchTaskSelectionCheck::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #2e7d57;
+    border-radius: 5px;
+    background: #ffffff;
+}
+
+QCheckBox#batchTaskSelectionCheck::indicator:checked {
+    background: #2e7d57;
 }
 
 QLabel#taskPreview {

@@ -85,6 +85,9 @@ class DownloadPage(SectionPage):
         self._history_popup_editor: QLineEdit | None = None
         self._disposed = False
         self._task_rows = {}
+        self._task_snapshots = {}
+        self._batch_mode = False
+        self._batch_selected_ids = set()
         self._tasks_by_album = set()
         self._preview_requests = {}
         self._completion_scheduled = set()
@@ -498,6 +501,91 @@ class DownloadPage(SectionPage):
         self.download_input.setEnabled(enabled)
         self.download_button.setEnabled(enabled)
 
+        management_row = QHBoxLayout()
+        management_row.setContentsMargins(0, 0, 0, 0)
+        management_row.addStretch(1)
+        self.batch_manage_button = QToolButton(tasks_view)
+        self.batch_manage_button.setObjectName("taskBatchManageButton")
+        self.batch_manage_button.setText("批量管理")
+        self.batch_manage_button.setCheckable(True)
+        self.batch_manage_button.setFixedSize(90, 34)
+        self.batch_manage_button.toggled.connect(
+            self._set_batch_mode
+        )
+        management_row.addWidget(self.batch_manage_button)
+        tasks_layout.addLayout(management_row)
+
+        self.batch_selection_bar = QFrame(tasks_view)
+        self.batch_selection_bar.setObjectName("taskBatchSelectionBar")
+        batch_layout = QVBoxLayout(self.batch_selection_bar)
+        batch_layout.setContentsMargins(10, 7, 8, 7)
+        batch_layout.setSpacing(6)
+
+        batch_summary = QHBoxLayout()
+        batch_summary.setContentsMargins(0, 0, 0, 0)
+        batch_summary.setSpacing(8)
+        self.batch_selected_label = QLabel(
+            "已选 0 个任务",
+            self.batch_selection_bar,
+        )
+        self.batch_selected_label.setObjectName("taskBatchSelectedCount")
+        batch_summary.addWidget(self.batch_selected_label)
+        self.batch_feedback_label = QLabel(
+            "",
+            self.batch_selection_bar,
+        )
+        self.batch_feedback_label.setObjectName("taskBatchFeedback")
+        self.batch_feedback_label.setWordWrap(True)
+        batch_summary.addWidget(self.batch_feedback_label, 1)
+        batch_layout.addLayout(batch_summary)
+
+        batch_actions = QHBoxLayout()
+        batch_actions.setContentsMargins(0, 0, 0, 0)
+        batch_actions.setSpacing(7)
+        batch_actions.addStretch(1)
+        self.batch_select_all_button = QToolButton(
+            self.batch_selection_bar
+        )
+        self.batch_select_all_button.setObjectName(
+            "taskBatchSelectAllButton"
+        )
+        self.batch_select_all_button.setText("全选")
+        self.batch_select_all_button.clicked.connect(
+            self._toggle_batch_select_all
+        )
+        batch_actions.addWidget(self.batch_select_all_button)
+        self.batch_pause_button = QToolButton(self.batch_selection_bar)
+        self.batch_pause_button.setObjectName("taskBatchPauseButton")
+        self.batch_pause_button.setText("批量暂停")
+        self.batch_pause_button.clicked.connect(
+            lambda: self._run_batch_command("pause")
+        )
+        batch_actions.addWidget(self.batch_pause_button)
+        self.batch_resume_button = QToolButton(self.batch_selection_bar)
+        self.batch_resume_button.setObjectName("taskBatchResumeButton")
+        self.batch_resume_button.setText("批量继续")
+        self.batch_resume_button.clicked.connect(
+            lambda: self._run_batch_command("resume")
+        )
+        batch_actions.addWidget(self.batch_resume_button)
+        self.batch_cancel_button = QToolButton(self.batch_selection_bar)
+        self.batch_cancel_button.setObjectName("taskBatchCancelButton")
+        self.batch_cancel_button.setText("批量取消")
+        self.batch_cancel_button.clicked.connect(
+            self._confirm_batch_cancel
+        )
+        batch_actions.addWidget(self.batch_cancel_button)
+        self.batch_exit_button = QToolButton(self.batch_selection_bar)
+        self.batch_exit_button.setObjectName("taskBatchExitButton")
+        self.batch_exit_button.setText("退出")
+        self.batch_exit_button.clicked.connect(
+            lambda: self.batch_manage_button.setChecked(False)
+        )
+        batch_actions.addWidget(self.batch_exit_button)
+        batch_layout.addLayout(batch_actions)
+        self.batch_selection_bar.hide()
+        tasks_layout.addWidget(self.batch_selection_bar)
+
         self.tasks_scroll = QScrollArea(tasks_view)
         self.tasks_scroll.setObjectName("tasksScroll")
         self.tasks_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -599,6 +687,7 @@ class DownloadPage(SectionPage):
         if self._disposed:
             return
         self._disposed = True
+        self.batch_manage_button.setChecked(False)
         self._history_popup_editor = None
         self.keyword_history_menu.dispose()
         self.jm_history_menu.dispose()
@@ -1271,7 +1360,201 @@ class DownloadPage(SectionPage):
     def _on_view_changed(self, index: int) -> None:
         self.view_stack.setCurrentIndex(index)
         if index == 0:
+            self.batch_manage_button.setChecked(False)
             self._schedule_visible_covers()
+
+    def _set_batch_mode(self, enabled: bool) -> None:
+        controller_ready = all(
+            callable(getattr(self._controller, name, None))
+            for name in (
+                "batch_pause",
+                "batch_resume",
+                "batch_cancel",
+            )
+        )
+        self._batch_mode = bool(enabled and controller_ready)
+        if self.batch_manage_button.isChecked() != self._batch_mode:
+            self.batch_manage_button.setChecked(self._batch_mode)
+        self.batch_manage_button.setText(
+            "管理中" if self._batch_mode else "批量管理"
+        )
+        self.batch_selection_bar.setVisible(self._batch_mode)
+        self.batch_feedback_label.clear()
+        if not self._batch_mode:
+            self._batch_selected_ids.clear()
+        for task_id, row in self._task_rows.items():
+            row.set_selection_mode(self._batch_mode)
+            row.set_selected(task_id in self._batch_selected_ids)
+        self._sync_batch_controls()
+
+    def _on_batch_selection_changed(
+        self,
+        task_id: str,
+        selected: bool,
+    ) -> None:
+        row = self._task_rows.get(task_id)
+        if (
+            not self._batch_mode
+            or row is None
+            or not row.batch_selectable
+        ):
+            self._batch_selected_ids.discard(task_id)
+            if row is not None:
+                row.set_selected(False)
+            self._sync_batch_controls()
+            return
+        if selected:
+            self._batch_selected_ids.add(task_id)
+        else:
+            self._batch_selected_ids.discard(task_id)
+        self.batch_feedback_label.clear()
+        self._sync_batch_controls()
+
+    def _toggle_batch_select_all(self) -> None:
+        selectable = {
+            task_id
+            for task_id, row in self._task_rows.items()
+            if row.batch_selectable
+        }
+        if selectable and selectable <= self._batch_selected_ids:
+            self._batch_selected_ids.difference_update(selectable)
+        else:
+            self._batch_selected_ids.update(selectable)
+        for task_id, row in self._task_rows.items():
+            row.set_selected(task_id in self._batch_selected_ids)
+        self.batch_feedback_label.clear()
+        self._sync_batch_controls()
+
+    def _sync_batch_controls(self) -> None:
+        selectable = {
+            task_id
+            for task_id, row in self._task_rows.items()
+            if row.batch_selectable
+        }
+        self._batch_selected_ids.intersection_update(selectable)
+        selected_count = len(self._batch_selected_ids)
+        self.batch_selected_label.setText(
+            f"已选 {selected_count} 个任务"
+        )
+        all_selected = bool(
+            selectable and selectable <= self._batch_selected_ids
+        )
+        self.batch_select_all_button.setText(
+            "取消全选" if all_selected else "全选"
+        )
+        self.batch_select_all_button.setEnabled(bool(selectable))
+        for button in (
+            self.batch_pause_button,
+            self.batch_resume_button,
+            self.batch_cancel_button,
+        ):
+            button.setEnabled(selected_count > 0)
+        controller_ready = all(
+            callable(getattr(self._controller, name, None))
+            for name in (
+                "batch_pause",
+                "batch_resume",
+                "batch_cancel",
+            )
+        )
+        self.batch_manage_button.setEnabled(
+            controller_ready
+            and (self._batch_mode or bool(selectable))
+        )
+
+    def _run_batch_command(self, command: str) -> None:
+        if self._controller is None or not self._batch_selected_ids:
+            return
+        method = getattr(
+            self._controller,
+            f"batch_{command}",
+            None,
+        )
+        if not callable(method):
+            return
+        ordered_ids = tuple(
+            task_id
+            for task_id in self._task_snapshots
+            if task_id in self._batch_selected_ids
+        )
+        outcome = method(ordered_ids)
+        self._show_batch_outcome(outcome)
+
+    def _confirm_batch_cancel(self) -> None:
+        if not self._batch_selected_ids:
+            return
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("批量取消下载任务")
+        dialog.setText(
+            f"取消所选 {len(self._batch_selected_ids)} 个下载任务？"
+        )
+        dialog.setInformativeText(
+            "任务会按当前状态逐项处理；已经下载的文件将全部保留。"
+        )
+        cancel_button = dialog.addButton(
+            "取消任务并保留文件",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        back_button = dialog.addButton(
+            "返回",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(back_button)
+        dialog.setEscapeButton(back_button)
+        dialog.exec()
+        if dialog.clickedButton() is cancel_button:
+            self._run_batch_command("cancel")
+
+    def _show_batch_outcome(self, outcome) -> None:
+        labels = {
+            "pause": "暂停",
+            "resume": "继续",
+            "cancel": "取消",
+        }
+        command = getattr(outcome, "command", "")
+        label = labels.get(command, "操作")
+        accepted = tuple(getattr(outcome, "accepted_ids", ()))
+        skipped = tuple(getattr(outcome, "skipped_ids", ()))
+        failures = tuple(getattr(outcome, "failures", ()))
+        self.batch_feedback_label.setText(
+            f"已接受 {len(accepted)} 个{label}请求"
+        )
+        if not skipped and not failures:
+            return
+        details = [f"已接受：{len(accepted)} 个"]
+        if skipped:
+            details.append(
+                f"状态不适用，已跳过：{len(skipped)} 个"
+                f"（{self._bounded_task_ids(skipped)}）"
+            )
+        if failures:
+            failure_lines = []
+            for failure in failures[:8]:
+                failure_lines.append(
+                    f"{failure.task_id}：{failure.message}"
+                )
+            if len(failures) > 8:
+                failure_lines.append(
+                    f"另有 {len(failures) - 8} 个失败任务"
+                )
+            details.append(
+                f"执行失败：{len(failures)} 个\n"
+                + "\n".join(failure_lines)
+            )
+        QMessageBox.warning(
+            self,
+            f"批量{label}结果",
+            "\n\n".join(details),
+        )
+
+    @staticmethod
+    def _bounded_task_ids(task_ids) -> str:
+        values = tuple(task_ids)
+        visible = "、".join(values[:8])
+        if len(values) > 8:
+            visible += f" 等 {len(values)} 个"
+        return visible
 
     def _add_download_task(self) -> None:
         if self._controller is None:
@@ -1343,6 +1626,9 @@ class DownloadPage(SectionPage):
 
     def _set_tasks(self, snapshots) -> None:
         snapshots = list(snapshots)
+        self._task_snapshots = {
+            snapshot.id: snapshot for snapshot in snapshots
+        }
         task_ids = {snapshot.id for snapshot in snapshots}
         self._tasks_by_album = {snapshot.album_id for snapshot in snapshots}
         for task_id in tuple(self._task_rows):
@@ -1365,9 +1651,16 @@ class DownloadPage(SectionPage):
                 row.retry_requested.connect(self._controller.retry_task)
                 row.remove_requested.connect(self._controller.remove_task)
                 row.open_requested.connect(self._controller.open_task_item)
+                row.selection_changed.connect(
+                    self._on_batch_selection_changed
+                )
                 self._task_rows[snapshot.id] = row
             else:
                 row.update_snapshot(snapshot)
+            row.set_selection_mode(self._batch_mode)
+            row.set_selected(
+                snapshot.id in self._batch_selected_ids
+            )
 
             if (
                 snapshot.status == TaskStatus.COMPLETED
@@ -1411,6 +1704,7 @@ class DownloadPage(SectionPage):
             task_present = album_id in self._tasks_by_album
             for card in cards:
                 card.set_task_present(task_present)
+        self._sync_batch_controls()
 
     def _on_thumbnail_ready(self, task_id: str, revision: int, image) -> None:
         row = self._task_rows.get(task_id)

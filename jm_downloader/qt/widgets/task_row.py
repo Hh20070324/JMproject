@@ -1,7 +1,8 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -49,6 +50,17 @@ class DownloadTaskRow(QFrame):
     retry_requested = Signal(str)
     remove_requested = Signal(str)
     open_requested = Signal(str, str)
+    selection_changed = Signal(str, bool)
+
+    BATCH_SELECTABLE_STATUSES = frozenset(
+        {
+            TaskStatus.PENDING,
+            TaskStatus.FETCHING,
+            TaskStatus.DOWNLOADING,
+            TaskStatus.PAUSED,
+            TaskStatus.FAILED,
+        }
+    )
 
     STATUS_LABELS = {
         TaskStatus.PENDING: "等待中",
@@ -67,10 +79,20 @@ class DownloadTaskRow(QFrame):
         self.setFixedHeight(126)
         self.snapshot = snapshot
         self._preview_revision = -1
+        self._selection_mode = False
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
+
+        self.selection_checkbox = QCheckBox(self)
+        self.selection_checkbox.setObjectName("batchTaskSelectionCheck")
+        self.selection_checkbox.setToolTip("选择这个下载任务")
+        self.selection_checkbox.toggled.connect(
+            self._selection_toggled
+        )
+        self.selection_checkbox.hide()
+        layout.addWidget(self.selection_checkbox)
 
         self.preview = QLabel("JM", self)
         self.preview.setObjectName("taskPreview")
@@ -112,14 +134,14 @@ class DownloadTaskRow(QFrame):
         main_layout.addLayout(detail_layout)
         layout.addWidget(main, 1)
 
-        actions = QWidget(self)
-        actions.setObjectName("taskActions")
-        actions_layout = QHBoxLayout(actions)
+        self.actions_widget = QWidget(self)
+        self.actions_widget.setObjectName("taskActions")
+        actions_layout = QHBoxLayout(self.actions_widget)
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(5)
 
         self.retry_button = self._make_action(
-            actions,
+            self.actions_widget,
             "retryTaskButton",
             "重试下载",
             svg_icon("refresh"),
@@ -130,7 +152,7 @@ class DownloadTaskRow(QFrame):
         actions_layout.addWidget(self.retry_button)
 
         self.pause_button = self._make_action(
-            actions,
+            self.actions_widget,
             "pauseTaskButton",
             "暂停下载",
             svg_icon("pause"),
@@ -141,7 +163,7 @@ class DownloadTaskRow(QFrame):
         actions_layout.addWidget(self.pause_button)
 
         self.resume_button = self._make_action(
-            actions,
+            self.actions_widget,
             "resumeTaskButton",
             "继续下载",
             svg_icon("play"),
@@ -152,7 +174,7 @@ class DownloadTaskRow(QFrame):
         actions_layout.addWidget(self.resume_button)
 
         self.open_images_button = self._make_action(
-            actions,
+            self.actions_widget,
             "openImagesButton",
             "打开图片目录",
             svg_icon("folder"),
@@ -163,7 +185,7 @@ class DownloadTaskRow(QFrame):
         actions_layout.addWidget(self.open_images_button)
 
         self.open_pdf_button = self._make_action(
-            actions,
+            self.actions_widget,
             "openPdfButton",
             "使用文件资源管理器打开本漫画打包产物文件夹",
             svg_icon("document"),
@@ -174,7 +196,7 @@ class DownloadTaskRow(QFrame):
         actions_layout.addWidget(self.open_pdf_button)
 
         self.remove_button = self._make_action(
-            actions,
+            self.actions_widget,
             "removeTaskButton",
             "清除任务记录",
             svg_icon("trash"),
@@ -185,7 +207,7 @@ class DownloadTaskRow(QFrame):
         actions_layout.addWidget(self.remove_button)
 
         self.cancel_button = self._make_action(
-            actions,
+            self.actions_widget,
             "cancelTaskButton",
             "取消任务",
             svg_icon("stop"),
@@ -194,7 +216,7 @@ class DownloadTaskRow(QFrame):
             lambda: self.cancel_requested.emit(self.snapshot.id)
         )
         actions_layout.addWidget(self.cancel_button)
-        layout.addWidget(actions)
+        layout.addWidget(self.actions_widget)
 
         self.update_snapshot(snapshot)
 
@@ -267,6 +289,48 @@ class DownloadTaskRow(QFrame):
                 and snapshot.cbz_directory.is_dir()
             )
         )
+        self._sync_selection_ui()
+
+    @property
+    def batch_selectable(self) -> bool:
+        return (
+            self.snapshot.status
+            in self.BATCH_SELECTABLE_STATUSES
+        )
+
+    def set_selection_mode(self, enabled: bool) -> None:
+        self._selection_mode = bool(enabled)
+        self._sync_selection_ui()
+
+    def set_selected(self, selected: bool) -> None:
+        blocker = QSignalBlocker(self.selection_checkbox)
+        self.selection_checkbox.setChecked(
+            bool(selected) and self.batch_selectable
+        )
+        del blocker
+        self.setProperty(
+            "selected",
+            self.selection_checkbox.isChecked(),
+        )
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def _selection_toggled(self, selected: bool) -> None:
+        if not self._selection_mode or not self.batch_selectable:
+            self.set_selected(False)
+            return
+        self.setProperty("selected", bool(selected))
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.selection_changed.emit(self.snapshot.id, bool(selected))
+
+    def _sync_selection_ui(self) -> None:
+        selectable = self._selection_mode and self.batch_selectable
+        self.selection_checkbox.setVisible(selectable)
+        self.selection_checkbox.setEnabled(selectable)
+        self.actions_widget.setVisible(not self._selection_mode)
+        if not selectable:
+            self.set_selected(False)
 
     def set_preview(self, image: QImage, revision: int) -> None:
         if image.isNull() or revision < self._preview_revision:

@@ -26,6 +26,41 @@ class BatchAddOutcome:
     error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class BatchCommandFailure:
+    task_id: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class BatchCommandOutcome:
+    command: str
+    accepted_ids: tuple[str, ...] = ()
+    skipped_ids: tuple[str, ...] = ()
+    failures: tuple[BatchCommandFailure, ...] = ()
+
+
+_BATCH_ELIGIBLE_STATUSES = {
+    "pause": frozenset(
+        {
+            TaskStatus.PENDING,
+            TaskStatus.FETCHING,
+            TaskStatus.DOWNLOADING,
+        }
+    ),
+    "resume": frozenset({TaskStatus.PAUSED}),
+    "cancel": frozenset(
+        {
+            TaskStatus.PENDING,
+            TaskStatus.FETCHING,
+            TaskStatus.DOWNLOADING,
+            TaskStatus.PAUSED,
+            TaskStatus.FAILED,
+        }
+    ),
+}
+
+
 class DownloadController(QObject):
     tasks_reset = Signal(object)
     command_failed = Signal(str, str)
@@ -178,6 +213,66 @@ class DownloadController(QObject):
             self.command_failed.emit("remove", str(error))
             return
         self._publish(force=True)
+
+    def batch_pause(self, task_ids) -> BatchCommandOutcome:
+        return self._run_batch_command("pause", task_ids)
+
+    def batch_resume(self, task_ids) -> BatchCommandOutcome:
+        return self._run_batch_command("resume", task_ids)
+
+    def batch_cancel(self, task_ids) -> BatchCommandOutcome:
+        return self._run_batch_command("cancel", task_ids)
+
+    def _run_batch_command(
+        self,
+        command: str,
+        task_ids,
+    ) -> BatchCommandOutcome:
+        eligible = _BATCH_ELIGIBLE_STATUSES[command]
+        action = getattr(self.manager, command)
+        accepted = []
+        skipped = []
+        failures = []
+        seen = set()
+        for value in task_ids:
+            if not isinstance(value, str) or not value or value in seen:
+                continue
+            seen.add(value)
+            try:
+                snapshot = self.manager.get_task(value)
+            except TaskError as error:
+                failures.append(
+                    BatchCommandFailure(value, str(error))
+                )
+                continue
+            if snapshot.status not in eligible:
+                skipped.append(value)
+                continue
+            try:
+                action(value)
+            except TaskError as error:
+                failures.append(
+                    BatchCommandFailure(value, str(error))
+                )
+                continue
+            except Exception:
+                LOGGER.exception(
+                    "Unexpected batch task command failure: %s",
+                    command,
+                )
+                failures.append(
+                    BatchCommandFailure(value, "任务操作失败")
+                )
+                continue
+            accepted.append(value)
+        if accepted:
+            self._publish(force=True)
+        return BatchCommandOutcome(
+            command=command,
+            accepted_ids=tuple(accepted),
+            skipped_ids=tuple(skipped),
+            failures=tuple(failures),
+        )
 
     @Slot(str, str)
     def open_item(self, album_id: str, kind: str) -> None:
