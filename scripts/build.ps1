@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$ReleaseVersion = "3.0.0"
+$ReleaseVersion = "3.1.0"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $BuildDir = Join-Path $ProjectRoot "build"
 $DistDir = Join-Path $ProjectRoot "dist"
@@ -24,7 +24,8 @@ $HistoricalArchives = @(
     (Join-Path $ReleaseDir "JM-Downloader-v2.7.0-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.8.0-Windows-x64.zip"),
     (Join-Path $ReleaseDir "JM-Downloader-v2.9.0-Windows-x64.zip"),
-    (Join-Path $ReleaseDir "JM-Downloader-v2.9.1-Windows-x64.zip")
+    (Join-Path $ReleaseDir "JM-Downloader-v2.9.1-Windows-x64.zip"),
+    (Join-Path $ReleaseDir "JM-Downloader-v3.0.0-Windows-x64.zip")
 )
 $LicensesDir = Join-Path $ProjectRoot "LICENSES"
 $RequiredLicenseFiles = @(
