@@ -5,6 +5,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from PIL import Image
 
 if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from jm_downloader.models import (
     ChapterCatalogSnapshot,
     ChapterImageStatus,
+    ChapterManifest,
+    ChapterManifestEntry,
     ChapterPackageStatus,
     ChapterSnapshot,
     LibraryChapterSnapshot,
@@ -25,10 +28,13 @@ from jm_downloader.models import (
     ReaderSource,
     SearchResultSnapshot,
 )
+from jm_downloader.library import ChapterManifestStore
+from jm_downloader.local_reader import LocalReaderService
 from jm_downloader.qt.main_window import MainWindow
 from jm_downloader.qt.controllers.reader_controller import ReaderController
 from jm_downloader.qt.pages.library_page import LibraryPage
 from jm_downloader.qt.theme import ThemeManager
+from jm_downloader.settings import AppPaths
 
 
 class UiReaderService:
@@ -347,8 +353,38 @@ class LocalReaderWindowIntegrationTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.paths = AppPaths(Path(self.temporary.name))
+        page = (
+            self.paths.pictures
+            / "123"
+            / "本地漫画"
+            / "第1章"
+            / "1.jpg"
+        )
+        page.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (24, 36), "white").save(page, format="JPEG")
+        ChapterManifestStore(self.paths).replace_exact(
+            ChapterManifest(
+                version=3,
+                album_id="123",
+                album_title="本地漫画",
+                album_dir_name="本地漫画",
+                chapters=(
+                    ChapterManifestEntry(
+                        photo_id="301",
+                        index=1,
+                        title="第 1 章",
+                        dir_name="第1章",
+                        page_count=1,
+                        image_format="jpg",
+                        package_format="images",
+                    ),
+                ),
+            )
+        )
         self.online = UiReaderService()
-        self.local = UiReaderService()
+        self.local = LocalReaderService(self.paths)
         self.reader_controller = ReaderController(
             self.online,
             local_service=self.local,
@@ -375,6 +411,7 @@ class LocalReaderWindowIntegrationTests(unittest.TestCase):
         self.window.close()
         self.window.deleteLater()
         self.app.processEvents()
+        self.temporary.cleanup()
 
     def wait_until(self, predicate, timeout=2.0):
         deadline = time.monotonic() + timeout

@@ -90,13 +90,36 @@ class LocalReaderService:
         if not isinstance(catalog, ChapterCatalogSnapshot):
             raise TypeError("catalog must be ChapterCatalogSnapshot")
         normalized_photo_id = self._normalize_id(photo_id, "章节 JM 号")
+        normalized_album_id = self._normalize_id(
+            catalog.album_id,
+            "漫画 JM 号",
+        )
         with self._lock:
-            album = self._albums.get(catalog.album_id)
-            chapter = (
-                album.chapters.get(normalized_photo_id)
-                if album is not None and album.catalog == catalog
-                else None
+            album = self._albums.get(normalized_album_id)
+        prepared_chapters = tuple(
+            (value.photo_id, value.index)
+            for value in catalog.chapters
+        )
+        cached_chapters = (
+            tuple(
+                (value.photo_id, value.index)
+                for value in album.catalog.chapters
             )
+            if album is not None
+            else ()
+        )
+        if album is None or cached_chapters != prepared_chapters:
+            await asyncio.to_thread(
+                self._fetch_catalog_sync,
+                normalized_album_id,
+            )
+            with self._lock:
+                album = self._albums.get(normalized_album_id)
+        chapter = (
+            album.chapters.get(normalized_photo_id)
+            if album is not None
+            else None
+        )
         if chapter is None:
             raise ReaderServiceError(
                 ReaderErrorKind.CHAPTER_UNAVAILABLE,

@@ -91,30 +91,6 @@ class ReaderPage(QWidget):
         root.setContentsMargins(14, 12, 14, 14)
         root.setSpacing(10)
 
-        self.header_widget = QWidget(self)
-        self.header_widget.setObjectName("readerHeader")
-        header = QHBoxLayout(self.header_widget)
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(10)
-        self.title_label = QLabel("在线阅读", self.header_widget)
-        self.title_label.setObjectName("readerTitle")
-        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.title_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        header.addWidget(self.title_label, 1)
-        self.back_button = QToolButton(self.header_widget)
-        self.back_button.setObjectName("readerBackButton")
-        self.back_button.setText("关闭阅读")
-        self.back_button.setIcon(svg_icon("arrow-left"))
-        self.back_button.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
-        self.back_button.clicked.connect(self._back)
-        header.addWidget(self.back_button)
-        root.addWidget(self.header_widget)
-
         self.body_widget = QWidget(self)
         self.body_widget.setObjectName("readerBody")
         body = QHBoxLayout(self.body_widget)
@@ -135,6 +111,25 @@ class ReaderPage(QWidget):
         sidebar = QVBoxLayout(self.sidebar)
         sidebar.setContentsMargins(10, 10, 10, 10)
         sidebar.setSpacing(8)
+
+        self.title_label = QLabel("在线阅读", self.sidebar)
+        self.title_label.setObjectName("readerTitle")
+        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.title_label.setWordWrap(True)
+        self.title_label.setMaximumHeight(44)
+        self.title_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        sidebar.addWidget(self.title_label)
+
+        self.back_button = self._tool_button(
+            "readerBackButton",
+            "关闭阅读",
+            "arrow-left",
+            self._back,
+        )
+        sidebar.addWidget(self.back_button)
 
         self.chapter_button = QToolButton(self.sidebar)
         self.chapter_button.setObjectName("readerChapterButton")

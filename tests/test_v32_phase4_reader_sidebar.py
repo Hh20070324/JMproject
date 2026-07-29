@@ -8,7 +8,7 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QToolButton
+from PySide6.QtWidgets import QApplication
 
 from jm_downloader.models import (
     ChapterCatalogSnapshot,
@@ -85,16 +85,20 @@ class ReaderSidebarTests(unittest.TestCase):
         )
         self.app.processEvents()
 
-    def test_header_contains_only_title_and_close_control(self):
-        buttons = self.page.header_widget.findChildren(
-            QToolButton,
-            options=Qt.FindChildOption.FindDirectChildrenOnly,
+    def test_canvas_uses_full_height_and_close_control_lives_in_sidebar(self):
+        self.assertEqual(self.page.layout().count(), 1)
+        self.assertIs(
+            self.page.layout().itemAt(0).widget(),
+            self.page.body_widget,
         )
-
-        self.assertEqual(buttons, [self.page.back_button])
-        self.assertIs(self.page.title_label.parent(), self.page.header_widget)
+        self.assertIs(self.page.title_label.parent(), self.page.sidebar)
+        self.assertIs(self.page.back_button.parent(), self.page.sidebar)
         self.assertIs(self.page.view.parent(), self.page.body_widget)
         self.assertIs(self.page.sidebar.parent(), self.page.body_widget)
+        self.assertLess(
+            self.page.back_button.geometry().bottom(),
+            self.page.chapter_button.geometry().top(),
+        )
 
     def test_vertical_slider_has_page_one_at_top_and_drag_is_not_overwritten(self):
         self._publish_chapter()

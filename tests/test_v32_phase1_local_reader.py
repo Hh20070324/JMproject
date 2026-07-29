@@ -10,8 +10,10 @@ from PIL import Image
 from jm_downloader.library import ChapterManifestStore
 from jm_downloader.local_reader import LocalReaderService
 from jm_downloader.models import (
+    ChapterCatalogSnapshot,
     ChapterManifest,
     ChapterManifestEntry,
+    ChapterSnapshot,
     ReaderErrorKind,
     ReaderPageState,
 )
@@ -81,6 +83,77 @@ class LocalReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.state, ReaderPageState.READY)
         self.assertEqual((first.width, first.height), (32, 48))
         self.assertFalse(self.paths.reader_temp.exists())
+
+    async def test_prepared_catalog_hydrates_service_before_first_load(self):
+        page = (
+            self.root
+            / "Pictures"
+            / "123"
+            / "本地漫画"
+            / "第1章"
+            / "1.jpg"
+        )
+        self._image(page)
+        self._manifest((self._chapter("301", 1, "第1章", 1),))
+        prepared = ChapterCatalogSnapshot(
+            "123",
+            "本地漫画",
+            (ChapterSnapshot("301", 1, "第1章", downloaded=True),),
+        )
+        service = LocalReaderService(self.paths)
+
+        chapter, pages = await service.load_chapter(prepared, "301")
+        _key, snapshot = await service.fetch_page(
+            "301",
+            1,
+            current_page=1,
+        )
+
+        self.assertEqual(chapter.photo_id, "301")
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(snapshot.cache_path, page)
+        self.assertFalse(self.paths.reader_temp.exists())
+
+    async def test_prepared_catalog_refreshes_stale_chapter_mapping(self):
+        first = (
+            self.root
+            / "Pictures"
+            / "123"
+            / "本地漫画"
+            / "第1章"
+            / "1.jpg"
+        )
+        second = first.parent.parent / "第2章" / "1.jpg"
+        self._image(first)
+        self._manifest((self._chapter("301", 1, "第1章", 1),))
+        service = LocalReaderService(self.paths)
+        await service.fetch_catalog("123")
+
+        self._image(second)
+        self._manifest(
+            (
+                self._chapter("301", 1, "第1章", 1),
+                self._chapter("302", 2, "第2章", 1),
+            )
+        )
+        refreshed = ChapterCatalogSnapshot(
+            "123",
+            "本地漫画",
+            (
+                ChapterSnapshot("301", 1, "第1章", downloaded=True),
+                ChapterSnapshot("302", 2, "第2章", downloaded=True),
+            ),
+        )
+
+        chapter, _pages = await service.load_chapter(refreshed, "302")
+        _key, snapshot = await service.fetch_page(
+            "302",
+            1,
+            current_page=1,
+        )
+
+        self.assertEqual(chapter.photo_id, "302")
+        self.assertEqual(snapshot.cache_path, second)
 
     async def test_deleted_or_replaced_page_fails_without_following_new_path(self):
         chapter_dir = (
