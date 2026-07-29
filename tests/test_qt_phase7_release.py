@@ -7,7 +7,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "JM-Downloader-v3.1.0-Windows-x64.zip"
+ARCHIVE_NAME = "JM-Downloader-v3.2.0-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
     "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
@@ -25,7 +25,7 @@ RUNTIME_LICENSE_ASSERTIONS = {
 }
 
 
-class PhaseSevenReleaseTests(unittest.TestCase):
+class PhaseEightReleaseTests(unittest.TestCase):
     def test_version_resources_match_the_release(self):
         formal = (PROJECT_ROOT / "version_info.txt").read_text(encoding="utf-8")
         debug = (PROJECT_ROOT / "version_info_debug.txt").read_text(
@@ -34,10 +34,10 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         spec = (PROJECT_ROOT / "JM-Downloader.spec").read_text(encoding="utf-8")
 
         for resource in (formal, debug):
-            self.assertIn("filevers=(3, 1, 0, 0)", resource)
-            self.assertIn("prodvers=(3, 1, 0, 0)", resource)
-            self.assertIn("StringStruct('FileVersion', '3.1.0')", resource)
-            self.assertIn("StringStruct('ProductVersion', '3.1.0')", resource)
+            self.assertIn("filevers=(3, 2, 0, 0)", resource)
+            self.assertIn("prodvers=(3, 2, 0, 0)", resource)
+            self.assertIn("StringStruct('FileVersion', '3.2.0')", resource)
+            self.assertIn("StringStruct('ProductVersion', '3.2.0')", resource)
             self.assertNotIn("2.1.0", resource)
 
         self.assertIn("OriginalFilename', 'JM-Downloader.exe'", formal)
@@ -55,7 +55,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
 
         for document in (readme, guide):
             self.assertIn(ARCHIVE_NAME, document)
-        self.assertIn('$ReleaseVersion = "3.1.0"', build_script)
+        self.assertIn('$ReleaseVersion = "3.2.0"', build_script)
         self.assertIn(
             '"JM-Downloader-v$ReleaseVersion-Windows-x64.zip"',
             build_script,
@@ -74,6 +74,7 @@ class PhaseSevenReleaseTests(unittest.TestCase):
         self.assertIn("JM-Downloader-v2.9.0-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v2.9.1-Windows-x64.zip", build_script)
         self.assertIn("JM-Downloader-v3.0.0-Windows-x64.zip", build_script)
+        self.assertIn("JM-Downloader-v3.1.0-Windows-x64.zip", build_script)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", readme)
         self.assertNotIn("`release/JM-Downloader-Windows-x64.zip`", guide)
 
@@ -116,6 +117,12 @@ class PhaseSevenReleaseTests(unittest.TestCase):
             self.assertIn("重新检查", document)
             self.assertIn("批量管理", document)
             self.assertIn("批量取消", document)
+            self.assertIn("本地阅读", document)
+            self.assertIn("完整图片章节", document)
+            self.assertIn("转为在线阅读", document)
+            self.assertIn("右侧控制栏", document)
+            self.assertIn("全部可用纵向空间", document)
+            self.assertIn("4096", document)
             self.assertNotIn("只支持从搜索结果添加到默认收藏", document)
             self.assertNotIn("不支持取消收藏、选择目标", document)
             self.assertNotIn("不提供漫画详情页或章节选择", document)
