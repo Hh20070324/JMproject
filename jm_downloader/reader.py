@@ -21,6 +21,7 @@ from .jmcomic_logging import install_safe_jmcomic_logging
 from .models import (
     ChapterCatalogSnapshot,
     ReaderChapterSnapshot,
+    ReaderContentMode,
     ReaderErrorKind,
     ReaderHistoryEntry,
     ReaderPageSnapshot,
@@ -36,7 +37,7 @@ from .protected_store import (
 from .tasks import InvalidAlbumId, normalize_album_id
 
 
-READING_HISTORY_SCHEMA_VERSION = 1
+READING_HISTORY_SCHEMA_VERSION = 2
 MAX_READING_HISTORY_ENTRIES = 100
 MAX_READER_CHAPTER_PAGES = 2_000
 MAX_READER_TEXT_LENGTH = 500
@@ -1324,6 +1325,7 @@ class ReaderHistoryStore:
         page_number: int,
         page_count: int,
         source: ReaderSource,
+        content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
     ) -> tuple[ReaderHistoryEntry, ...]:
         entry = self._normalize_entry(
             ReaderHistoryEntry(
@@ -1336,6 +1338,7 @@ class ReaderHistoryStore:
                 page_count=page_count,
                 read_at_utc=self._now(),
                 source=source,
+                content_mode=content_mode,
             )
         )
         with self._lock:
@@ -1374,7 +1377,8 @@ class ReaderHistoryStore:
     def _decode(cls, payload: dict) -> tuple[ReaderHistoryEntry, ...]:
         if set(payload) != {"schema_version", "entries"}:
             raise ProtectedStoreValidationError("阅读历史字段无效")
-        if payload.get("schema_version") != READING_HISTORY_SCHEMA_VERSION:
+        schema_version = payload.get("schema_version")
+        if schema_version not in {1, READING_HISTORY_SCHEMA_VERSION}:
             raise ProtectedStoreValidationError("阅读历史版本无效")
         values = payload.get("entries")
         if (
@@ -1396,6 +1400,8 @@ class ReaderHistoryStore:
             "read_at_utc",
             "source",
         }
+        if schema_version == READING_HISTORY_SCHEMA_VERSION:
+            fields.add("content_mode")
         for value in values:
             if not isinstance(value, dict) or set(value) != fields:
                 raise ProtectedStoreValidationError("阅读历史条目无效")
@@ -1404,6 +1410,16 @@ class ReaderHistoryStore:
             except (TypeError, ValueError):
                 raise ProtectedStoreValidationError(
                     "阅读历史来源无效"
+                ) from None
+            try:
+                content_mode = (
+                    ReaderContentMode(value.get("content_mode"))
+                    if schema_version == READING_HISTORY_SCHEMA_VERSION
+                    else ReaderContentMode.ONLINE
+                )
+            except (TypeError, ValueError):
+                raise ProtectedStoreValidationError(
+                    "阅读历史内容来源无效"
                 ) from None
             entry = cls._normalize_entry(
                 ReaderHistoryEntry(
@@ -1416,6 +1432,7 @@ class ReaderHistoryStore:
                     page_count=value.get("page_count"),
                     read_at_utc=value.get("read_at_utc"),
                     source=source,
+                    content_mode=content_mode,
                 )
             )
             parsed_time = cls._parse_timestamp(entry.read_at_utc)
@@ -1443,6 +1460,7 @@ class ReaderHistoryStore:
                     "page_count": entry.page_count,
                     "read_at_utc": entry.read_at_utc,
                     "source": entry.source.value,
+                    "content_mode": entry.content_mode.value,
                 }
                 for entry in entries
             ],
@@ -1479,6 +1497,8 @@ class ReaderHistoryStore:
             raise ProtectedStoreValidationError("阅读历史页码无效")
         if not isinstance(entry.source, ReaderSource):
             raise ProtectedStoreValidationError("阅读历史来源无效")
+        if not isinstance(entry.content_mode, ReaderContentMode):
+            raise ProtectedStoreValidationError("阅读历史内容来源无效")
         cls._parse_timestamp(entry.read_at_utc)
         return ReaderHistoryEntry(
             album_id=album_id,
@@ -1490,6 +1510,7 @@ class ReaderHistoryStore:
             page_count=entry.page_count,
             read_at_utc=entry.read_at_utc,
             source=entry.source,
+            content_mode=entry.content_mode,
         )
 
     @staticmethod

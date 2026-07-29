@@ -19,6 +19,7 @@ from ..downloader import DownloadWorker
 from ..favorites import FavoritesService
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
+from ..local_reader import LocalReaderService
 from ..option_config import ApiRouteState
 from ..protected_store import ProtectedStore
 from ..reader import (
@@ -299,6 +300,7 @@ def run_qt_app(
             )
             reader_controller = ReaderController(
                 reader_service,
+                local_service=LocalReaderService(paths),
                 history_store=reader_history_store,
             )
         except ReaderTempError as error:

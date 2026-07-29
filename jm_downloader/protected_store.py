@@ -229,8 +229,8 @@ _STORE_SPECS = {
     ProtectedStoreKind.READING_HISTORY: _StoreSpec(
         ProtectedStoreKind.READING_HISTORY,
         "reading_history.dat",
-        1,
-        frozenset({1}),
+        2,
+        frozenset({1, 2}),
         READING_HISTORY_MAX_PLAINTEXT_BYTES,
     ),
     ProtectedStoreKind.CREDENTIALS: _StoreSpec(

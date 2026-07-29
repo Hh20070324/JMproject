@@ -171,7 +171,7 @@ class ReaderHistoryTests(unittest.TestCase):
 
     def test_future_version_is_refused_without_rewrite(self):
         payload = json.dumps(
-            {"schema_version": 2, "entries": []},
+            {"schema_version": 3, "entries": []},
             separators=(",", ":"),
         ).encode()
         ciphertext = self.protector.protect(payload)

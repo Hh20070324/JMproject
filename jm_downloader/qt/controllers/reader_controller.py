@@ -12,6 +12,7 @@ from PySide6.QtGui import QImage, QImageReader
 from ...models import (
     ChapterCatalogSnapshot,
     ReaderChapterSnapshot,
+    ReaderContentMode,
     ReaderErrorKind,
     ReaderHistoryEntry,
     ReaderPageSnapshot,
@@ -40,6 +41,7 @@ MAX_READER_OUTCOMES = 256
 class _OpenCommand:
     generation: int
     album_id: str
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +50,7 @@ class _ChapterCommand:
     catalog: ChapterCatalogSnapshot
     photo_id: str
     target_width: int
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,7 @@ class _WindowCommand:
     visible_pages: tuple[int, ...]
     total_pages: int
     target_width: int
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +72,7 @@ class _RetryCommand:
     current_page: int
     total_pages: int
     target_width: int
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,11 +101,13 @@ class _PageJob:
     target_width: int
     priority: int
     sequence: int
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
     @property
-    def key(self) -> tuple[int, str, int, int]:
+    def key(self) -> tuple[int, ReaderContentMode, str, int, int]:
         return (
             self.generation,
+            self.content_mode,
             self.photo_id,
             self.page_number,
             self.target_width,
@@ -109,13 +116,16 @@ class _PageJob:
     @property
     def cache_key(self) -> str:
         return (
-            f"{self.generation}:{self.photo_id}:"
+            f"{self.generation}:{self.content_mode.value}:{self.photo_id}:"
             f"{self.page_number}:{self.target_width}"
         )
 
     @property
     def disk_page_key(self) -> str:
-        return f"{self.photo_id}:{self.page_number}"
+        return (
+            f"{self.content_mode.value}:"
+            f"{self.photo_id}:{self.page_number}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,10 +219,14 @@ class _PageScheduler:
         self.capacity = capacity
         self.condition = asyncio.Condition()
         self.pending: dict[
-            tuple[int, str, int, int], _PageJob
+            tuple[int, ReaderContentMode, str, int, int], _PageJob
         ] = {}
-        self.inflight: set[tuple[int, str, int, int]] = set()
-        self.desired: set[tuple[int, str, int, int]] = set()
+        self.inflight: set[
+            tuple[int, ReaderContentMode, str, int, int]
+        ] = set()
+        self.desired: set[
+            tuple[int, ReaderContentMode, str, int, int]
+        ] = set()
         self.pinned_cache_keys: frozenset[str] = frozenset()
         self.pinned_disk_page_keys: frozenset[str] = frozenset()
         self._sequence = 0
@@ -226,6 +240,7 @@ class _PageScheduler:
             desired_keys = {
                 (
                     command.generation,
+                    command.content_mode,
                     command.photo_id,
                     page,
                     command.target_width,
@@ -235,12 +250,14 @@ class _PageScheduler:
             self.desired = desired_keys
             self.pinned_cache_keys = frozenset(
                 (
-                    f"{command.generation}:{command.photo_id}:"
+                    f"{command.generation}:{command.content_mode.value}:"
+                    f"{command.photo_id}:"
                     f"{page}:{command.target_width}"
                 )
                 for page in command.visible_pages
             )
             self.pinned_disk_page_keys = frozenset(
+                f"{command.content_mode.value}:"
                 f"{command.photo_id}:{page}"
                 for page in command.visible_pages
             )
@@ -260,6 +277,7 @@ class _PageScheduler:
                     command.target_width,
                     priority,
                     self._sequence,
+                    command.content_mode,
                 )
                 if job.key in self.inflight:
                     continue
@@ -285,7 +303,7 @@ class _PageScheduler:
             pinned_keys=self.pinned_cache_keys,
         )
         update_disk = getattr(
-            self.runtime.service,
+            self.runtime.service_for(command.content_mode),
             "update_cache_window",
             None,
         )
@@ -317,6 +335,7 @@ class _PageScheduler:
                     command.target_width,
                     0,
                     self._sequence,
+                    command.content_mode,
                 )
                 self.runtime.memory_cache.discard(job.cache_key)
                 if job.key not in self.inflight:
@@ -398,17 +417,20 @@ class _ReaderRuntime:
     def __init__(
         self,
         bridge: _ReaderBridge,
-        service,
+        online_service,
+        local_service,
         history_store,
         memory_budget_bytes: int,
     ):
         self.bridge = bridge
-        self.service = service
+        self.online_service = online_service
+        self.local_service = local_service
         self.history_store = history_store
         self.memory_cache = ReaderMemoryCache[
             tuple[ReaderPageSnapshot, QImage]
         ](memory_budget_bytes)
         self.active_generation = 0
+        self.active_content_mode = ReaderContentMode.ONLINE
         self.scheduler = _PageScheduler(self, MAX_READER_PAGE_QUEUE)
         self.network_semaphore = asyncio.Semaphore(
             MAX_READER_NETWORK_CONCURRENCY
@@ -445,11 +467,13 @@ class _ReaderRuntime:
             return
         if isinstance(command, _OpenCommand):
             self.active_generation = command.generation
+            self.active_content_mode = command.content_mode
             self._spawn(self.scheduler.invalidate())
             self._spawn(self._load_catalog(command))
             return
         if isinstance(command, _ChapterCommand):
             self.active_generation = command.generation
+            self.active_content_mode = command.content_mode
             self._spawn(self.scheduler.invalidate())
             self._spawn(self._load_chapter(command))
             return
@@ -474,14 +498,11 @@ class _ReaderRuntime:
 
     async def _load_catalog(self, command: _OpenCommand) -> None:
         try:
-            async with self.network_semaphore:
-                self._network_enter()
-                try:
-                    catalog = await self.service.fetch_catalog(
-                        command.album_id
-                    )
-                finally:
-                    self._network_leave()
+            catalog = await self._call_service(
+                command.content_mode,
+                "fetch_catalog",
+                command.album_id,
+            )
             if command.generation == self.active_generation:
                 self.bridge.publish(
                     _Outcome(
@@ -495,15 +516,12 @@ class _ReaderRuntime:
 
     async def _load_chapter(self, command: _ChapterCommand) -> None:
         try:
-            async with self.network_semaphore:
-                self._network_enter()
-                try:
-                    chapter, pages = await self.service.load_chapter(
-                        command.catalog,
-                        command.photo_id,
-                    )
-                finally:
-                    self._network_leave()
+            chapter, pages = await self._call_service(
+                command.content_mode,
+                "load_chapter",
+                command.catalog,
+                command.photo_id,
+            )
             if command.generation != self.active_generation:
                 return
             self.bridge.publish(
@@ -521,6 +539,7 @@ class _ReaderRuntime:
                     (1,),
                     chapter.page_count,
                     command.target_width,
+                    command.content_mode,
                 )
             )
         except Exception as error:
@@ -544,21 +563,14 @@ class _ReaderRuntime:
                         (job.photo_id, job.page_number),
                     )
                 )
-                async with self.network_semaphore:
-                    self._network_enter()
-                    try:
-                        _disk_key, snapshot = (
-                            await self.service.fetch_page(
-                                job.photo_id,
-                                job.page_number,
-                                current_page=job.current_page,
-                                pinned_keys=(
-                                    self.scheduler.pinned_disk_page_keys
-                                ),
-                            )
-                        )
-                    finally:
-                        self._network_leave()
+                _disk_key, snapshot = await self._call_service(
+                    job.content_mode,
+                    "fetch_page",
+                    job.photo_id,
+                    job.page_number,
+                    current_page=job.current_page,
+                    pinned_keys=self.scheduler.pinned_disk_page_keys,
+                )
                 if (
                     job.generation != self.active_generation
                     or not await self.scheduler.is_desired(job)
@@ -632,6 +644,7 @@ class _ReaderRuntime:
                 page_number=entry.page_number,
                 page_count=entry.page_count,
                 source=entry.source,
+                content_mode=entry.content_mode,
             )
         except Exception:
             self.bridge.publish(
@@ -667,14 +680,24 @@ class _ReaderRuntime:
         for worker in self._workers:
             worker.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
-        service_closed = True
-        try:
-            service_closed = await asyncio.wait_for(
-                self.service.close(),
-                timeout=max(0.1, timeout),
+        services = tuple(
+            dict.fromkeys(
+                service
+                for service in (self.online_service, self.local_service)
+                if service is not None
             )
-        except Exception:
-            service_closed = False
+        )
+        results = await asyncio.gather(
+            *(
+                asyncio.wait_for(
+                    service.close(),
+                    timeout=max(0.1, timeout),
+                )
+                for service in services
+            ),
+            return_exceptions=True,
+        )
+        service_closed = all(value is True for value in results)
         self.memory_cache.clear()
         self.bridge.publish(
             _Outcome(
@@ -710,10 +733,39 @@ class _ReaderRuntime:
         self.network_active = max(0, self.network_active - 1)
         self.scheduler._publish_stats()
 
+    def service_for(self, content_mode: ReaderContentMode):
+        if content_mode is ReaderContentMode.ONLINE:
+            return self.online_service
+        if content_mode is ReaderContentMode.LOCAL and self.local_service:
+            return self.local_service
+        raise ReaderServiceError(
+            ReaderErrorKind.CHAPTER_UNAVAILABLE,
+            "本地阅读服务不可用",
+        )
+
+    async def _call_service(
+        self,
+        content_mode: ReaderContentMode,
+        method_name: str,
+        *args,
+        **kwargs,
+    ):
+        service = self.service_for(content_mode)
+        method = getattr(service, method_name)
+        if content_mode is ReaderContentMode.LOCAL:
+            return await method(*args, **kwargs)
+        async with self.network_semaphore:
+            self._network_enter()
+            try:
+                return await method(*args, **kwargs)
+            finally:
+                self._network_leave()
+
 
 def _reader_thread(
     bridge: _ReaderBridge,
-    service,
+    online_service,
+    local_service,
     history_store,
     memory_budget_bytes: int,
 ) -> None:
@@ -721,7 +773,8 @@ def _reader_thread(
         asyncio.run(
             _ReaderRuntime(
                 bridge,
-                service,
+                online_service,
+                local_service,
                 history_store,
                 memory_budget_bytes,
             ).run()
@@ -823,6 +876,7 @@ class ReaderController(QObject):
         self,
         service: ReaderService,
         *,
+        local_service=None,
         history_store: ReaderHistoryStore | None = None,
         parent=None,
         result_interval_ms: int = DEFAULT_RESULT_INTERVAL_MS,
@@ -840,6 +894,18 @@ class ReaderController(QObject):
             )
         ):
             raise TypeError("service does not implement reader operations")
+        if local_service is not None and not all(
+            callable(getattr(local_service, name, None))
+            for name in (
+                "fetch_catalog",
+                "load_chapter",
+                "fetch_page",
+                "close",
+            )
+        ):
+            raise TypeError(
+                "local_service does not implement reader operations"
+            )
         if history_store is not None and not isinstance(
             history_store,
             ReaderHistoryStore,
@@ -855,6 +921,7 @@ class ReaderController(QObject):
         if type(memory_budget_bytes) is not int or memory_budget_bytes < 1:
             raise ValueError("memory_budget_bytes must be positive")
         self.service = service
+        self.local_service = local_service
         self.history_store = history_store
         self._bridge = _ReaderBridge()
         self._generation = 0
@@ -862,16 +929,18 @@ class ReaderController(QObject):
         self._shutdown_requested = False
         self._history_context = None
         self._current_page = 0
+        self._content_mode = ReaderContentMode.ONLINE
 
         self._thread = threading.Thread(
             target=_reader_thread,
             args=(
                 self._bridge,
                 service,
+                local_service,
                 history_store,
                 memory_budget_bytes,
             ),
-            name="jm-online-reader",
+            name="jm-reader",
             daemon=True,
         )
         self._thread.start()
@@ -910,14 +979,28 @@ class ReaderController(QObject):
     def worker_is_daemon(self) -> bool:
         return self._thread.daemon
 
-    def open_album(self, album_id: str) -> int:
+    @property
+    def content_mode(self) -> ReaderContentMode:
+        return self._content_mode
+
+    def open_album(
+        self,
+        album_id: str,
+        *,
+        content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
+    ) -> int:
         if self._disposed:
             return self._generation
+        if not isinstance(content_mode, ReaderContentMode):
+            raise TypeError("content_mode must be ReaderContentMode")
         self.flush_history()
         self._generation += 1
         self._history_context = None
         self._current_page = 0
-        self._bridge.submit(_OpenCommand(self._generation, album_id))
+        self._content_mode = content_mode
+        self._bridge.submit(
+            _OpenCommand(self._generation, album_id, content_mode)
+        )
         return self._generation
 
     def load_chapter(
@@ -926,20 +1009,26 @@ class ReaderController(QObject):
         photo_id: str,
         *,
         target_width: int,
+        content_mode: ReaderContentMode | None = None,
     ) -> int:
         if self._disposed:
             return self._generation
         target_width = _validated_target_width(target_width)
+        content_mode = content_mode or self._content_mode
+        if not isinstance(content_mode, ReaderContentMode):
+            raise TypeError("content_mode must be ReaderContentMode")
         self.flush_history()
         self._generation += 1
         self._history_context = None
         self._current_page = 0
+        self._content_mode = content_mode
         self._bridge.submit(
             _ChapterCommand(
                 self._generation,
                 catalog,
                 photo_id,
                 target_width,
+                content_mode,
             )
         )
         return self._generation
@@ -962,6 +1051,7 @@ class ReaderController(QObject):
             visible_pages,
             total_pages,
             target_width,
+            self._content_mode,
         )
         self._current_page = current_page
         self._bridge.submit(command)
@@ -998,6 +1088,7 @@ class ReaderController(QObject):
                 current_page,
                 total_pages,
                 _validated_target_width(target_width),
+                self._content_mode,
             )
         )
 
@@ -1008,11 +1099,16 @@ class ReaderController(QObject):
         title: str,
         chapter: ReaderChapterSnapshot,
         source: ReaderSource,
+        content_mode: ReaderContentMode | None = None,
     ) -> None:
         if (
             self._disposed
             or not isinstance(chapter, ReaderChapterSnapshot)
             or not isinstance(source, ReaderSource)
+            or (
+                content_mode is not None
+                and not isinstance(content_mode, ReaderContentMode)
+            )
         ):
             return
         self._history_context = (
@@ -1020,6 +1116,7 @@ class ReaderController(QObject):
             title,
             chapter,
             source,
+            content_mode or self._content_mode,
         )
 
     @Slot()
@@ -1032,7 +1129,7 @@ class ReaderController(QObject):
             or self._current_page < 1
         ):
             return
-        album_id, title, chapter, source = self._history_context
+        album_id, title, chapter, source, content_mode = self._history_context
         page = min(self._current_page, chapter.page_count)
         entry = ReaderHistoryEntry(
             album_id,
@@ -1044,6 +1141,7 @@ class ReaderController(QObject):
             chapter.page_count,
             _utc_now(),
             source,
+            content_mode,
         )
         self._bridge.submit(
             _HistoryCommand(self._generation, entry)
@@ -1152,7 +1250,10 @@ def _validated_window_command(
     visible_pages,
     total_pages: int,
     target_width: int,
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
 ) -> _WindowCommand:
+    if not isinstance(content_mode, ReaderContentMode):
+        raise TypeError("content_mode must be ReaderContentMode")
     if (
         not isinstance(photo_id, str)
         or not photo_id
@@ -1180,6 +1281,7 @@ def _validated_window_command(
         visible,
         total_pages,
         _validated_target_width(target_width),
+        content_mode,
     )
 
 
