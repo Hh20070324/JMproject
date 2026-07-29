@@ -95,6 +95,12 @@ class ReaderSource(str, Enum):
     FAVORITES = "favorites"
     HISTORY = "history"
     EXACT_SEARCH = "exact_search"
+    LOCAL_LIBRARY = "local_library"
+
+
+class ReaderContentMode(str, Enum):
+    ONLINE = "online"
+    LOCAL = "local"
 
 
 class ReaderChapterDownloadState(str, Enum):
@@ -193,6 +199,7 @@ class ReaderSessionSnapshot:
     pages: tuple[ReaderPageSnapshot, ...]
     current_page: int
     error_kind: ReaderErrorKind | None = None
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +213,7 @@ class ReaderHistoryEntry:
     page_count: int
     read_at_utc: str
     source: ReaderSource
+    content_mode: ReaderContentMode = ReaderContentMode.ONLINE
 
 
 @dataclass(frozen=True, slots=True)
