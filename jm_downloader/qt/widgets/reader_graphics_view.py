@@ -10,6 +10,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QResizeEvent,
+    QTransform,
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
@@ -413,7 +414,12 @@ class ReaderGraphicsView(QGraphicsView):
                 )
             else:
                 width = float(self._content_width)
-                height = width * source_height / source_width
+                height = float(
+                    max(
+                        1,
+                        int(round(width * source_height / source_width)),
+                    )
+                )
                 slot_height = max(120.0, height)
             page.display_width = width
             page.display_height = (
@@ -440,8 +446,11 @@ class ReaderGraphicsView(QGraphicsView):
             page.pixmap.setPos(x, image_y)
             pixmap = page.pixmap.pixmap()
             if not pixmap.isNull():
-                page.pixmap.setScale(
-                    page.display_width / max(1, pixmap.width())
+                page.pixmap.setTransform(
+                    QTransform.fromScale(
+                        page.display_width / max(1, pixmap.width()),
+                        page.display_height / max(1, pixmap.height()),
+                    )
                 )
             text_rect = page.message.boundingRect()
             page.message.setPos(
@@ -500,7 +509,7 @@ class ReaderGraphicsView(QGraphicsView):
             int(round(self._base_width * self._zoom_percent / 100.0)),
         )
         self._target_width = min(
-            self._content_width,
+            max(self._base_width, self._content_width),
             MAX_DECODE_TARGET_WIDTH,
         )
 
