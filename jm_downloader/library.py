@@ -79,9 +79,15 @@ _INVALID_COMPONENT = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 class ChapterManifestStore:
-    def __init__(self, paths: AppPaths = DEFAULT_PATHS):
+    def __init__(
+        self,
+        paths: AppPaths = DEFAULT_PATHS,
+        *,
+        ensure_directories: bool = True,
+    ):
         self.paths = paths
-        self.paths.ensure_output_directories()
+        if ensure_directories:
+            self.paths.ensure_output_directories()
 
     def load(self, album_id: str) -> ChapterManifest | None:
         path = self._manifest_path(album_id)
