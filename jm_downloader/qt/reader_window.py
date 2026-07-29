@@ -4,6 +4,7 @@ from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout
 
+from ..models import ReaderContentMode
 from .controllers.reader_controller import ReaderController
 from .controllers.reader_download_controller import ReaderDownloadController
 from .controllers.settings_controller import SettingsController
@@ -11,7 +12,7 @@ from .pages.reader_page import ReaderPage
 
 
 class ReaderWindow(QDialog):
-    """Single non-modal owner for the online reader page."""
+    """Single non-modal owner shared by online and local reading."""
 
     closed = Signal()
 
@@ -29,6 +30,7 @@ class ReaderWindow(QDialog):
         self.settings_controller = settings_controller
         self._persist_geometry = bool(persist_geometry)
         self._session_album_id: str | None = None
+        self._session_content_mode: ReaderContentMode | None = None
         self._geometry_restored = False
         self.setObjectName("readerWindow")
         self.setWindowTitle("在线阅读")
@@ -59,12 +61,29 @@ class ReaderWindow(QDialog):
     def has_session(self) -> bool:
         return self._session_album_id is not None and self.isVisible()
 
-    def begin_session(self, album_id: str, title: str | None = None) -> None:
+    @property
+    def session_content_mode(self) -> ReaderContentMode | None:
+        return self._session_content_mode
+
+    def begin_session(
+        self,
+        album_id: str,
+        title: str | None = None,
+        content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
+    ) -> None:
+        if not isinstance(content_mode, ReaderContentMode):
+            raise TypeError("content_mode must be ReaderContentMode")
         self._session_album_id = str(album_id)
+        self._session_content_mode = content_mode
+        mode_title = (
+            "本地阅读"
+            if content_mode is ReaderContentMode.LOCAL
+            else "在线阅读"
+        )
         self.setWindowTitle(
-            f"{title.strip()} - 在线阅读"
+            f"{title.strip()} - {mode_title}"
             if isinstance(title, str) and title.strip()
-            else f"JM {album_id} - 在线阅读"
+            else f"JM {album_id} - {mode_title}"
         )
         if not self._geometry_restored:
             self._restore_saved_geometry()
@@ -80,6 +99,7 @@ class ReaderWindow(QDialog):
         generation = self.controller.leave()
         self.page.end_session(generation)
         self._session_album_id = None
+        self._session_content_mode = None
         self.setWindowTitle("在线阅读")
 
     def closeEvent(self, event: QCloseEvent) -> None:

@@ -28,6 +28,7 @@ def format_file_size(size: int) -> str:
 
 
 class LibraryItemCard(QFrame):
+    read_requested = Signal(str)
     open_requested = Signal(str, str)
     view_task_requested = Signal(str)
     delete_requested = Signal(str, str)
@@ -114,6 +115,17 @@ class LibraryItemCard(QFrame):
             lambda: self.open_requested.emit(self.item.album_id, "images")
         )
         actions_layout.addWidget(self.open_images_button)
+
+        self.read_button = self._make_icon_button(
+            actions,
+            "libraryReadButton",
+            "在应用内阅读本地完整章节",
+            svg_icon("image"),
+        )
+        self.read_button.clicked.connect(
+            lambda: self.read_requested.emit(self.item.album_id)
+        )
+        actions_layout.addWidget(self.read_button)
 
         self.open_pdf_button = self._make_icon_button(
             actions,
@@ -258,6 +270,9 @@ class LibraryItemCard(QFrame):
             else "打包 · 未生成"
         )
         self.open_images_button.setVisible(item.has_images)
+        self.read_button.setVisible(
+            item.layout is LibraryLayout.MANAGED and item.has_images
+        )
         self.open_pdf_button.setVisible(item.has_pdf or item.has_cbz)
         self.open_pdf_button.setEnabled(
             (
@@ -296,6 +311,7 @@ class LibraryItemCard(QFrame):
             self._selection_mode and not locked
         )
         self.delete_button.setEnabled(not locked)
+        self.read_button.setEnabled(not self._busy)
         self.chapter_button.setEnabled(not locked)
         self.delete_images_action.setEnabled(not locked and self.item.has_images)
         self.delete_pdf_action.setEnabled(

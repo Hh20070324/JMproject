@@ -22,6 +22,7 @@ from ...models import (
     ReaderChapterDownloadSnapshot,
     ReaderChapterDownloadState,
     ReaderChapterSnapshot,
+    ReaderContentMode,
     ReaderPageSnapshot,
     ReaderSource,
 )
@@ -65,7 +66,9 @@ class ReaderPage(QWidget):
         self._catalog: ChapterCatalogSnapshot | None = None
         self._chapter: ReaderChapterSnapshot | None = None
         self._source = ReaderSource.SEARCH
+        self._content_mode = ReaderContentMode.ONLINE
         self._album_title = ""
+        self._content_mode = ReaderContentMode.ONLINE
         self._generation = 0
         self._pending_photo_id: str | None = None
         self._pending_page = 1
@@ -287,10 +290,14 @@ class ReaderPage(QWidget):
         source: ReaderSource,
         preferred_photo_id: str | None = None,
         preferred_page: int = 1,
+        content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
     ) -> int:
         if not isinstance(source, ReaderSource):
             raise TypeError("source must be ReaderSource")
+        if not isinstance(content_mode, ReaderContentMode):
+            raise TypeError("content_mode must be ReaderContentMode")
         self._source = source
+        self._content_mode = content_mode
         self._album_title = (title or f"JM {album_id}").strip()
         self.title_label.setText(self._album_title)
         self._pending_photo_id = preferred_photo_id
@@ -301,7 +308,10 @@ class ReaderPage(QWidget):
         self.view.clear_pages()
         self._failed_pages.clear()
         self._show_error("")
-        self._generation = self.controller.open_album(album_id)
+        self._generation = self.controller.open_album(
+            album_id,
+            content_mode=content_mode,
+        )
         self._refresh_controls()
         return self._generation
 
@@ -312,12 +322,16 @@ class ReaderPage(QWidget):
         source: ReaderSource,
         photo_id: str | None = None,
         page_number: int = 1,
+        content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
     ) -> None:
         if not isinstance(catalog, ChapterCatalogSnapshot):
             raise TypeError("catalog must be ChapterCatalogSnapshot")
         if not isinstance(source, ReaderSource):
             raise TypeError("source must be ReaderSource")
+        if not isinstance(content_mode, ReaderContentMode):
+            raise TypeError("content_mode must be ReaderContentMode")
         self._source = source
+        self._content_mode = content_mode
         self._catalog = catalog
         self._chapter = None
         self._reset_download_state()
@@ -381,7 +395,13 @@ class ReaderPage(QWidget):
             QMessageBox.information(
                 self,
                 "上次阅读章节已不可用",
-                "阅读历史中的章节已不在当前远端目录中。"
+                "阅读历史中的章节已不在当前"
+                + (
+                    "本地可读目录"
+                    if self._content_mode is ReaderContentMode.LOCAL
+                    else "远端目录"
+                )
+                + "中。"
                 "请选择新的起始章节。",
             )
         if len(self._catalog.chapters) == 1:
@@ -400,6 +420,7 @@ class ReaderPage(QWidget):
             self._catalog,
             photo_id,
             target_width=max(240, self.view.target_width),
+            content_mode=self._content_mode,
         )
         self._chapter = None
         self.view.clear_pages()
@@ -440,6 +461,7 @@ class ReaderPage(QWidget):
             title=self._album_title,
             chapter=chapter,
             source=self._source,
+            content_mode=self._content_mode,
         )
         self._update_page_display(target)
         self._refresh_controls()
@@ -635,6 +657,13 @@ class ReaderPage(QWidget):
 
     def _request_download_state(self, photo_id: str) -> None:
         self._download_photo_id = photo_id
+        if self._content_mode is ReaderContentMode.LOCAL:
+            self._download_state = ReaderChapterDownloadState.DOWNLOADED
+            self._download_state_message = "当前章节已下载"
+            if self.download_state_controller is not None:
+                self.download_state_controller.clear()
+            self._refresh_controls()
+            return
         self._download_state = ReaderChapterDownloadState.CHECKING
         self._download_state_message = "正在检查下载状态…"
         if self.download_state_controller is None:

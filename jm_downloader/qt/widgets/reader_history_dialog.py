@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ...models import ReaderHistoryEntry
+from ...models import ReaderContentMode, ReaderHistoryEntry
 from ...reader import ReaderHistoryStore
 
 
@@ -94,7 +94,12 @@ class ReaderHistoryDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, entry.album_id)
             item.setToolTip(
                 f"{entry.title}\nJM {entry.album_id}\n"
-                f"{entry.chapter_title} · 第 {entry.page_number} 页"
+                f"{entry.chapter_title} · 第 {entry.page_number} 页\n"
+                + (
+                    "本地阅读"
+                    if entry.content_mode is ReaderContentMode.LOCAL
+                    else "在线阅读"
+                )
             )
             self.list_widget.addItem(item)
         if entries:
@@ -156,7 +161,12 @@ class ReaderHistoryDialog(QDialog):
             pass
         return (
             f"{entry.title}  ·  JM {entry.album_id}\n"
-            f"第 {entry.chapter_index} 章 · {entry.chapter_title}"
+            + (
+                "[本地]  "
+                if entry.content_mode is ReaderContentMode.LOCAL
+                else "[在线]  "
+            )
+            + f"第 {entry.chapter_index} 章 · {entry.chapter_title}"
             f"  ·  {entry.page_number} / {entry.page_count} 页"
             f"  ·  {timestamp}"
         )

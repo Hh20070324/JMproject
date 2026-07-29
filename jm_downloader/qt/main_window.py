@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from ..desktop_runtime import WINDOW_TITLE
 from ..models import (
     ReaderChapterDownloadState,
+    ReaderContentMode,
     ReaderHistoryEntry,
     ReaderSource,
     SearchResultSnapshot,
@@ -218,6 +219,12 @@ class MainWindow(QMainWindow):
             )
             self._pages["favorites"].reading_history_requested.connect(
                 self._show_reader_history
+            )
+            self._pages["library"].local_read_ready.connect(
+                self._open_local_reader_ready
+            )
+            self._pages["library"].local_read_failed.connect(
+                self._on_local_read_failed
             )
             self._pages["reader"].download_chapter_requested.connect(
                 self._download_reader_chapter
@@ -448,30 +455,52 @@ class MainWindow(QMainWindow):
             return
         if not isinstance(source, ReaderSource):
             source = ReaderSource.SEARCH
-        if (
-            self.reader_window.has_session
-            and self.reader_window.session_album_id == snapshot.album_id
-        ):
-            self.reader_window.activate_session()
-            return
-        if (
-            self.reader_window.has_session
-            and not self._confirm_reader_reuse(snapshot.title)
-        ):
-            return
-        if self.reader_window.has_session:
-            self.reader_window.end_session()
         history = (
             self.reader_history_store.find(snapshot.album_id)
             if self.reader_history_store is not None
             else None
         )
-        preferred_photo_id = history.photo_id if history else None
-        preferred_page = history.page_number if history else 1
+        self._start_reader_session(
+            snapshot,
+            source=source,
+            content_mode=ReaderContentMode.ONLINE,
+            preferred_photo_id=history.photo_id if history else None,
+            preferred_page=history.page_number if history else 1,
+        )
+
+    def _start_reader_session(
+        self,
+        snapshot: SearchResultSnapshot,
+        *,
+        source: ReaderSource,
+        content_mode: ReaderContentMode,
+        preferred_photo_id: str | None = None,
+        preferred_page: int = 1,
+        notice: str | None = None,
+    ) -> None:
+        if self.reader_window is None:
+            return
+        if not isinstance(snapshot, SearchResultSnapshot):
+            return
+        if (
+            self.reader_window.has_session
+            and self.reader_window.session_album_id == snapshot.album_id
+            and self.reader_window.session_content_mode is content_mode
+        ):
+            self.reader_window.activate_session()
+            return
+        if (
+            self.reader_window.has_session
+            and not self._confirm_reader_reuse(snapshot.title, content_mode)
+        ):
+            return
+        if self.reader_window.has_session:
+            self.reader_window.end_session()
         reader = self._pages["reader"]
         self.reader_window.begin_session(
             snapshot.album_id,
             snapshot.title,
+            content_mode,
         )
         if snapshot.chapter_catalog is not None:
             reader.open_catalog(
@@ -479,6 +508,7 @@ class MainWindow(QMainWindow):
                 source=source,
                 photo_id=preferred_photo_id,
                 page_number=preferred_page,
+                content_mode=content_mode,
             )
         else:
             reader.open_album(
@@ -487,7 +517,65 @@ class MainWindow(QMainWindow):
                 source=source,
                 preferred_photo_id=preferred_photo_id,
                 preferred_page=preferred_page,
+                content_mode=content_mode,
             )
+        if notice:
+            reader.show_notice(notice)
+
+    def _open_local_reader_ready(
+        self,
+        snapshot: SearchResultSnapshot,
+        history_entry,
+    ) -> None:
+        if not isinstance(snapshot, SearchResultSnapshot):
+            return
+        catalog = snapshot.chapter_catalog
+        if catalog is None:
+            self._on_local_read_failed(
+                history_entry,
+                "本地章节目录不可用",
+            )
+            return
+        readable_ids = {value.photo_id for value in catalog.chapters}
+        if isinstance(history_entry, ReaderHistoryEntry):
+            if history_entry.photo_id not in readable_ids:
+                self._offer_online_fallback(
+                    history_entry,
+                    "阅读历史中的本地章节已经缺失或损坏。",
+                )
+                return
+            preferred = history_entry
+            source = ReaderSource.HISTORY
+            notice = None
+        else:
+            preferred = (
+                self.reader_history_store.find(snapshot.album_id)
+                if self.reader_history_store is not None
+                else None
+            )
+            source = ReaderSource.LOCAL_LIBRARY
+            notice = None
+            if preferred is not None and preferred.photo_id not in readable_ids:
+                preferred = None
+                notice = "上次阅读章节在本地不可用，已从首个完整章节开始。"
+        self._start_reader_session(
+            snapshot,
+            source=source,
+            content_mode=ReaderContentMode.LOCAL,
+            preferred_photo_id=preferred.photo_id if preferred else None,
+            preferred_page=preferred.page_number if preferred else 1,
+            notice=notice,
+        )
+
+    def _on_local_read_failed(self, history_entry, message: str) -> None:
+        if isinstance(history_entry, ReaderHistoryEntry):
+            self._offer_online_fallback(history_entry, message)
+            return
+        QMessageBox.information(
+            self,
+            "无法本地阅读",
+            str(message),
+        )
 
     def _show_reader_history(self) -> None:
         if (
@@ -511,41 +599,80 @@ class MainWindow(QMainWindow):
             or not isinstance(entry, ReaderHistoryEntry)
         ):
             return
-        if (
-            self.reader_window.has_session
-            and self.reader_window.session_album_id == entry.album_id
-        ):
-            self.reader_window.activate_session()
+        if entry.content_mode is ReaderContentMode.LOCAL:
+            library_page = self._pages.get("library")
+            if library_page is None:
+                self._offer_online_fallback(
+                    entry,
+                    "本地漫画库不可用。",
+                )
+                return
+            library_page.prepare_local_read(entry.album_id, entry)
             return
-        if (
-            self.reader_window.has_session
-            and not self._confirm_reader_reuse(entry.title)
-        ):
-            return
-        if self.reader_window.has_session:
-            self.reader_window.end_session()
-        reader = self._pages["reader"]
-        self.reader_window.begin_session(entry.album_id, entry.title)
-        reader.open_album(
-            entry.album_id,
-            title=entry.title,
+        self._start_reader_session(
+            SearchResultSnapshot(entry.album_id, entry.title),
             source=ReaderSource.HISTORY,
+            content_mode=ReaderContentMode.ONLINE,
             preferred_photo_id=entry.photo_id,
             preferred_page=entry.page_number,
         )
 
-    def _confirm_reader_reuse(self, next_title: str | None) -> bool:
+    def _offer_online_fallback(
+        self,
+        entry: ReaderHistoryEntry,
+        reason: str,
+    ) -> None:
+        if self.reader_window is None:
+            return
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("本地内容不可用")
+        dialog.setText(str(reason))
+        dialog.setInformativeText(
+            "是否改为在线读取这部漫画？只有确认后程序才会访问网络。"
+        )
+        online_button = dialog.addButton(
+            "转为在线阅读",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = dialog.addButton(
+            "取消",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        dialog.exec()
+        if dialog.clickedButton() is not online_button:
+            return
+        self._start_reader_session(
+            SearchResultSnapshot(entry.album_id, entry.title),
+            source=ReaderSource.HISTORY,
+            content_mode=ReaderContentMode.ONLINE,
+            preferred_photo_id=entry.photo_id,
+            preferred_page=entry.page_number,
+        )
+
+    def _confirm_reader_reuse(
+        self,
+        next_title: str | None,
+        content_mode: ReaderContentMode = ReaderContentMode.ONLINE,
+    ) -> bool:
         if self.reader_window is None:
             return False
         dialog = QMessageBox(self.reader_window)
         dialog.setIcon(QMessageBox.Icon.Question)
-        dialog.setWindowTitle("切换在线阅读")
+        mode_title = (
+            "本地阅读"
+            if content_mode is ReaderContentMode.LOCAL
+            else "在线阅读"
+        )
+        dialog.setWindowTitle(f"切换为{mode_title}")
         target = (
             f"《{next_title.strip()}》"
             if isinstance(next_title, str) and next_title.strip()
             else "另一部漫画"
         )
-        dialog.setText(f"当前阅读窗口将切换到{target}。")
+        dialog.setText(f"当前阅读窗口将切换到{target}的{mode_title}。")
         dialog.setInformativeText(
             "当前阅读进度会先保存，现有阅读窗口将被复用。"
         )

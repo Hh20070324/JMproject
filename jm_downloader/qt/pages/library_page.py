@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shiboken6 import isValid
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -25,9 +25,13 @@ from PySide6.QtWidgets import (
 )
 
 from ...models import (
+    ChapterCatalogSnapshot,
     ChapterImageStatus,
     ChapterPackageStatus,
+    ChapterSnapshot,
     LibraryItem,
+    ReaderHistoryEntry,
+    SearchResultSnapshot,
     TaskConfig,
 )
 from ..icons import svg_icon
@@ -48,6 +52,8 @@ if TYPE_CHECKING:
 
 class LibraryPage(SectionPage):
     view_task_requested = Signal(str)
+    local_read_ready = Signal(object, object)
+    local_read_failed = Signal(object, str)
 
     FILTERS = (
         ("all", "全部"),
@@ -69,6 +75,7 @@ class LibraryPage(SectionPage):
         self._settings_controller = settings_controller
         self._chapter_dialogs = {}
         self._chapter_requests = {}
+        self._local_read_requests = {}
         self._catalog_requests = {}
         self._chapter_completion_messages = {}
         self._items: list[LibraryItem] = []
@@ -427,6 +434,7 @@ class LibraryPage(SectionPage):
                 row.view_task_requested.connect(
                     self.view_task_requested.emit
                 )
+                row.read_requested.connect(self.prepare_local_read)
                 row.delete_requested.connect(self._confirm_delete)
                 row.chapter_action_requested.connect(
                     self._open_chapter_action
@@ -708,6 +716,30 @@ class LibraryPage(SectionPage):
         if self._controller is not None:
             self._controller.open_item(album_id, kind)
 
+    @Slot(str)
+    def prepare_local_read(
+        self,
+        album_id: str,
+        history_entry: ReaderHistoryEntry | None = None,
+    ) -> None:
+        if self._controller is None:
+            self.local_read_failed.emit(
+                history_entry,
+                "本地章节检查服务不可用",
+            )
+            return
+        request_id = self._controller.check_chapters(str(album_id))
+        if request_id is None:
+            self.local_read_failed.emit(
+                history_entry,
+                "本地章节检查未能启动，请稍后重试",
+            )
+            return
+        self._local_read_requests[int(request_id)] = (
+            str(album_id),
+            history_entry,
+        )
+
     def _open_chapter_action(self, album_id: str, action: str) -> None:
         item = next(
             (
@@ -981,6 +1013,52 @@ class LibraryPage(SectionPage):
         album_id: str,
         result,
     ) -> None:
+        local_context = self._local_read_requests.pop(request_id, None)
+        if local_context is not None:
+            expected_album, history_entry = local_context
+            if command != "check_chapters" or album_id != expected_album:
+                return
+            complete = tuple(
+                value
+                for value in result
+                if value.image_status is ChapterImageStatus.COMPLETE
+            )
+            item = next(
+                (
+                    value
+                    for value in self._items
+                    if value.album_id == album_id
+                ),
+                None,
+            )
+            if not complete or item is None:
+                self.local_read_failed.emit(
+                    history_entry,
+                    "没有图片完整的本地章节，请先在章节管理中修复",
+                )
+                return
+            catalog = ChapterCatalogSnapshot(
+                album_id=album_id,
+                title=item.title,
+                chapters=tuple(
+                    ChapterSnapshot(
+                        photo_id=value.photo_id,
+                        index=value.index,
+                        title=value.title,
+                        downloaded=True,
+                    )
+                    for value in complete
+                ),
+            )
+            self.local_read_ready.emit(
+                SearchResultSnapshot(
+                    album_id=album_id,
+                    title=item.title,
+                    chapter_catalog=catalog,
+                ),
+                history_entry,
+            )
+            return
         context = self._chapter_requests.pop(request_id, None)
         if context is None:
             return
@@ -1095,6 +1173,11 @@ class LibraryPage(SectionPage):
         album_id: str,
         message: str,
     ) -> None:
+        local_context = self._local_read_requests.pop(request_id, None)
+        if local_context is not None:
+            _expected_album, history_entry = local_context
+            self.local_read_failed.emit(history_entry, message)
+            return
         context = self._chapter_requests.pop(request_id, None)
         if context is None:
             return
