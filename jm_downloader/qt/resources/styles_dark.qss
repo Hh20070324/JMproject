@@ -34,6 +34,12 @@ QGraphicsView#readerGraphicsView {
     border-radius: 6px;
 }
 
+QFrame#readerControlSidebar {
+    background: #1d211f;
+    border: 1px solid #343c38;
+    border-radius: 8px;
+}
+
 QToolButton#readerBackButton,
 QToolButton#readerChapterButton,
 QToolButton#readerPreviousChapterButton,
@@ -120,20 +126,24 @@ QMenu#readerZoomMenu::indicator:checked {
     background: #58b989;
 }
 
-QSlider#readerPageSlider::groove:horizontal {
-    height: 6px;
+QSlider#readerPageSlider {
+    min-width: 30px;
+}
+
+QSlider#readerPageSlider::groove:vertical {
+    width: 6px;
     background: #343c38;
     border-radius: 3px;
 }
 
-QSlider#readerPageSlider::sub-page:horizontal {
+QSlider#readerPageSlider::sub-page:vertical {
     background: #58b989;
     border-radius: 3px;
 }
 
-QSlider#readerPageSlider::handle:horizontal {
-    width: 18px;
-    margin: -6px 0;
+QSlider#readerPageSlider::handle:vertical {
+    height: 18px;
+    margin: 0 -6px;
     background: #58b989;
     border: 2px solid #171a18;
     border-radius: 9px;

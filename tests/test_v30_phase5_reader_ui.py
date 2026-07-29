@@ -7,6 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QDialog, QToolButton
 
@@ -289,22 +290,23 @@ class ReaderPageTests(unittest.TestCase):
                     max(520, int(520 * scale)),
                 )
                 self.app.processEvents()
-                controls = (
-                    self.page.previous_page_button,
-                    self.page.page_slider,
-                    self.page.page_label,
-                    self.page.next_page_button,
+                self.assertEqual(
+                    self.page.page_slider.orientation(),
+                    Qt.Orientation.Vertical,
                 )
-                geometries = [
-                    control.geometry()
-                    for control in controls
-                    if control.isVisible()
-                ]
-                for first, second in zip(geometries, geometries[1:]):
-                    self.assertLessEqual(
-                        first.right(),
-                        second.left(),
+                self.assertFalse(
+                    self.page.previous_page_button.geometry().intersects(
+                        self.page.next_page_button.geometry()
                     )
+                )
+                self.assertLessEqual(
+                    self.page.page_slider.geometry().bottom(),
+                    self.page.previous_chapter_button.geometry().top(),
+                )
+                self.assertLessEqual(
+                    self.page.previous_chapter_button.geometry().bottom(),
+                    self.page.previous_page_button.geometry().top(),
+                )
 
 
 if __name__ == "__main__":

@@ -88,12 +88,23 @@ class ReaderPage(QWidget):
         )
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 14, 18, 14)
-        root.setSpacing(8)
+        root.setContentsMargins(14, 12, 14, 14)
+        root.setSpacing(10)
 
-        header = QHBoxLayout()
-        header.setSpacing(8)
-        self.back_button = QToolButton(self)
+        self.header_widget = QWidget(self)
+        self.header_widget.setObjectName("readerHeader")
+        header = QHBoxLayout(self.header_widget)
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(10)
+        self.title_label = QLabel("在线阅读", self.header_widget)
+        self.title_label.setObjectName("readerTitle")
+        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.title_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        header.addWidget(self.title_label, 1)
+        self.back_button = QToolButton(self.header_widget)
         self.back_button.setObjectName("readerBackButton")
         self.back_button.setText("关闭阅读")
         self.back_button.setIcon(svg_icon("arrow-left"))
@@ -102,86 +113,46 @@ class ReaderPage(QWidget):
         )
         self.back_button.clicked.connect(self._back)
         header.addWidget(self.back_button)
-        self.title_label = QLabel("在线阅读", self)
-        self.title_label.setObjectName("readerTitle")
-        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.title_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        header.addWidget(self.title_label, 1)
-        root.addLayout(header)
+        root.addWidget(self.header_widget)
 
-        chapter_row = QHBoxLayout()
-        chapter_row.setSpacing(8)
-        self.chapter_button = QToolButton(self)
+        self.body_widget = QWidget(self)
+        self.body_widget.setObjectName("readerBody")
+        body = QHBoxLayout(self.body_widget)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(10)
+
+        self.view = ReaderGraphicsView(self.body_widget)
+        body.addWidget(self.view, 1)
+
+        self.sidebar = QFrame(self.body_widget)
+        self.sidebar.setObjectName("readerControlSidebar")
+        self.sidebar.setMinimumWidth(190)
+        self.sidebar.setMaximumWidth(260)
+        self.sidebar.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
+        sidebar = QVBoxLayout(self.sidebar)
+        sidebar.setContentsMargins(10, 10, 10, 10)
+        sidebar.setSpacing(8)
+
+        self.chapter_button = QToolButton(self.sidebar)
         self.chapter_button.setObjectName("readerChapterButton")
         self.chapter_button.setText("选择章节")
         self.chapter_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextOnly
         )
+        self.chapter_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self.chapter_button.clicked.connect(self._choose_chapter)
-        chapter_row.addWidget(self.chapter_button, 1)
-        self.previous_chapter_button = self._tool_button(
-            "readerPreviousChapterButton",
-            "上一章",
-            "arrow-left",
-            self._previous_chapter,
-        )
-        chapter_row.addWidget(self.previous_chapter_button)
-        self.next_chapter_button = self._tool_button(
-            "readerNextChapterButton",
-            "下一章",
-            "arrow-right",
-            self._next_chapter,
-        )
-        chapter_row.addWidget(self.next_chapter_button)
-        root.addLayout(chapter_row)
+        sidebar.addWidget(self.chapter_button)
 
-        progress_row = QHBoxLayout()
-        progress_row.setSpacing(8)
-        self.previous_page_button = self._tool_button(
-            "readerPreviousPageButton",
-            "上一页",
-            "arrow-left",
-            self._previous_page,
-        )
-        progress_row.addWidget(self.previous_page_button)
-        self.page_slider = QSlider(
-            Qt.Orientation.Horizontal,
-            self,
-        )
-        self.page_slider.setObjectName("readerPageSlider")
-        self.page_slider.setTracking(False)
-        self.page_slider.setRange(1, 1)
-        self.page_slider.sliderMoved.connect(self._preview_slider)
-        self.page_slider.sliderReleased.connect(self._apply_slider)
-        progress_row.addWidget(self.page_slider, 1)
-        self.page_label = QLabel("0 / 0", self)
-        self.page_label.setObjectName("readerPageLabel")
-        self.page_label.setMinimumWidth(76)
-        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        progress_row.addWidget(self.page_label)
-        self.next_page_button = self._tool_button(
-            "readerNextPageButton",
-            "下一页",
-            "arrow-right",
-            self._next_page,
-        )
-        progress_row.addWidget(self.next_page_button)
-        root.addLayout(progress_row)
-
-        action_row = QHBoxLayout()
-        action_row.setSpacing(8)
-        self.error_banner = QLabel(self)
-        self.error_banner.setObjectName("readerErrorBanner")
-        self.error_banner.setWordWrap(True)
-        self.error_banner.hide()
-        action_row.addWidget(self.error_banner, 1)
-        self.layout_button = QToolButton(self)
+        self.layout_button = QToolButton(self.sidebar)
         self.layout_button.setObjectName("readerLayoutButton")
         self.layout_button.setIcon(svg_icon("image"))
-        self.layout_button.setToolTip("切换在线阅读的图片缩放布局")
+        self.layout_button.setToolTip("切换阅读图片的缩放布局")
         self.layout_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
@@ -206,11 +177,11 @@ class ReaderPage(QWidget):
             self._layout_action_group.addAction(action)
             self._layout_actions[mode] = action
         self.layout_button.setMenu(self.layout_menu)
-        action_row.addWidget(self.layout_button)
-        self.zoom_button = QToolButton(self)
+        sidebar.addWidget(self.layout_button)
+        self.zoom_button = QToolButton(self.sidebar)
         self.zoom_button.setObjectName("readerZoomButton")
         self.zoom_button.setIcon(svg_icon("search"))
-        self.zoom_button.setToolTip("切换在线阅读的图片缩放比例")
+        self.zoom_button.setToolTip("切换阅读图片的缩放比例")
         self.zoom_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
@@ -235,33 +206,91 @@ class ReaderPage(QWidget):
             self._zoom_action_group.addAction(action)
             self._zoom_actions[percent] = action
         self.zoom_button.setMenu(self.zoom_menu)
-        action_row.addWidget(self.zoom_button)
+        sidebar.addWidget(self.zoom_button)
+
         self.retry_button = self._tool_button(
             "readerRetryButton",
             "重试失败页",
             "refresh",
             self._retry_failed,
         )
-        action_row.addWidget(self.retry_button)
+        sidebar.addWidget(self.retry_button)
         self.download_button = self._tool_button(
             "readerDownloadButton",
             "下载当前章节",
             "download",
             self._download_current,
         )
-        action_row.addWidget(self.download_button)
-        root.addLayout(action_row)
+        sidebar.addWidget(self.download_button)
 
-        rule = QFrame(self)
-        rule.setObjectName("readerRule")
-        rule.setFrameShape(QFrame.Shape.HLine)
-        rule.setFixedHeight(1)
-        root.addWidget(rule)
+        self.error_banner = QLabel(self.sidebar)
+        self.error_banner.setObjectName("readerErrorBanner")
+        self.error_banner.setWordWrap(True)
+        self.error_banner.hide()
+        sidebar.addWidget(self.error_banner)
 
-        self.view = ReaderGraphicsView(self)
+        self.page_label = QLabel("0 / 0", self.sidebar)
+        self.page_label.setObjectName("readerPageLabel")
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sidebar.addWidget(self.page_label)
+
+        self.page_slider = QSlider(
+            Qt.Orientation.Vertical,
+            self.sidebar,
+        )
+        self.page_slider.setObjectName("readerPageSlider")
+        self.page_slider.setTracking(False)
+        self.page_slider.setInvertedAppearance(True)
+        self.page_slider.setInvertedControls(True)
+        self.page_slider.setRange(1, 1)
+        self.page_slider.sliderMoved.connect(self._preview_slider)
+        self.page_slider.sliderReleased.connect(self._apply_slider)
+        sidebar.addWidget(
+            self.page_slider,
+            1,
+            Qt.AlignmentFlag.AlignHCenter,
+        )
+
+        chapter_navigation = QHBoxLayout()
+        chapter_navigation.setSpacing(6)
+        self.previous_chapter_button = self._tool_button(
+            "readerPreviousChapterButton",
+            "上一章",
+            "arrow-left",
+            self._previous_chapter,
+        )
+        chapter_navigation.addWidget(self.previous_chapter_button, 1)
+        self.next_chapter_button = self._tool_button(
+            "readerNextChapterButton",
+            "下一章",
+            "arrow-right",
+            self._next_chapter,
+        )
+        chapter_navigation.addWidget(self.next_chapter_button, 1)
+        sidebar.addLayout(chapter_navigation)
+
+        page_navigation = QHBoxLayout()
+        page_navigation.setSpacing(6)
+        self.previous_page_button = self._tool_button(
+            "readerPreviousPageButton",
+            "上一页",
+            "arrow-left",
+            self._previous_page,
+        )
+        page_navigation.addWidget(self.previous_page_button, 1)
+        self.next_page_button = self._tool_button(
+            "readerNextPageButton",
+            "下一页",
+            "arrow-right",
+            self._next_page,
+        )
+        page_navigation.addWidget(self.next_page_button, 1)
+        sidebar.addLayout(page_navigation)
+
+        body.addWidget(self.sidebar)
+        root.addWidget(self.body_widget, 1)
         self._select_layout_mode(self._layout_mode, persist=False)
         self._select_zoom_percent(self._zoom_percent, persist=False)
-        root.addWidget(self.view, 1)
 
         self.view.viewport_changed.connect(self._on_viewport)
         self.view.retry_requested.connect(self._retry_page)
