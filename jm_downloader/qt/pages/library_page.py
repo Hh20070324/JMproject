@@ -180,11 +180,12 @@ class LibraryPage(SectionPage):
             button.setProperty("filter", value)
             button.setText(text)
             button.setCheckable(True)
-            button.setFixedSize(68, 34)
+            button.setFixedHeight(34)
             button.clicked.connect(self._apply_filter)
             self._filter_group.addButton(button, index)
             self._filter_buttons[value] = button
             filter_layout.addWidget(button)
+        self._resize_filter_buttons()
         self._filter_buttons["all"].setChecked(True)
 
         self.sort_button = QToolButton(self.toolbar)
@@ -377,6 +378,28 @@ class LibraryPage(SectionPage):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         QTimer.singleShot(0, self._reflow_toolbar)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._resize_filter_buttons()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.FontChange,
+            QEvent.Type.ApplicationFontChange,
+            QEvent.Type.StyleChange,
+        ):
+            self._resize_filter_buttons()
+
+    def _resize_filter_buttons(self) -> None:
+        buttons = getattr(self, "_filter_buttons", {})
+        for _value, button in buttons.items():
+            width = max(
+                52,
+                button.fontMetrics().horizontalAdvance(button.text()) + 28,
+            )
+            button.setFixedSize(width, 34)
 
     def _reflow_toolbar(self) -> None:
         compact = self.content.width() < 700

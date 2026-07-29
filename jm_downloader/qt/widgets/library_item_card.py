@@ -120,7 +120,7 @@ class LibraryItemCard(QFrame):
             actions,
             "libraryReadButton",
             "在应用内阅读本地完整章节",
-            svg_icon("image"),
+            svg_icon("book"),
         )
         self.read_button.clicked.connect(
             lambda: self.read_requested.emit(self.item.album_id)
@@ -153,7 +153,7 @@ class LibraryItemCard(QFrame):
             actions,
             "libraryChapterButton",
             "管理章节",
-            svg_icon("folder"),
+            svg_icon("menu"),
         )
         self.chapter_button.clicked.connect(
             lambda: self.chapter_action_requested.emit(
@@ -293,6 +293,13 @@ class LibraryItemCard(QFrame):
             "识别章节（可能访问网络）"
             if item.layout is LibraryLayout.LEGACY
             else "管理章节"
+        )
+        self.chapter_button.setIcon(
+            svg_icon(
+                "scan"
+                if item.layout is LibraryLayout.LEGACY
+                else "menu"
+            )
         )
         self._sync_activity()
         if not item.has_images:
