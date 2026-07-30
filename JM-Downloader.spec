@@ -19,6 +19,10 @@ a = Analysis(
             "jm_downloader/qt/resources",
         ),
         (
+            "jm_downloader/qt/resources/app.ico",
+            "jm_downloader/qt/resources",
+        ),
+        (
             "jm_downloader/qt/resources/icons/*.svg",
             "jm_downloader/qt/resources/icons",
         ),
@@ -63,6 +67,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version="version_info.txt",
+    icon="jm_downloader/qt/resources/app.ico",
 )
 
 debug_exe = EXE(
@@ -82,6 +87,7 @@ debug_exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version="version_info_debug.txt",
+    icon="jm_downloader/qt/resources/app.ico",
 )
 
 coll = COLLECT(

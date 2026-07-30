@@ -440,6 +440,7 @@ try
     Assert-BundledFile "Qt6Widgets.dll"
     Assert-BundledFile "styles_light.qss"
     Assert-BundledFile "styles_dark.qss"
+    Assert-BundledFile "app.ico"
     Assert-BundledPath "_internal\curl_cffi\_wrapper.pyd"
     Assert-BundledPath "_internal\certifi\cacert.pem"
     Assert-BundledPath "_internal\yaml\_yaml*.pyd"

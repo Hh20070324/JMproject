@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSizePolicy,
     QStackedWidget,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -100,9 +99,8 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             icon = app.windowIcon()
-            if icon.isNull():
-                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
-            self.setWindowIcon(icon)
+            if not icon.isNull():
+                self.setWindowIcon(icon)
 
         root = QWidget(self)
         root.setObjectName("windowRoot")

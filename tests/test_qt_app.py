@@ -8,6 +8,7 @@ if os.name != "nt":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from jm_downloader.desktop_runtime import WINDOW_TITLE
@@ -30,6 +31,7 @@ class QtMainWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(["qt-tests"])
+        cls.app.setWindowIcon(QIcon(str(resource_path("app.ico"))))
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

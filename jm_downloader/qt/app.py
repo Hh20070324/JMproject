@@ -9,8 +9,8 @@ import tempfile
 import traceback
 
 from PySide6.QtCore import QMetaObject, QTimer, Qt
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
+from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ..desktop_runtime import SingleInstance, configure_logging
 from ..account import AccountError, AccountService
@@ -188,9 +188,11 @@ def run_qt_app(
             _show_startup_error(str(error))
             return 1
 
-        app.setWindowIcon(
-            app.style().standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
-        )
+        application_icon = QIcon(str(resource_path("app.ico")))
+        if application_icon.isNull():
+            logger.warning("Application icon could not be loaded")
+        else:
+            app.setWindowIcon(application_icon)
 
         theme_manager = ThemeManager(settings.theme)
         theme_manager.apply()
