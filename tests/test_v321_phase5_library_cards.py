@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from jm_downloader.models import LibraryItem, LibraryLayout
+from jm_downloader.qt.theme import ThemeManager
 from jm_downloader.qt.widgets.library_item_card import LibraryItemCard
 
 
@@ -158,14 +159,29 @@ class V321LibraryCardTests(unittest.TestCase):
         for filename in ("styles_light.qss", "styles_dark.qss"):
             stylesheet = (resources / filename).read_text(encoding="utf-8")
             for selector in (
-                "QToolButton#libraryReadButton {",
-                "QToolButton#libraryReadButton:hover {",
-                "QToolButton#libraryReadButton:pressed {",
-                "QToolButton#libraryReadButton:focus {",
-                "QToolButton#libraryReadButton:disabled {",
+                "QWidget#libraryActions QToolButton#libraryReadButton {",
+                "QWidget#libraryActions QToolButton#libraryReadButton:hover {",
+                "QWidget#libraryActions QToolButton#libraryReadButton:pressed {",
+                "QWidget#libraryActions QToolButton#libraryReadButton:focus {",
+                "QWidget#libraryActions QToolButton#libraryReadButton:disabled {",
             ):
                 self.assertIn(selector, stylesheet)
             self.assertIn("QWidget#libraryPrimaryActions", stylesheet)
+
+    def test_light_theme_complete_read_has_a_visible_green_background(self):
+        ThemeManager("light").apply()
+        self.card.style().unpolish(self.card)
+        self.card.style().polish(self.card)
+        self.app.processEvents()
+
+        button = self.card.read_button
+        color = button.grab().toImage().pixelColor(
+            8,
+            button.height() // 2,
+        )
+
+        self.assertGreater(color.green(), color.red() + 30)
+        self.assertGreater(color.green(), color.blue() + 20)
 
 
 if __name__ == "__main__":

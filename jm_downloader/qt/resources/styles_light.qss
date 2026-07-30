@@ -918,28 +918,28 @@ QWidget#libraryPrimaryActions QToolButton {
     padding: 0 6px;
 }
 
-QToolButton#libraryReadButton {
+QWidget#libraryActions QToolButton#libraryReadButton {
     background: #2e7d57;
     border-color: #2e7d57;
     color: #ffffff;
     font-weight: 600;
 }
 
-QToolButton#libraryReadButton:hover {
+QWidget#libraryActions QToolButton#libraryReadButton:hover {
     background: #256b49;
     border-color: #256b49;
 }
 
-QToolButton#libraryReadButton:pressed {
+QWidget#libraryActions QToolButton#libraryReadButton:pressed {
     background: #1f5c3f;
     border-color: #1f5c3f;
 }
 
-QToolButton#libraryReadButton:focus {
+QWidget#libraryActions QToolButton#libraryReadButton:focus {
     border: 2px solid #194b34;
 }
 
-QToolButton#libraryReadButton:disabled {
+QWidget#libraryActions QToolButton#libraryReadButton:disabled {
     background: #dfe5e1;
     border-color: #d0d8d3;
     color: #8a948e;
