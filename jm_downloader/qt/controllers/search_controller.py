@@ -31,6 +31,7 @@ class _SearchJob:
     generation: int
     request: SearchRequest
     is_page_change: bool
+    query_engine: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +109,13 @@ def _metadata_worker(mailbox: _MetadataMailbox) -> None:
             return
 
         try:
-            snapshot = mailbox.service.search(job.request)
+            if job.query_engine is None:
+                snapshot = mailbox.service.search(job.request)
+            else:
+                snapshot = mailbox.service.search(
+                    job.request,
+                    query_engine=job.query_engine,
+                )
             if not isinstance(snapshot, SearchPageSnapshot):
                 raise SearchResponseError()
             if snapshot.request != job.request:
@@ -283,7 +290,18 @@ class SearchController(QObject):
             return None
 
         self._generation += 1
-        job = _SearchJob(self._generation, request, bool(is_page_change))
+        capture_engine = getattr(
+            self.service,
+            "capture_query_engine",
+            None,
+        )
+        query_engine = capture_engine() if callable(capture_engine) else None
+        job = _SearchJob(
+            self._generation,
+            request,
+            bool(is_page_change),
+            query_engine,
+        )
         if not self._mailbox.submit(job):
             return None
         self._last_job = job

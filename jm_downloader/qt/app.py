@@ -244,6 +244,7 @@ def run_qt_app(
         search_service = SearchService(
             paths=paths,
             api_route_provider=api_route_state.get,
+            query_engine_provider=query_engine_state.get,
         )
         search_controller = SearchController(
             search_service,

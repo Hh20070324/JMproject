@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 from collections.abc import Callable, Mapping
@@ -7,7 +8,7 @@ import jmcomic
 from curl_cffi.requests.exceptions import RequestException
 
 from .jmcomic_client import serialized_client_construction
-from .option_config import apply_api_route
+from .option_config import apply_api_route, validate_query_engine
 from .jmcomic_logging import install_safe_jmcomic_logging
 from .models import (
     ChapterCatalogSnapshot,
@@ -153,6 +154,34 @@ def _build_search_client(option_file: Path, api_route: str = "auto"):
             raise SearchUnavailable() from None
 
 
+def _build_async_search_client(
+    option_file: Path,
+    api_route: str = "auto",
+):
+    install_safe_jmcomic_logging()
+    with serialized_client_construction():
+        try:
+            option = jmcomic.create_option_by_file(str(option_file))
+            apply_api_route(option, api_route)
+            option.client.retry_times = 0
+            option.client.timeout = SEARCH_TIMEOUT_SECONDS
+            domain_list = None if api_route == "auto" else (api_route,)
+            return option.new_jm_async_client(
+                domain_list=domain_list,
+                max_clients=1,
+            )
+        except SearchError:
+            raise
+        except Exception as error:
+            LOGGER.warning(
+                "Async search client creation failed: category=%s "
+                "error_type=%s",
+                SearchUnavailable.code,
+                type(error).__name__,
+            )
+            raise SearchUnavailable() from None
+
+
 def _invalidate_api_domain_cache() -> None:
     with serialized_client_construction():
         jmcomic.JmModuleConfig.DOMAIN_API_UPDATED_LIST = None
@@ -166,11 +195,22 @@ class SearchService:
         cover_url_factory: Callable[[str], str] | None = None,
         max_cover_bytes: int = MAX_COVER_BYTES,
         api_route_provider: Callable[[], str] | None = None,
+        query_engine_provider: Callable[[], str] | None = None,
+        async_client_factory: Callable[[str], object] | None = None,
     ):
         if client_factory is not None and not callable(client_factory):
             raise TypeError("client_factory must be callable")
         if cover_url_factory is not None and not callable(cover_url_factory):
             raise TypeError("cover_url_factory must be callable")
+        if (
+            query_engine_provider is not None
+            and not callable(query_engine_provider)
+        ):
+            raise TypeError("query_engine_provider must be callable")
+        if async_client_factory is not None and not callable(
+            async_client_factory
+        ):
+            raise TypeError("async_client_factory must be callable")
         if type(max_cover_bytes) is not int or max_cover_bytes < 1:
             raise ValueError("max_cover_bytes must be a positive integer")
 
@@ -179,6 +219,7 @@ class SearchService:
         self.max_cover_bytes = max_cover_bytes
         self._uses_default_client_factory = client_factory is None
         self._api_route_provider = api_route_provider
+        self._query_engine_provider = query_engine_provider
         self._client_factory = client_factory or (
             lambda: _build_search_client(
                 self.paths.option_file,
@@ -195,10 +236,42 @@ class SearchService:
                 size="_3x4",
             )
         )
+        self._async_client_factory = async_client_factory or (
+            lambda route: _build_async_search_client(
+                self.paths.option_file,
+                route,
+            )
+        )
         self._thread_state = threading.local()
 
-    def search(self, request: SearchRequest) -> SearchPageSnapshot:
+    def capture_query_engine(self) -> str:
+        value = (
+            self._query_engine_provider()
+            if self._query_engine_provider is not None
+            else "sync"
+        )
+        return validate_query_engine(value)
+
+    def search(
+        self,
+        request: SearchRequest,
+        *,
+        query_engine: str | None = None,
+    ) -> SearchPageSnapshot:
         normalized = normalize_search_request(request)
+        engine = validate_query_engine(
+            query_engine
+            if query_engine is not None
+            else self.capture_query_engine()
+        )
+        if engine == "async":
+            return asyncio.run(self._search_async(normalized))
+        return self._search_sync(normalized)
+
+    def _search_sync(
+        self,
+        normalized: SearchRequest,
+    ) -> SearchPageSnapshot:
         client = self._get_client_for_operation("search")
 
         if normalized.mode is SearchMode.EXACT_ID:
@@ -293,12 +366,29 @@ class SearchService:
         except Exception as error:
             self._raise_response_error(error, "cover")
 
-    def fetch_chapters(self, album_id: str) -> ChapterCatalogSnapshot:
+    def fetch_chapters(
+        self,
+        album_id: str,
+        *,
+        query_engine: str | None = None,
+    ) -> ChapterCatalogSnapshot:
         try:
             normalized_id = _normalize_search_album_id(album_id)
         except InvalidAlbumId as error:
             raise SearchValidationError(str(error)) from None
+        engine = validate_query_engine(
+            query_engine
+            if query_engine is not None
+            else self.capture_query_engine()
+        )
+        if engine == "async":
+            return asyncio.run(self._fetch_chapters_async(normalized_id))
+        return self._fetch_chapters_sync(normalized_id)
 
+    def _fetch_chapters_sync(
+        self,
+        normalized_id: str,
+    ) -> ChapterCatalogSnapshot:
         client = self._get_client_for_operation("chapters")
         try:
             album = client.get_album_detail(normalized_id)
@@ -319,6 +409,83 @@ class SearchService:
             raise
         except Exception as error:
             self._raise_response_error(error, "chapters")
+
+    async def _search_async(
+        self,
+        normalized: SearchRequest,
+    ) -> SearchPageSnapshot:
+        async def request(client):
+            if normalized.mode is SearchMode.EXACT_ID:
+                album = await client.get_album_detail(normalized.query)
+                item = _snapshot_album(
+                    album,
+                    expected_id=normalized.query,
+                    include_chapter_catalog=True,
+                )
+                return SearchPageSnapshot(normalized, 1, 1, (item,))
+            method_name = {
+                SearchMode.GENERAL: "search_site",
+                SearchMode.AUTHOR: "search_author",
+                SearchMode.TAG: "search_tag",
+            }[normalized.mode]
+            page = await getattr(client, method_name)(
+                normalized.query,
+                normalized.page,
+            )
+            return _snapshot_page(normalized, page)
+
+        return await self._run_async_operation("search", request)
+
+    async def _fetch_chapters_async(
+        self,
+        normalized_id: str,
+    ) -> ChapterCatalogSnapshot:
+        async def request(client):
+            album = await client.get_album_detail(normalized_id)
+            return _snapshot_chapter_catalog(
+                album,
+                expected_id=normalized_id,
+            )
+
+        return await self._run_async_operation("chapters", request)
+
+    async def _run_async_operation(self, operation: str, request):
+        route = (
+            self._api_route_provider()
+            if self._api_route_provider is not None
+            else "auto"
+        )
+        client = None
+        try:
+            install_safe_jmcomic_logging()
+            client = self._async_client_factory(route)
+            if client is None:
+                raise TypeError("empty async client")
+            await client.setup()
+            return await request(client)
+        except SearchError as error:
+            raise _safe_error_copy(error) from None
+        except Exception as error:
+            mapped = _map_backend_error(error)
+            LOGGER.warning(
+                "Async search operation failed: operation=%s category=%s "
+                "error_type=%s",
+                operation,
+                mapped.code,
+                type(error).__name__,
+            )
+            raise mapped from None
+        finally:
+            if client is not None:
+                try:
+                    await client.close()
+                except BaseException as cleanup_error:
+                    LOGGER.warning(
+                        "Async search client cleanup failed: operation=%s "
+                        "error_type=%s",
+                        operation,
+                        type(cleanup_error).__name__,
+                    )
 
     def _get_client_for_operation(self, operation: str):
         route = (

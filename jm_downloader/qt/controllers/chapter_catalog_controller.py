@@ -27,6 +27,7 @@ class _ChapterJob:
     request_id: int
     album_id: str
     cached_catalog: ChapterCatalogSnapshot | None = None
+    query_engine: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +95,14 @@ def _chapter_worker(mailbox: _ChapterMailbox) -> None:
             catalog = (
                 job.cached_catalog
                 if job.cached_catalog is not None
-                else mailbox.service.fetch_chapters(job.album_id)
+                else (
+                    mailbox.service.fetch_chapters(job.album_id)
+                    if job.query_engine is None
+                    else mailbox.service.fetch_chapters(
+                        job.album_id,
+                        query_engine=job.query_engine,
+                    )
+                )
             )
             if (
                 not isinstance(catalog, ChapterCatalogSnapshot)
@@ -224,7 +232,17 @@ class ChapterCatalogController(QObject):
                 return None
             return request_id
 
-        job = _ChapterJob(request_id, album_id)
+        capture_engine = getattr(
+            self.service,
+            "capture_query_engine",
+            None,
+        )
+        query_engine = capture_engine() if callable(capture_engine) else None
+        job = _ChapterJob(
+            request_id,
+            album_id,
+            query_engine=query_engine,
+        )
         self._inflight[album_id] = request_id
         if not self._mailbox.submit(job):
             self._inflight.pop(album_id, None)
