@@ -51,6 +51,7 @@ class _FavoritesJob:
     folder_id: str | None = None
     folder_name: str | None = None
     order_by: str = "mr"
+    query_engine: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +250,7 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                     job.operation,
                     lambda progress: mailbox.publish_progress(job, progress),
                     order_by=job.order_by,
+                    query_engine=job.query_engine,
                 )
             elif job.command == "add":
                 album_id = mailbox.service.add_album(
@@ -274,6 +276,7 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                     job.operation,
                     lambda progress: mailbox.publish_progress(job, progress),
                     order_by=job.order_by,
+                    query_engine=job.query_engine,
                 )
             elif job.command == "create_folder":
                 mutation_value = mailbox.service.create_folder(
@@ -285,6 +288,7 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                     job.operation,
                     lambda progress: mailbox.publish_progress(job, progress),
                     order_by=job.order_by,
+                    query_engine=job.query_engine,
                 )
             elif job.command == "delete_folder":
                 mutation_value = mailbox.service.delete_folder(
@@ -296,6 +300,7 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                     job.operation,
                     lambda progress: mailbox.publish_progress(job, progress),
                     order_by=job.order_by,
+                    query_engine=job.query_engine,
                 )
             elif job.command == "move_album":
                 mutation_value = mailbox.service.move_album(
@@ -308,6 +313,7 @@ def _favorites_worker(mailbox: _FavoritesMailbox) -> None:
                     job.operation,
                     lambda progress: mailbox.publish_progress(job, progress),
                     order_by=job.order_by,
+                    query_engine=job.query_engine,
                 )
             else:
                 raise FavoritesError()
@@ -640,6 +646,12 @@ class FavoritesController(QObject):
         if self._disposed or self._busy:
             return None
         operation = self.service.start_operation()
+        capture_engine = getattr(
+            self.service,
+            "capture_query_engine",
+            None,
+        )
+        query_engine = capture_engine() if callable(capture_engine) else None
         self._generation += 1
         job = _FavoritesJob(
             self._generation,
@@ -649,6 +661,7 @@ class FavoritesController(QObject):
             folder_id,
             folder_name,
             order_by,
+            query_engine,
         )
         if not self._mailbox.submit(job):
             return None

@@ -272,6 +272,7 @@ def run_qt_app(
                 account_service,
                 paths=paths,
                 api_route_provider=api_route_state.get,
+                query_engine_provider=query_engine_state.get,
             ),
             account_controller,
         )

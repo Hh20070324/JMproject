@@ -1,7 +1,9 @@
+import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+from pathlib import Path
 import threading
 import unicodedata
 
@@ -11,16 +13,20 @@ from curl_cffi.requests.exceptions import RequestException
 from .account import (
     AccountLocalDataError,
     AccountOperationCancelled,
+    AccountResponseError,
     AccountService,
     AccountSession,
+    AccountStorageError,
     build_account_client,
 )
+from .jmcomic_client import serialized_client_construction
 from .models import (
     FavoriteFolderSnapshot,
     FavoriteItemSnapshot,
     FavoritesSnapshot,
     FavoritesSyncProgress,
 )
+from .option_config import apply_api_route, validate_query_engine
 from .protected_store import (
     ProtectedStore,
     ProtectedStoreError,
@@ -51,6 +57,7 @@ MAX_ITEMS_PER_PAGE = 1_000
 MAX_TITLE_LENGTH = 4_096
 MAX_METADATA_VALUE_LENGTH = 512
 MAX_METADATA_VALUES = 64
+FAVORITES_TIMEOUT_SECONDS = 15
 
 
 class FavoritesError(Exception):
@@ -274,6 +281,24 @@ class FavoriteCacheStore:
             raise FavoritesStorageError("无法删除 favorites.dat") from None
 
 
+def _build_async_favorites_client(
+    option_file: Path,
+    cookies: Mapping[str, str],
+    api_route: str,
+):
+    with serialized_client_construction():
+        option = jmcomic.create_option_by_file(str(option_file))
+        apply_api_route(option, api_route)
+        option.client.retry_times = 0
+        option.client.timeout = FAVORITES_TIMEOUT_SECONDS
+        domain_list = None if api_route == "auto" else (api_route,)
+        return option.new_jm_async_client(
+            domain_list=domain_list,
+            max_clients=1,
+            cookies=dict(cookies),
+        )
+
+
 class FavoritesService:
     def __init__(
         self,
@@ -283,6 +308,9 @@ class FavoritesService:
         client_factory: Callable[[Mapping[str, str]], object] | None = None,
         clock: Callable[[], datetime] | None = None,
         api_route_provider: Callable[[], str] | None = None,
+        query_engine_provider: Callable[[], str] | None = None,
+        async_client_factory: Callable[[Mapping[str, str], str], object]
+        | None = None,
     ):
         if not isinstance(account_service, AccountService):
             raise TypeError("account_service must be AccountService")
@@ -292,6 +320,15 @@ class FavoritesService:
             raise TypeError("client_factory must be callable")
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
+        if (
+            query_engine_provider is not None
+            and not callable(query_engine_provider)
+        ):
+            raise TypeError("query_engine_provider must be callable")
+        if async_client_factory is not None and not callable(
+            async_client_factory
+        ):
+            raise TypeError("async_client_factory must be callable")
         self.account_service = account_service
         self.paths = paths
         self.cache_store = cache_store or FavoriteCacheStore.create(paths)
@@ -307,6 +344,15 @@ class FavoritesService:
             )
         )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._api_route_provider = api_route_provider
+        self._query_engine_provider = query_engine_provider
+        self._async_client_factory = async_client_factory or (
+            lambda cookies, route: _build_async_favorites_client(
+                self.paths.option_file,
+                cookies,
+                route,
+            )
+        )
         self._lock = threading.RLock()
         self._operation_generation = 0
         self._snapshot: FavoritesSnapshot | None = None
@@ -349,23 +395,52 @@ class FavoritesService:
         progress_callback: Callable[[FavoritesSyncProgress], None] | None = None,
         *,
         order_by: str = "mr",
+        query_engine: str | None = None,
     ) -> FavoritesSnapshot:
         if progress_callback is not None and not callable(progress_callback):
             raise TypeError("progress_callback must be callable")
         order_by = _favorites_order_by(order_by)
+        engine = validate_query_engine(
+            query_engine
+            if query_engine is not None
+            else self.capture_query_engine()
+        )
         session = self._require_session()
         old_cache = self.cache_store.load(session.uid)
         self._ensure_current_session(operation, session)
 
         try:
-            client = self._client_factory(session.cookie_dict())
-            folders = self._fetch_all(
-                client,
-                session,
-                operation,
-                progress_callback,
-                order_by,
-            )
+            if engine == "async":
+                folders, refreshed_cookies = asyncio.run(
+                    self._fetch_all_with_async_client(
+                        session,
+                        operation,
+                        progress_callback,
+                        order_by,
+                    )
+                )
+                try:
+                    session = self.account_service.update_session_cookies(
+                        session,
+                        refreshed_cookies,
+                    )
+                except AccountOperationCancelled:
+                    raise FavoritesOperationCancelled() from None
+                except AccountStorageError:
+                    raise FavoritesStorageError(
+                        "无法保存续期后的登录信息"
+                    ) from None
+                except AccountResponseError:
+                    raise FavoritesResponseError() from None
+            else:
+                client = self._client_factory(session.cookie_dict())
+                folders = self._fetch_all(
+                    client,
+                    session,
+                    operation,
+                    progress_callback,
+                    order_by,
+                )
         except FavoritesError as error:
             self._handle_sync_error(error, session)
             raise
@@ -407,6 +482,14 @@ class FavoritesService:
                     raise FavoritesOperationCancelled() from None
         except (FavoritesOperationCancelled, AccountOperationCancelled):
             raise FavoritesOperationCancelled() from None
+
+    def capture_query_engine(self) -> str:
+        value = (
+            self._query_engine_provider()
+            if self._query_engine_provider is not None
+            else "sync"
+        )
+        return validate_query_engine(value)
 
     def add_album(self, album_id: str, operation: int) -> str:
         album_id = _normalize_add_album_id(album_id)
@@ -669,6 +752,159 @@ class FavoritesService:
             self._ensure_current_session(operation, session)
             if response is None:
                 response = client.favorite_folder(
+                    page=requested_page,
+                    order_by=order_by,
+                    folder_id=folder_id,
+                    username="",
+                )
+            page_items, total, page_count = _adapt_page(response)
+            if expected_total is None:
+                expected_total = total
+                expected_page_count = page_count
+            elif total != expected_total or page_count != expected_page_count:
+                raise FavoritesResponseError()
+            if page_count and requested_page > page_count:
+                raise FavoritesResponseError()
+            for item in page_items:
+                if item.album_id in seen_ids:
+                    raise FavoritesResponseError()
+                seen_ids.add(item.album_id)
+                items.append(item)
+            if len(items) > total:
+                raise FavoritesResponseError()
+            self._emit_progress(
+                progress_callback,
+                FavoritesSyncProgress(
+                    folder_index,
+                    folder_count,
+                    folder_name,
+                    requested_page,
+                    page_count,
+                    len(items),
+                    total,
+                ),
+            )
+            if page_count == 0 or requested_page >= page_count:
+                break
+            requested_page += 1
+            response = None
+        if expected_total is None or len(items) != expected_total:
+            raise FavoritesResponseError()
+        return FavoriteFolderSnapshot(folder_id, folder_name, tuple(items))
+
+    async def _fetch_all_with_async_client(
+        self,
+        session: AccountSession,
+        operation: int,
+        progress_callback: Callable[[FavoritesSyncProgress], None] | None,
+        order_by: str,
+    ) -> tuple[
+        tuple[FavoriteFolderSnapshot, ...],
+        dict[str, str],
+    ]:
+        route = (
+            self._api_route_provider()
+            if self._api_route_provider is not None
+            else "auto"
+        )
+        client = None
+        try:
+            client = self._async_client_factory(
+                session.cookie_dict(),
+                route,
+            )
+            if client is None:
+                raise TypeError("empty async favorites client")
+            await client.setup()
+            folders = await self._fetch_all_async(
+                client,
+                session,
+                operation,
+                progress_callback,
+                order_by,
+            )
+            cookies = _extract_async_client_cookies(client)
+            return folders, cookies
+        finally:
+            if client is not None:
+                try:
+                    await client.close()
+                except BaseException as cleanup_error:
+                    LOGGER.warning(
+                        "Async favorites client cleanup failed: "
+                        "error_type=%s",
+                        type(cleanup_error).__name__,
+                    )
+
+    async def _fetch_all_async(
+        self,
+        client,
+        session: AccountSession,
+        operation: int,
+        progress_callback: Callable[[FavoritesSyncProgress], None] | None,
+        order_by: str,
+    ) -> tuple[FavoriteFolderSnapshot, ...]:
+        self._ensure_current_session(operation, session)
+        first_page = await client.favorite_folder(
+            page=1,
+            order_by=order_by,
+            folder_id=ALL_FAVORITES_FOLDER_ID,
+            username="",
+        )
+        folder_specs = _folder_specs(first_page)
+        folder_count = len(folder_specs)
+        folders = []
+        total_items = 0
+        for index, (folder_id, folder_name) in enumerate(
+            folder_specs,
+            start=1,
+        ):
+            self._ensure_current_session(operation, session)
+            folder = await self._fetch_folder_async(
+                client,
+                session,
+                operation,
+                folder_id,
+                folder_name,
+                index,
+                folder_count,
+                (
+                    first_page
+                    if folder_id == ALL_FAVORITES_FOLDER_ID
+                    else None
+                ),
+                progress_callback,
+                order_by,
+            )
+            total_items += len(folder.items)
+            if total_items > MAX_TOTAL_ITEMS:
+                raise FavoritesResponseError("收藏数量超过安全上限")
+            folders.append(folder)
+        return tuple(folders)
+
+    async def _fetch_folder_async(
+        self,
+        client,
+        session: AccountSession,
+        operation: int,
+        folder_id: str,
+        folder_name: str,
+        folder_index: int,
+        folder_count: int,
+        first_page,
+        progress_callback: Callable[[FavoritesSyncProgress], None] | None,
+        order_by: str,
+    ) -> FavoriteFolderSnapshot:
+        requested_page = 1
+        response = first_page
+        expected_total = None
+        expected_page_count = None
+        items = []
+        seen_ids = set()
+        while True:
+            self._ensure_current_session(operation, session)
+            if response is None:
+                response = await client.favorite_folder(
                     page=requested_page,
                     order_by=order_by,
                     folder_id=folder_id,
@@ -1252,6 +1488,19 @@ def _invoke_favorite_folder_mutation(
         data=dict(data),
     )
     client.require_resp_status_ok(response)
+
+
+def _extract_async_client_cookies(client) -> dict[str, str]:
+    try:
+        session = client._session
+        jar = session.cookies
+        getter = getattr(jar, "get_dict", None)
+        raw = getter() if callable(getter) else dict(jar)
+        if not isinstance(raw, Mapping):
+            raise TypeError("cookie jar did not return a mapping")
+        return dict(raw)
+    except Exception:
+        raise FavoritesResponseError() from None
 
 
 def _map_mutation_error(error: Exception) -> FavoritesError:

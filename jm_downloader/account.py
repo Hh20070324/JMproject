@@ -387,6 +387,55 @@ class AccountService:
             )
             return self._snapshot
 
+    def update_session_cookies(
+        self,
+        expected: AccountSession,
+        cookies: Mapping[str, str],
+    ) -> AccountSession:
+        if not isinstance(expected, AccountSession):
+            raise TypeError("expected must be AccountSession")
+        try:
+            validated = _filter_login_cookies(cookies)
+        except AccountValidationError:
+            raise AccountResponseError() from None
+        if validated == expected.cookies:
+            return expected
+
+        updated = AccountSession(
+            expected.uid,
+            expected.username,
+            validated,
+            expected.last_verified_at_utc,
+        )
+        with self._protected_data_lock:
+            with self._lock:
+                if self._session != expected or self._snapshot.status not in {
+                    AccountStatus.SAVED_SESSION,
+                    AccountStatus.SIGNED_IN,
+                }:
+                    raise AccountOperationCancelled()
+            self.account_store.save(updated)
+            with self._lock:
+                if self._session != expected or self._snapshot.status not in {
+                    AccountStatus.SAVED_SESSION,
+                    AccountStatus.SIGNED_IN,
+                }:
+                    try:
+                        self.account_store.save(expected)
+                    except AccountError:
+                        self._session = None
+                        self._snapshot = AccountSnapshot(
+                            AccountStatus.LOCAL_DATA_UNREADABLE
+                        )
+                        raise AccountStorageError() from None
+                    raise AccountOperationCancelled()
+                self._session = updated
+                self._snapshot = _session_snapshot(
+                    updated,
+                    self._snapshot.status,
+                )
+                return updated
+
     def expire_session(self, expected: AccountSession) -> AccountSnapshot:
         if not isinstance(expected, AccountSession):
             raise TypeError("expected must be AccountSession")
