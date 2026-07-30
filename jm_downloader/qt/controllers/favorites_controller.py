@@ -52,6 +52,7 @@ class _FavoritesJob:
     folder_name: str | None = None
     order_by: str = "mr"
     query_engine: str | None = None
+    silent_recovery_attempted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,14 @@ class _FavoritesOutcome:
 class _FavoritesProgress:
     job: _FavoritesJob
     progress: FavoritesSyncProgress
+
+
+@dataclass(frozen=True, slots=True)
+class _FavoritesReadRecovery:
+    token: int
+    failed_generation: int
+    failed_command: str
+    order_by: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,6 +444,8 @@ class FavoritesController(QObject):
         self._add_available = self._calculate_add_available()
         self._filter_snapshot: FavoritesFilterSnapshot | None = None
         self._filter_busy = False
+        self._recovery_token = 0
+        self._read_recovery: _FavoritesReadRecovery | None = None
 
         self._worker = threading.Thread(
             target=_favorites_worker,
@@ -463,6 +474,12 @@ class FavoritesController(QObject):
         )
         account_controller.operation_completed.connect(
             self._on_account_operation_completed
+        )
+        account_controller.remember_credentials_changed.connect(
+            self._on_remember_credentials_changed
+        )
+        account_controller.silent_reauthentication_finished.connect(
+            self._on_silent_reauthentication_finished
         )
         QTimer.singleShot(
             0,
@@ -605,7 +622,11 @@ class FavoritesController(QObject):
 
     @Slot()
     def cancel_sync(self) -> None:
-        if self._disposed or not self._busy or self._command != "sync":
+        if self._disposed:
+            return
+        if self._read_recovery is not None:
+            self._clear_read_recovery(cancel_reauthentication=True)
+        if not self._busy or self._command != "sync":
             return
         self.service.cancel_operations()
         self._generation += 1
@@ -622,6 +643,7 @@ class FavoritesController(QObject):
         if self._disposed:
             return
         self._disposed = True
+        self._clear_read_recovery(cancel_reauthentication=True)
         self.service.cancel_operations()
         self._result_timer.stop()
         self._mailbox.close()
@@ -642,6 +664,7 @@ class FavoritesController(QObject):
         folder_id: str | None = None,
         folder_name: str | None = None,
         order_by: str = "mr",
+        silent_recovery_attempted: bool = False,
     ) -> int | None:
         if self._disposed or self._busy:
             return None
@@ -662,6 +685,7 @@ class FavoritesController(QObject):
             folder_name,
             order_by,
             query_engine,
+            silent_recovery_attempted,
         )
         if not self._mailbox.submit(job):
             return None
@@ -738,14 +762,21 @@ class FavoritesController(QObject):
                     outcome.job.command,
                     outcome.mutation_value or "",
                 )
-            if outcome.job.command in {
+            refreshes_account = outcome.job.command in {
                 "sync",
                 "add",
                 "create_folder",
                 "delete_folder",
                 "move_album",
-            }:
+            }
+            if refreshes_account:
                 self.account_controller.refresh_snapshot()
+            if (
+                refreshes_account
+                and outcome.error_code == FavoritesSessionExpired.code
+                and not outcome.job.silent_recovery_attempted
+            ):
+                self._begin_read_recovery(outcome)
         for outcome in self._filter_mailbox.take_results():
             if outcome.job.generation != self._filter_generation:
                 continue
@@ -767,12 +798,19 @@ class FavoritesController(QObject):
             AccountStatus.RESTORING,
             AccountStatus.LOCAL_DATA_UNREADABLE,
         }:
+            self._clear_read_recovery()
             self._cancel_for_account_change(
                 clear=True,
                 clear_runtime_additions=True,
             )
             return
         if snapshot.status is AccountStatus.SIGNING_IN:
+            if (
+                self._read_recovery is None
+                or self.account_controller.current_command
+                != "silent_reauth"
+            ):
+                self._clear_read_recovery()
             self._cancel_for_account_change(
                 clear=False,
                 clear_runtime_additions=True,
@@ -783,6 +821,12 @@ class FavoritesController(QObject):
             AccountStatus.SAVED_SESSION,
             AccountStatus.SIGNED_IN,
         }:
+            if (
+                self._read_recovery is not None
+                and self.account_controller.current_command
+                == "silent_reauth"
+            ):
+                return
             if self._snapshot is None and not self._busy:
                 self.restore()
             return
@@ -806,16 +850,72 @@ class FavoritesController(QObject):
             AccountStatus.SAVED_SESSION,
             AccountStatus.SIGNED_IN,
         }:
+            self._clear_read_recovery()
             if self._busy and self._command == "restore":
                 return
             if self._busy:
                 self._cancel_for_account_change(clear=False)
             self.restore()
         elif command == "logout":
+            self._clear_read_recovery()
             self._cancel_for_account_change(
                 clear=True,
                 clear_runtime_additions=True,
             )
+
+    @Slot(bool)
+    def _on_remember_credentials_changed(self, enabled: bool) -> None:
+        if not enabled:
+            self._clear_read_recovery(cancel_reauthentication=True)
+
+    @Slot(bool, str, str)
+    def _on_silent_reauthentication_finished(
+        self,
+        succeeded: bool,
+        _error_code: str,
+        _error_message: str,
+    ) -> None:
+        recovery = self._read_recovery
+        self._read_recovery = None
+        if (
+            self._disposed
+            or not succeeded
+            or recovery is None
+            or self._account_snapshot.status
+            not in {AccountStatus.SAVED_SESSION, AccountStatus.SIGNED_IN}
+        ):
+            return
+        self._submit(
+            "sync",
+            order_by=recovery.order_by,
+            silent_recovery_attempted=True,
+        )
+
+    def _begin_read_recovery(self, outcome: _FavoritesOutcome) -> bool:
+        if self._disposed or self._read_recovery is not None:
+            return False
+        self._recovery_token += 1
+        recovery = _FavoritesReadRecovery(
+            self._recovery_token,
+            outcome.job.generation,
+            outcome.job.command,
+            outcome.job.order_by,
+        )
+        self._read_recovery = recovery
+        if self.account_controller.silent_reauthenticate() is None:
+            if self._read_recovery == recovery:
+                self._read_recovery = None
+            return False
+        return True
+
+    def _clear_read_recovery(
+        self,
+        *,
+        cancel_reauthentication: bool = False,
+    ) -> None:
+        self._read_recovery = None
+        if cancel_reauthentication:
+            self.account_controller.cancel_silent_reauthentication()
 
     def _cancel_for_account_change(
         self,

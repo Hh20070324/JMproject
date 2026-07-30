@@ -35,6 +35,7 @@ class _AccountJob:
     username: str | None = None
     password: str | None = field(default=None, repr=False)
     remember_credentials: bool = False
+    expected_uid: str | None = None
 
     def clear_secret(self) -> None:
         self.password = None
@@ -126,19 +127,28 @@ def _account_worker(mailbox: _AccountMailbox) -> None:
             credential_error = None
             if job.command == "restore":
                 snapshot = mailbox.service.restore(job.operation)
-            elif job.command == "login":
+            elif job.command in {"login", "silent_reauth"}:
                 password = job.password
                 job.clear_secret()
                 if password is None:
                     raise AccountValidationError()
                 try:
-                    snapshot = mailbox.service.login(
-                        job.username or "",
-                        password,
-                        job.operation,
-                    )
+                    if job.command == "silent_reauth":
+                        snapshot = mailbox.service.reauthenticate(
+                            job.username or "",
+                            password,
+                            job.operation,
+                            expected_uid=job.expected_uid or "",
+                        )
+                    else:
+                        snapshot = mailbox.service.login(
+                            job.username or "",
+                            password,
+                            job.operation,
+                        )
                     if (
-                        job.remember_credentials
+                        job.command == "login"
+                        and job.remember_credentials
                         and mailbox.credential_store is not None
                     ):
                         try:
@@ -232,6 +242,8 @@ class AccountController(QObject):
     busy_changed = Signal(bool)
     credentials_ready = Signal(str, str)
     credential_failed = Signal(str)
+    remember_credentials_changed = Signal(bool)
+    silent_reauthentication_finished = Signal(bool, str, str)
 
     def __init__(
         self,
@@ -270,6 +282,7 @@ class AccountController(QObject):
         self._generation = 0
         self._snapshot = service.snapshot
         self._busy = False
+        self._command = ""
         self._disposed = False
         self._logout_pending = False
 
@@ -320,6 +333,10 @@ class AccountController(QObject):
     def remember_credentials(self) -> bool:
         return self._remember_credentials
 
+    @property
+    def current_command(self) -> str:
+        return self._command
+
     def request_credentials(self) -> bool:
         credentials = self._remembered_credentials
         if (
@@ -336,9 +353,14 @@ class AccountController(QObject):
 
     def set_remember_credentials(self, enabled: bool) -> bool:
         enabled = bool(enabled)
+        changed = enabled != self._remember_credentials
         self._remember_credentials = enabled
+        if changed:
+            self.remember_credentials_changed.emit(enabled)
         if enabled:
             return True
+        if self._command == "silent_reauth":
+            self.service.invalidate_operations()
         self._remembered_credentials = None
         if self.credential_store is None:
             return True
@@ -380,6 +402,39 @@ class AccountController(QObject):
             password=password,
         )
 
+    def silent_reauthenticate(self) -> int | None:
+        if (
+            self._disposed
+            or self._busy
+            or not self._remember_credentials
+            or self._remembered_credentials is None
+            or self._snapshot.status is not AccountStatus.EXPIRED
+        ):
+            return None
+        try:
+            session = self.service.local_session()
+        except AccountError:
+            return None
+        credentials = self._remembered_credentials
+        operation = self.service.start_operation()
+        return self._submit(
+            "silent_reauth",
+            operation,
+            AccountSnapshot(
+                AccountStatus.SIGNING_IN,
+                self._snapshot.username,
+            ),
+            username=credentials.username,
+            password=credentials.password,
+            expected_uid=session.uid,
+        )
+
+    def cancel_silent_reauthentication(self) -> bool:
+        if self._disposed or self._command != "silent_reauth":
+            return False
+        self.service.invalidate_operations()
+        return True
+
     @Slot()
     def logout(self) -> int | None:
         if self._disposed:
@@ -415,6 +470,7 @@ class AccountController(QObject):
         self._result_timer.stop()
         self._mailbox.close()
         self._busy = False
+        self._command = ""
 
     def _submit(
         self,
@@ -424,6 +480,7 @@ class AccountController(QObject):
         *,
         username: str | None = None,
         password: str | None = None,
+        expected_uid: str | None = None,
         force: bool = False,
     ) -> int | None:
         if self._disposed or (self._busy and not force):
@@ -436,9 +493,11 @@ class AccountController(QObject):
             username,
             password,
             command == "login" and self._remember_credentials,
+            expected_uid,
         )
         if not self._mailbox.submit(job):
             return None
+        self._command = command
         self._publish_snapshot(transient)
         self._set_busy(True)
         return job.generation
@@ -450,6 +509,7 @@ class AccountController(QObject):
         for outcome in self._mailbox.take_completed():
             if self._disposed or outcome.generation != self._generation:
                 continue
+            command = self._command
             self._set_busy(False)
             if outcome.command == "logout":
                 self._logout_pending = False
@@ -462,6 +522,15 @@ class AccountController(QObject):
             if outcome.credential_error is not None:
                 self.credential_failed.emit(outcome.credential_error)
             if outcome.error_code == AccountOperationCancelled.code:
+                if command == "silent_reauth":
+                    self.silent_reauthentication_finished.emit(
+                        False,
+                        outcome.error_code,
+                        outcome.error_message
+                        or AccountOperationCancelled.default_message,
+                    )
+                if self._command == command:
+                    self._command = ""
                 continue
             if outcome.error_code is not None:
                 self.operation_failed.emit(
@@ -473,6 +542,14 @@ class AccountController(QObject):
                     outcome.command,
                     self._snapshot,
                 )
+            if command == "silent_reauth":
+                self.silent_reauthentication_finished.emit(
+                    outcome.error_code is None,
+                    outcome.error_code or "",
+                    outcome.error_message or "",
+                )
+            if self._command == command:
+                self._command = ""
 
     def _publish_snapshot(self, snapshot: AccountSnapshot) -> None:
         self._snapshot = snapshot

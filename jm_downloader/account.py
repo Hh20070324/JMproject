@@ -286,6 +286,37 @@ class AccountService:
         password: str,
         operation: int,
     ) -> AccountSnapshot:
+        return self._login(
+            username,
+            password,
+            operation,
+            expected_uid=None,
+        )
+
+    def reauthenticate(
+        self,
+        username: str,
+        password: str,
+        operation: int,
+        *,
+        expected_uid: str,
+    ) -> AccountSnapshot:
+        expected_uid = _validate_uid(expected_uid)
+        return self._login(
+            username,
+            password,
+            operation,
+            expected_uid=expected_uid,
+        )
+
+    def _login(
+        self,
+        username: str,
+        password: str,
+        operation: int,
+        *,
+        expected_uid: str | None,
+    ) -> AccountSnapshot:
         username, password = validate_login_credentials(username, password)
         with self._lock:
             old_session = self._session
@@ -312,6 +343,8 @@ class AccountService:
 
         self._ensure_current(operation)
         session = self._adapt_login(client, response)
+        if expected_uid is not None and session.uid != expected_uid:
+            raise AccountRejected()
         with self._protected_data_lock:
             self.account_store.save(session)
             if not self._is_current(operation):
