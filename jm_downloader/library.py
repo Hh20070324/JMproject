@@ -550,8 +550,6 @@ class LibraryService:
 
         with self._lock:
             self._require_album_id(album_id)
-            album_dir = self._album_directory(self.paths.pictures, album_id)
-            pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
             try:
                 manifest = ChapterManifestStore(self.paths).load(album_id)
             except ChapterManifestError as error:
@@ -560,34 +558,7 @@ class LibraryService:
                 ) from error
             if manifest is None:
                 raise LibraryNotFound("没有可用的章节清单")
-            title_dir = self._safe_child_directory(
-                album_dir,
-                manifest.album_dir_name,
-            )
-            package_dir = self._safe_child_directory(
-                pdf_album_dir,
-                manifest.album_dir_name,
-            )
-            snapshots = []
-            for chapter in sorted(
-                manifest.chapters,
-                key=lambda value: value.index,
-            ):
-                try:
-                    snapshots.append(
-                        self._check_chapter(
-                            album_id,
-                            manifest,
-                            chapter,
-                            title_dir,
-                            package_dir,
-                        )
-                    )
-                except (LibraryError, OSError):
-                    snapshots.append(
-                        self._chapter_check_failed(album_id, chapter)
-                    )
-            return tuple(snapshots)
+            return self._check_manifest_chapters(album_id, manifest)
 
     def probe_local_read(self, album_id: str) -> LocalReadProbeSnapshot:
         """Inspect managed local images without writing or using the network."""
@@ -595,7 +566,10 @@ class LibraryService:
         with self._lock:
             self._require_album_id(album_id)
             try:
-                manifest = ChapterManifestStore(self.paths).load(album_id)
+                manifest = ChapterManifestStore(
+                    self.paths,
+                    ensure_directories=False,
+                ).load(album_id)
             except ChapterManifestError as error:
                 raise LibraryError(
                     "章节清单不可用，无法检查本地阅读内容"
@@ -606,7 +580,7 @@ class LibraryService:
                     state=LocalReadProbeState.ABSENT,
                 )
 
-            snapshots = self.check_chapters(album_id)
+            snapshots = self._check_manifest_chapters(album_id, manifest)
             complete = tuple(
                 ChapterSnapshot(
                     photo_id=value.photo_id,
@@ -632,6 +606,42 @@ class LibraryService:
                 album_id=str(album_id),
                 state=LocalReadProbeState.UNAVAILABLE,
             )
+
+    def _check_manifest_chapters(
+        self,
+        album_id: str,
+        manifest: ChapterManifest,
+    ) -> tuple[LibraryChapterSnapshot, ...]:
+        album_dir = self._album_directory(self.paths.pictures, album_id)
+        pdf_album_dir = self._album_directory(self.paths.pdfs, album_id)
+        title_dir = self._safe_child_directory(
+            album_dir,
+            manifest.album_dir_name,
+        )
+        package_dir = self._safe_child_directory(
+            pdf_album_dir,
+            manifest.album_dir_name,
+        )
+        snapshots = []
+        for chapter in sorted(
+            manifest.chapters,
+            key=lambda value: value.index,
+        ):
+            try:
+                snapshots.append(
+                    self._check_chapter(
+                        album_id,
+                        manifest,
+                        chapter,
+                        title_dir,
+                        package_dir,
+                    )
+                )
+            except (LibraryError, OSError):
+                snapshots.append(
+                    self._chapter_check_failed(album_id, chapter)
+                )
+        return tuple(snapshots)
 
     def _check_chapter(
         self,
