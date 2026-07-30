@@ -108,6 +108,7 @@ class FavoritesPage(SectionPage):
         self._cards_by_album: dict[str, list[SearchResultCard]] = {}
         self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
         self._reader_available = bool(reader_available)
+        self._read_probe_busy_ids: set[str] = set()
         self._reading_history_available = bool(
             reader_available and reader_history_store is not None
         )
@@ -1283,6 +1284,9 @@ class FavoritesPage(SectionPage):
                 card.set_chapter_state(cached_catalog)
             card.set_action_available(self.download_controller is not None)
             card.set_reading_available(self._reader_available)
+            card.set_reading_checking(
+                item.album_id in self._read_probe_busy_ids
+            )
             card.read_requested.connect(self._read_favorite)
             card.download_requested.connect(self._download_favorite)
             card.view_task_requested.connect(self.view_task_requested)
@@ -1387,6 +1391,15 @@ class FavoritesPage(SectionPage):
         if catalog is not None and snapshot.chapter_catalog is not catalog:
             snapshot = replace(snapshot, chapter_catalog=catalog)
         self.read_requested.emit(snapshot, ReaderSource.FAVORITES)
+
+    def set_read_probe_busy(self, album_id: str, busy: bool) -> None:
+        album_id = str(album_id)
+        if busy:
+            self._read_probe_busy_ids.add(album_id)
+        else:
+            self._read_probe_busy_ids.discard(album_id)
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_reading_checking(busy)
 
     def focus_card(self, album_id: str) -> bool:
         cards = self._cards_by_album.get(str(album_id), ())

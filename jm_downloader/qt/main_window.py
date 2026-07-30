@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
                 self._show_reader_history
             )
             self._pages["favorites"].read_requested.connect(
-                self._open_reader
+                self._request_local_first_reader
             )
             self._pages["favorites"].reading_history_requested.connect(
                 self._show_reader_history
