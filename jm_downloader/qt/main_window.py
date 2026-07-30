@@ -625,10 +625,36 @@ class MainWindow(QMainWindow):
                     chapters=result.chapters,
                 ),
             )
+            history = (
+                self.reader_history_store.find(snapshot.album_id)
+                if self.reader_history_store is not None
+                else None
+            )
+            readable_ids = {
+                chapter.photo_id
+                for chapter in result.chapters
+            }
+            notice = None
+            if (
+                history is not None
+                and history.photo_id not in readable_ids
+            ):
+                history = None
+                notice = (
+                    "上次阅读章节在本地不可用，"
+                    "已从首个完整章节开始。"
+                )
             self._start_reader_session(
                 snapshot,
                 source=context.source,
                 content_mode=ReaderContentMode.LOCAL,
+                preferred_photo_id=(
+                    history.photo_id if history is not None else None
+                ),
+                preferred_page=(
+                    history.page_number if history is not None else 1
+                ),
+                notice=notice,
             )
             return
         self._offer_snapshot_online_fallback(
