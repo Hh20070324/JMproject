@@ -1786,6 +1786,10 @@ QPushButton#searchResultReadButton:pressed {
     border-color: #48a97a;
 }
 
+QPushButton#searchResultReadButton:focus {
+    border: 2px solid #b7f2d2;
+}
+
 QPushButton#searchResultReadButton:disabled {
     background: #2a2f2c;
     border-color: #3b423e;
