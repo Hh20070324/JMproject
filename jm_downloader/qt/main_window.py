@@ -565,8 +565,6 @@ class MainWindow(QMainWindow):
     def _take_current_local_read_route(
         self,
         request_id: int,
-        command: str,
-        album_id: str,
     ) -> _LocalReadRouteContext | None:
         context = self._local_read_route_requests.pop(
             int(request_id),
@@ -578,8 +576,6 @@ class MainWindow(QMainWindow):
             or current is None
             or current[0] != int(request_id)
             or context.generation != self._local_read_route_generation
-            or command != "probe_local_read"
-            or str(album_id) != context.snapshot.album_id
         ):
             return None
         self._active_local_read_route = None
@@ -595,13 +591,13 @@ class MainWindow(QMainWindow):
     ) -> None:
         context = self._take_current_local_read_route(
             request_id,
-            command,
-            album_id,
         )
         if context is None:
             return
         if (
-            not isinstance(result, LocalReadProbeSnapshot)
+            command != "probe_local_read"
+            or str(album_id) != context.snapshot.album_id
+            or not isinstance(result, LocalReadProbeSnapshot)
             or result.album_id != context.snapshot.album_id
         ):
             self._offer_snapshot_online_fallback(
@@ -672,10 +668,18 @@ class MainWindow(QMainWindow):
     ) -> None:
         context = self._take_current_local_read_route(
             request_id,
-            command,
-            album_id,
         )
         if context is None:
+            return
+        if (
+            command != "probe_local_read"
+            or str(album_id) != context.snapshot.album_id
+        ):
+            self._offer_snapshot_online_fallback(
+                context.snapshot,
+                context.source,
+                "本地章节检查结果无效。",
+            )
             return
         self._offer_snapshot_online_fallback(
             context.snapshot,
