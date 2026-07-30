@@ -896,10 +896,50 @@ QWidget#libraryActions QToolButton:hover {
     border-color: #59635d;
 }
 
+QWidget#libraryActions QToolButton:pressed {
+    background: #3b433e;
+    border-color: #6c7871;
+}
+
+QWidget#libraryActions QToolButton:focus {
+    border: 2px solid #58b989;
+}
+
 QWidget#libraryActions QToolButton:disabled {
     background: #202421;
     border-color: #343a36;
     color: #69736d;
+}
+
+QWidget#libraryPrimaryActions QToolButton {
+    padding: 0 6px;
+}
+
+QToolButton#libraryReadButton {
+    background: #58b989;
+    border-color: #58b989;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+QToolButton#libraryReadButton:hover {
+    background: #6bc697;
+    border-color: #6bc697;
+}
+
+QToolButton#libraryReadButton:pressed {
+    background: #48a97a;
+    border-color: #48a97a;
+}
+
+QToolButton#libraryReadButton:focus {
+    border: 2px solid #8bd7ad;
+}
+
+QToolButton#libraryReadButton:disabled {
+    background: #2a2f2c;
+    border-color: #3b423e;
+    color: #777f7a;
 }
 
 QMenu#libraryDeleteMenu,

@@ -105,41 +105,14 @@ class LibraryItemCard(QFrame):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(5)
 
-        self.open_images_button = self._make_icon_button(
-            actions,
-            "libraryOpenImagesButton",
-            "打开图片目录",
-            svg_icon("folder"),
-        )
-        self.open_images_button.clicked.connect(
-            lambda: self.open_requested.emit(self.item.album_id, "images")
-        )
-        actions_layout.addWidget(self.open_images_button)
-
-        self.read_button = self._make_icon_button(
-            actions,
-            "libraryReadButton",
-            "在应用内阅读本地完整章节",
-            svg_icon("book"),
-        )
-        self.read_button.clicked.connect(
-            lambda: self.read_requested.emit(self.item.album_id)
-        )
-        actions_layout.addWidget(self.read_button)
-
-        self.open_pdf_button = self._make_icon_button(
-            actions,
-            "libraryOpenPdfButton",
-            "使用文件资源管理器打开本漫画打包产物文件夹",
-            svg_icon("document"),
-        )
-        self.open_pdf_button.clicked.connect(
-            lambda: self.open_requested.emit(self.item.album_id, "package")
-        )
-        actions_layout.addWidget(self.open_pdf_button)
+        secondary_actions = QWidget(actions)
+        secondary_actions.setObjectName("librarySecondaryActions")
+        secondary_layout = QHBoxLayout(secondary_actions)
+        secondary_layout.setContentsMargins(0, 0, 0, 0)
+        secondary_layout.setSpacing(5)
 
         self.view_task_button = self._make_icon_button(
-            actions,
+            secondary_actions,
             "libraryViewTaskButton",
             "在下载任务中定位这本漫画",
             svg_icon("download"),
@@ -147,10 +120,10 @@ class LibraryItemCard(QFrame):
         self.view_task_button.clicked.connect(
             lambda: self.view_task_requested.emit(self.item.album_id)
         )
-        actions_layout.addWidget(self.view_task_button)
+        secondary_layout.addWidget(self.view_task_button)
 
         self.chapter_button = self._make_icon_button(
-            actions,
+            secondary_actions,
             "libraryChapterButton",
             "管理章节",
             svg_icon("menu"),
@@ -165,10 +138,10 @@ class LibraryItemCard(QFrame):
                 ),
             )
         )
-        actions_layout.addWidget(self.chapter_button)
+        secondary_layout.addWidget(self.chapter_button)
 
         self.delete_button = self._make_icon_button(
-            actions,
+            secondary_actions,
             "libraryDeleteButton",
             "删除本地文件",
             svg_icon("trash"),
@@ -195,11 +168,63 @@ class LibraryItemCard(QFrame):
         self.delete_menu.addSeparator()
         self.delete_menu.addAction(self.delete_all_action)
         self.delete_button.setMenu(self.delete_menu)
-        self.delete_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        actions_layout.addWidget(self.delete_button)
+        self.delete_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        secondary_layout.addWidget(self.delete_button)
+        actions_layout.addWidget(secondary_actions)
         actions_layout.addStretch(1)
+
+        primary_actions = QWidget(actions)
+        primary_actions.setObjectName("libraryPrimaryActions")
+        primary_layout = QHBoxLayout(primary_actions)
+        primary_layout.setContentsMargins(0, 0, 0, 0)
+        primary_layout.setSpacing(5)
+
+        self.open_images_button = self._make_text_button(
+            primary_actions,
+            "libraryOpenImagesButton",
+            "图片",
+            "打开图片目录",
+            svg_icon("folder"),
+        )
+        self.open_images_button.clicked.connect(
+            lambda: self.open_requested.emit(self.item.album_id, "images")
+        )
+        primary_layout.addWidget(self.open_images_button)
+
+        self.open_pdf_button = self._make_text_button(
+            primary_actions,
+            "libraryOpenPdfButton",
+            "打包",
+            "使用文件资源管理器打开本漫画打包产物文件夹",
+            svg_icon("document"),
+        )
+        self.open_pdf_button.clicked.connect(
+            lambda: self.open_requested.emit(self.item.album_id, "package")
+        )
+        primary_layout.addWidget(self.open_pdf_button)
+
+        self.read_button = self._make_text_button(
+            primary_actions,
+            "libraryReadButton",
+            "完整阅读",
+            "在应用内阅读本地完整章节",
+            svg_icon("book"),
+        )
+        self.read_button.clicked.connect(
+            lambda: self.read_requested.emit(self.item.album_id)
+        )
+        primary_layout.addWidget(self.read_button)
+        actions_layout.addWidget(primary_actions)
         details_layout.addWidget(actions)
         layout.addWidget(details, 1)
+        self._action_layouts = (
+            primary_layout,
+            actions_layout,
+            details_layout,
+            layout,
+        )
 
         self.update_item(item)
 
@@ -231,6 +256,29 @@ class LibraryItemCard(QFrame):
         button.setToolTip(tooltip)
         button.setIcon(icon)
         button.setFixedSize(34, 34)
+        return button
+
+    @staticmethod
+    def _make_text_button(
+        parent,
+        object_name,
+        text,
+        tooltip,
+        icon,
+    ) -> QToolButton:
+        button = QToolButton(parent)
+        button.setObjectName(object_name)
+        button.setText(text)
+        button.setToolTip(tooltip)
+        button.setIcon(icon)
+        button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        button.setFixedHeight(34)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
         return button
 
     def update_item(self, item: LibraryItem) -> None:
@@ -301,6 +349,9 @@ class LibraryItemCard(QFrame):
                 else "menu"
             )
         )
+        for action_layout in self._action_layouts:
+            action_layout.invalidate()
+        self.updateGeometry()
         self._sync_activity()
         if not item.has_images:
             self.reset_preview()

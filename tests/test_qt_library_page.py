@@ -84,7 +84,7 @@ class LibraryPageTests(unittest.TestCase):
         self.controller = FakeLibraryController(self.items)
         self.page = LibraryPage(self.controller)
         self.page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
-        self.page.resize(1000, 700)
+        self.page.resize(1100, 700)
         self.page.show()
         self.app.processEvents()
         self.app.processEvents()
@@ -98,6 +98,16 @@ class LibraryPageTests(unittest.TestCase):
 
     def test_activate_search_filter_and_responsive_grid(self):
         self.page.activate()
+        card_width = max(
+            340,
+            max(
+                card.minimumSizeHint().width()
+                for card in self.page._rows.values()
+            ),
+        )
+        self.page.resize(card_width * 2 + 100, 700)
+        self.app.processEvents()
+        self.app.processEvents()
         self.assertEqual(self.controller.refresh_count, 1)
         self.assertEqual(self.page.visible_album_ids, ("10", "20", "30"))
         self.assertEqual(self.page.column_count, 2)
