@@ -112,6 +112,12 @@ class ReaderContentMode(str, Enum):
     LOCAL = "local"
 
 
+class LocalReadProbeState(str, Enum):
+    ABSENT = "absent"
+    READY = "ready"
+    UNAVAILABLE = "unavailable"
+
+
 class ReaderChapterDownloadState(str, Enum):
     CHECKING = "checking"
     AVAILABLE = "available"
@@ -173,6 +179,13 @@ class ChapterCatalogSnapshot:
     album_id: str
     title: str | None
     chapters: tuple[ChapterSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LocalReadProbeSnapshot:
+    album_id: str
+    state: LocalReadProbeState
+    chapters: tuple[ChapterSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

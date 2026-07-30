@@ -234,6 +234,15 @@ class LibraryController(QObject):
             ),
         )
 
+    @Slot(str, result=object)
+    def probe_local_read(self, album_id: str) -> int | None:
+        return self._start_read_probe(
+            album_id,
+            function=lambda reserved_album_id: self.library.probe_local_read(
+                reserved_album_id
+            ),
+        )
+
     @Slot(str, object, object, result=object)
     def rebuild_chapters(
         self,
@@ -537,6 +546,50 @@ class LibraryController(QObject):
             )
         return request_id
 
+    def _start_read_probe(
+        self,
+        album_id: str,
+        *,
+        function: Callable[[str], object],
+    ) -> int | None:
+        if self._disposed:
+            return None
+        command = "probe_local_read"
+        album_id = str(album_id)
+        request_id = self._next_request_id()
+        try:
+            album_id = self.manager.begin_library_operation(album_id)
+        except TaskError as error:
+            message = str(error) or "本地章节检查未能启动"
+            QTimer.singleShot(
+                0,
+                lambda: self.request_failed.emit(
+                    request_id,
+                    command,
+                    album_id,
+                    message,
+                ),
+            )
+            return request_id
+
+        def execute():
+            try:
+                return function(album_id)
+            finally:
+                self.manager.end_library_operation(album_id)
+
+        try:
+            self._submit(request_id, command, album_id, execute)
+        except Exception as error:
+            self.manager.end_library_operation(album_id)
+            self._report_error(
+                command,
+                album_id,
+                error,
+                request_id=request_id,
+            )
+        return request_id
+
     def _submit(
         self,
         request_id: int,
@@ -570,6 +623,22 @@ class LibraryController(QObject):
             return
         if command == "refresh":
             self._finish_scan(request_id, result, error)
+            return
+        if command == "probe_local_read":
+            if error is not None:
+                self._report_error(
+                    command,
+                    album_id,
+                    error,
+                    request_id=request_id,
+                )
+            else:
+                self.request_completed.emit(
+                    request_id,
+                    command,
+                    album_id,
+                    result,
+                )
             return
         if command.startswith("batch_delete_"):
             albums = self._batch_albums.pop(request_id, ())

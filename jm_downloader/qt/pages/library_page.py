@@ -1395,6 +1395,7 @@ class LibraryPage(SectionPage):
             "delete_chapter_images",
             "delete_chapter_package",
             "delete_chapter_all",
+            "probe_local_read",
             "plan_legacy_migration",
             "migrate_legacy_layout",
         }:

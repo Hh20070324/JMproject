@@ -25,11 +25,14 @@ from .models import (
     ChapterRepairPlan,
     ChapterRebuildOutcome,
     ChapterRebuildResult,
+    ChapterSnapshot,
     LibraryChapterSnapshot,
     LibraryItem,
     LibraryLayout,
     LegacyChapterMapping,
     LegacyMigrationPlan,
+    LocalReadProbeSnapshot,
+    LocalReadProbeState,
 )
 from .packaging import cbz_file_intact, chapter_to_cbz
 from .pdf import (
@@ -585,6 +588,50 @@ class LibraryService:
                         self._chapter_check_failed(album_id, chapter)
                     )
             return tuple(snapshots)
+
+    def probe_local_read(self, album_id: str) -> LocalReadProbeSnapshot:
+        """Inspect managed local images without writing or using the network."""
+
+        with self._lock:
+            self._require_album_id(album_id)
+            try:
+                manifest = ChapterManifestStore(self.paths).load(album_id)
+            except ChapterManifestError as error:
+                raise LibraryError(
+                    "章节清单不可用，无法检查本地阅读内容"
+                ) from error
+            if manifest is None:
+                return LocalReadProbeSnapshot(
+                    album_id=str(album_id),
+                    state=LocalReadProbeState.ABSENT,
+                )
+
+            snapshots = self.check_chapters(album_id)
+            complete = tuple(
+                ChapterSnapshot(
+                    photo_id=value.photo_id,
+                    index=value.index,
+                    title=value.title,
+                    downloaded=True,
+                )
+                for value in snapshots
+                if value.image_status is ChapterImageStatus.COMPLETE
+            )
+            if complete:
+                return LocalReadProbeSnapshot(
+                    album_id=str(album_id),
+                    state=LocalReadProbeState.READY,
+                    chapters=complete,
+                )
+            if any(
+                "check_error" in value.problem_codes
+                for value in snapshots
+            ):
+                raise LibraryError("本地章节检查失败，请稍后重试")
+            return LocalReadProbeSnapshot(
+                album_id=str(album_id),
+                state=LocalReadProbeState.UNAVAILABLE,
+            )
 
     def _check_chapter(
         self,
