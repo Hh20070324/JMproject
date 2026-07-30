@@ -35,7 +35,7 @@ $RequiredLicenseFiles = @(
     "LGPL-3.0-only.txt",
     "Game-Icon-Pack-CC0-1.0.txt",
     "Python-3.14.txt",
-    "JMComic-Crawler-Python-2.7.1.txt",
+    "JMComic-Crawler-Python-2.7.2.txt",
     "commonX-0.6.40.txt",
     "curl_cffi-0.15.0.txt",
     "curl_cffi-0.15.0-native.txt",

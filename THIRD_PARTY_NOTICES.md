@@ -72,9 +72,9 @@ components. Their original license texts are reproduced under `LICENSES/`.
 | PyYAML | 6.0.3 | MIT | https://github.com/yaml/pyyaml |
 | typing_extensions | 4.16.0 | PSF-2.0 | https://github.com/python/typing_extensions |
 
-JMComic-Crawler-Python 2.7.1 is described separately above. Its original
+JMComic-Crawler-Python 2.7.2 is described separately above. Its original
 license is also reproduced in
-`LICENSES/JMComic-Crawler-Python-2.7.1.txt`.
+`LICENSES/JMComic-Crawler-Python-2.7.2.txt`.
 
 certifi's bundled CA certificate data is distributed under MPL-2.0. The
 applicable notice is retained verbatim in

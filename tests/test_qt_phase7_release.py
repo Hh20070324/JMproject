@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE_NAME = "JM-Downloader-v3.2.0-Windows-x64.zip"
 RUNTIME_LICENSE_ASSERTIONS = {
     "Game-Icon-Pack-CC0-1.0.txt": "CC0 1.0 Universal",
-    "JMComic-Crawler-Python-2.7.1.txt": "Copyright (c) 2023 hect0x7",
+    "JMComic-Crawler-Python-2.7.2.txt": "Copyright (c) 2023 hect0x7",
     "commonX-0.6.40.txt": "Copyright (c) 2023 hect0x7",
     "curl_cffi-0.15.0.txt": "Copyright (c) 2022 curl_cffi developers",
     "curl_cffi-0.15.0-native.txt": "libcurl/8.15.0-IMPERSONATE",
@@ -309,7 +309,7 @@ class PhaseEightReleaseTests(unittest.TestCase):
         self.assertIn('"packaging"', spec)
         self.assertIn('"setuptools"', spec)
         for requirement in (
-            "jmcomic==2.7.1",
+            "jmcomic==2.7.2",
             "commonX==0.6.40",
             "curl-cffi==0.15.0",
             "cffi==2.0.0",

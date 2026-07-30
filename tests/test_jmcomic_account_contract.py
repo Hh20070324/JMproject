@@ -15,7 +15,7 @@ from tests.account_fakes import FakeJmAccountClient
 
 class JmcomicAccountContractTests(unittest.TestCase):
     def test_runtime_dependency_is_the_reviewed_jmcomic_version(self):
-        self.assertEqual(version("jmcomic"), "2.7.1")
+        self.assertEqual(version("jmcomic"), "2.7.2")
 
     def test_account_method_signatures_match_the_reviewed_contract(self):
         self.assertEqual(

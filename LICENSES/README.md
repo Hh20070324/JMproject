@@ -10,7 +10,7 @@ build.
 | `LGPL-3.0-only.txt` | Qt 6.11.1, PySide6 Essentials 6.11.1, Shiboken6 6.11.1 | LGPL-3.0-only |
 | `Game-Icon-Pack-CC0-1.0.txt` | Selected Game Icon Pack SVG assets | CC0-1.0 |
 | `Python-3.14.txt` | CPython 3.14 runtime | Python-2.0 and incorporated notices |
-| `JMComic-Crawler-Python-2.7.1.txt` | JMComic-Crawler-Python 2.7.1 | MIT |
+| `JMComic-Crawler-Python-2.7.2.txt` | JMComic-Crawler-Python 2.7.2 | MIT |
 | `commonX-0.6.40.txt` | commonX 0.6.40 | MIT |
 | `curl_cffi-0.15.0.txt` | curl_cffi 0.15.0 Python code | MIT |
 | `curl_cffi-0.15.0-native.txt` | curl_cffi native wrapper and HTTPX-derived code | Upstream notices listed in the file |

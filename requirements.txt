@@ -1,5 +1,5 @@
 # Runtime dependencies verified for the portable Python 3.14.5 release.
-jmcomic==2.7.1
+jmcomic==2.7.2
 commonX==0.6.40
 curl-cffi==0.15.0
 cffi==2.0.0

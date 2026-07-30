@@ -338,7 +338,20 @@ class DownloadWorker:
                         self.client = self.option.new_jm_async_client(
                             max_clients=self._image_concurrency
                         )
-                    await self.client.setup()
+                    try:
+                        await self.client.setup()
+                    except BaseException:
+                        try:
+                            await self.client.close()
+                        except BaseException as cleanup_error:
+                            LOGGER.warning(
+                                "Async downloader setup cleanup failed (%s)",
+                                type(cleanup_error).__name__,
+                            )
+                        finally:
+                            self.client = None
+                            self.shutdown()
+                        raise
                     return self
 
                 async def before_album(self, album):
