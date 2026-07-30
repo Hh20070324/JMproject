@@ -95,6 +95,7 @@ class DownloadPage(SectionPage):
         self._chapter_catalogs: dict[str, ChapterCatalogSnapshot] = {}
         self._reader_history_store = reader_history_store
         self._reader_available = bool(reader_available)
+        self._read_probe_busy_ids: set[str] = set()
         self._direct_chapter_album_id: str | None = None
         self._cover_attempted: set[tuple[int, str]] = set()
         self._cover_update_scheduled = False
@@ -1030,6 +1031,9 @@ class DownloadPage(SectionPage):
                 self._controller is not None and not self._search_busy
             )
             card.set_reading_available(self._reader_available)
+            card.set_reading_checking(
+                item.album_id in self._read_probe_busy_ids
+            )
             card.read_requested.connect(self._read_search_result)
             card.download_requested.connect(self._download_search_result)
             card.view_task_requested.connect(self._view_search_task)
@@ -1065,6 +1069,15 @@ class DownloadPage(SectionPage):
             else ReaderSource.SEARCH
         )
         self.read_requested.emit(snapshot, source)
+
+    def set_read_probe_busy(self, album_id: str, busy: bool) -> None:
+        album_id = str(album_id)
+        if busy:
+            self._read_probe_busy_ids.add(album_id)
+        else:
+            self._read_probe_busy_ids.discard(album_id)
+        for card in self._cards_by_album.get(album_id, ()):
+            card.set_reading_checking(busy)
 
     def _show_reading_history(self) -> None:
         if (

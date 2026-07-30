@@ -130,6 +130,7 @@ class SearchResultCard(QFrame):
         self._chapter_loading = False
         self._action_available = True
         self._reading_available = False
+        self._reading_checking = False
         self._favorite_visible = False
         self._favorite_available = False
         self._favorite_busy = False
@@ -181,11 +182,10 @@ class SearchResultCard(QFrame):
         info_layout.addWidget(self.tags_label)
         info_layout.addStretch(1)
 
-        self.read_button = QPushButton("在线阅读", info)
+        self.read_button = QPushButton("阅读", info)
         self.read_button.setObjectName("searchResultReadButton")
         self.read_button.setFixedHeight(32)
         self.read_button.setIcon(svg_icon("document"))
-        self.read_button.setToolTip("在线打开此漫画，不创建下载任务")
         self.read_button.clicked.connect(self._emit_read)
         info_layout.addWidget(self.read_button)
 
@@ -226,6 +226,7 @@ class SearchResultCard(QFrame):
         self.set_task_present(False)
         self.set_favorite_visible(False)
         self.set_move_favorite_visible(False)
+        self._render_reading_state()
 
     @property
     def task_present(self) -> bool:
@@ -273,7 +274,24 @@ class SearchResultCard(QFrame):
 
     def set_reading_available(self, available: bool) -> None:
         self._reading_available = bool(available)
-        self.read_button.setEnabled(self._reading_available)
+        self._render_reading_state()
+
+    def set_reading_checking(self, checking: bool) -> None:
+        self._reading_checking = bool(checking)
+        self._render_reading_state()
+
+    def _render_reading_state(self) -> None:
+        if self._reading_checking:
+            self.read_button.setText("检查中…")
+            self.read_button.setToolTip("正在后台检查本地完整章节")
+        else:
+            self.read_button.setText("阅读")
+            self.read_button.setToolTip(
+                "优先读取本地完整章节；本地没有时在线打开，不创建下载任务"
+            )
+        self.read_button.setEnabled(
+            self._reading_available and not self._reading_checking
+        )
 
     def _render_action_state(self) -> None:
         if self._task_present:
@@ -369,7 +387,7 @@ class SearchResultCard(QFrame):
             self.download_requested.emit(self.snapshot.album_id)
 
     def _emit_read(self) -> None:
-        if self._reading_available:
+        if self._reading_available and not self._reading_checking:
             self.read_requested.emit(self.snapshot.album_id)
 
     def _emit_favorite(self) -> None:

@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
 
 from ..desktop_runtime import WINDOW_TITLE
 from ..models import (
+    ChapterCatalogSnapshot,
+    LocalReadProbeSnapshot,
+    LocalReadProbeState,
     ReaderChapterDownloadState,
     ReaderContentMode,
     ReaderHistoryEntry,
@@ -44,6 +47,14 @@ from .pages import (
 from .reader_window import ReaderWindow
 from .theme import ThemeManager
 from .widgets.reader_history_dialog import ReaderHistoryDialog
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalReadRouteContext:
+    generation: int
+    snapshot: SearchResultSnapshot
+    source: ReaderSource
+    page_key: str
 
 
 class MainWindow(QMainWindow):
@@ -78,6 +89,13 @@ class MainWindow(QMainWindow):
         self.reader_window: ReaderWindow | None = None
         self.reader_download_controller: ReaderDownloadController | None = None
         self._reader_shutdown_requested = False
+        self._local_read_route_generation = 0
+        self._local_read_route_requests: dict[
+            int, _LocalReadRouteContext
+        ] = {}
+        self._active_local_read_route: tuple[
+            int, _LocalReadRouteContext
+        ] | None = None
         self._persist_window_state = bool(persist_window_state)
         self._shutdown_pending = False
         self._shutdown_complete = False
@@ -207,7 +225,7 @@ class MainWindow(QMainWindow):
         )
         if "reader" in self._pages:
             self._pages["downloads"].read_requested.connect(
-                self._open_reader
+                self._request_local_first_reader
             )
             self._pages["downloads"].reading_history_requested.connect(
                 self._show_reader_history
@@ -227,6 +245,13 @@ class MainWindow(QMainWindow):
             self._pages["reader"].download_chapter_requested.connect(
                 self._download_reader_chapter
             )
+            if self.library_controller is not None:
+                self.library_controller.request_completed.connect(
+                    self._on_local_read_probe_completed
+                )
+                self.library_controller.request_failed.connect(
+                    self._on_local_read_probe_failed
+                )
 
     @property
     def current_page(self) -> str:
@@ -465,6 +490,201 @@ class MainWindow(QMainWindow):
             preferred_photo_id=history.photo_id if history else None,
             preferred_page=history.page_number if history else 1,
         )
+
+    def _request_local_first_reader(
+        self,
+        snapshot: SearchResultSnapshot,
+        source: ReaderSource,
+    ) -> None:
+        if self.reader_window is None:
+            return
+        if not isinstance(snapshot, SearchResultSnapshot):
+            return
+        if not isinstance(source, ReaderSource):
+            source = ReaderSource.SEARCH
+        page_key = (
+            "favorites"
+            if source is ReaderSource.FAVORITES
+            else "downloads"
+        )
+        current = self._active_local_read_route
+        if (
+            current is not None
+            and current[1].snapshot.album_id == snapshot.album_id
+            and current[1].page_key == page_key
+        ):
+            return
+        self._invalidate_active_local_read_route()
+        self._local_read_route_generation += 1
+        context = _LocalReadRouteContext(
+            generation=self._local_read_route_generation,
+            snapshot=snapshot,
+            source=source,
+            page_key=page_key,
+        )
+        self._set_local_read_route_busy(context, True)
+        if self.library_controller is None:
+            self._set_local_read_route_busy(context, False)
+            self._offer_snapshot_online_fallback(
+                snapshot,
+                source,
+                "本地章节检查服务不可用。",
+            )
+            return
+        request_id = self.library_controller.probe_local_read(
+            snapshot.album_id
+        )
+        if request_id is None:
+            self._set_local_read_route_busy(context, False)
+            self._offer_snapshot_online_fallback(
+                snapshot,
+                source,
+                "本地章节检查未能启动，请稍后重试。",
+            )
+            return
+        request_id = int(request_id)
+        self._local_read_route_requests[request_id] = context
+        self._active_local_read_route = (request_id, context)
+
+    def _invalidate_active_local_read_route(self) -> None:
+        current = self._active_local_read_route
+        self._active_local_read_route = None
+        if current is not None:
+            self._set_local_read_route_busy(current[1], False)
+
+    def _set_local_read_route_busy(
+        self,
+        context: _LocalReadRouteContext,
+        busy: bool,
+    ) -> None:
+        page = self._pages.get(context.page_key)
+        setter = getattr(page, "set_read_probe_busy", None)
+        if setter is not None:
+            setter(context.snapshot.album_id, busy)
+
+    def _take_current_local_read_route(
+        self,
+        request_id: int,
+        command: str,
+        album_id: str,
+    ) -> _LocalReadRouteContext | None:
+        context = self._local_read_route_requests.pop(
+            int(request_id),
+            None,
+        )
+        current = self._active_local_read_route
+        if (
+            context is None
+            or current is None
+            or current[0] != int(request_id)
+            or context.generation != self._local_read_route_generation
+            or command != "probe_local_read"
+            or str(album_id) != context.snapshot.album_id
+        ):
+            return None
+        self._active_local_read_route = None
+        self._set_local_read_route_busy(context, False)
+        return context
+
+    def _on_local_read_probe_completed(
+        self,
+        request_id: int,
+        command: str,
+        album_id: str,
+        result,
+    ) -> None:
+        context = self._take_current_local_read_route(
+            request_id,
+            command,
+            album_id,
+        )
+        if context is None:
+            return
+        if (
+            not isinstance(result, LocalReadProbeSnapshot)
+            or result.album_id != context.snapshot.album_id
+        ):
+            self._offer_snapshot_online_fallback(
+                context.snapshot,
+                context.source,
+                "本地章节检查结果无效。",
+            )
+            return
+        if result.state is LocalReadProbeState.ABSENT:
+            self._open_reader(context.snapshot, context.source)
+            return
+        if (
+            result.state is LocalReadProbeState.READY
+            and result.chapters
+        ):
+            snapshot = replace(
+                context.snapshot,
+                chapter_catalog=ChapterCatalogSnapshot(
+                    album_id=context.snapshot.album_id,
+                    title=context.snapshot.title,
+                    chapters=result.chapters,
+                ),
+            )
+            self._start_reader_session(
+                snapshot,
+                source=context.source,
+                content_mode=ReaderContentMode.LOCAL,
+            )
+            return
+        self._offer_snapshot_online_fallback(
+            context.snapshot,
+            context.source,
+            "本地没有图片完整的章节，请先修复本地内容。",
+        )
+
+    def _on_local_read_probe_failed(
+        self,
+        request_id: int,
+        command: str,
+        album_id: str,
+        _message: str,
+    ) -> None:
+        context = self._take_current_local_read_route(
+            request_id,
+            command,
+            album_id,
+        )
+        if context is None:
+            return
+        self._offer_snapshot_online_fallback(
+            context.snapshot,
+            context.source,
+            "本地章节检查失败，请稍后重试。",
+        )
+
+    def _offer_snapshot_online_fallback(
+        self,
+        snapshot: SearchResultSnapshot,
+        source: ReaderSource,
+        reason: str,
+    ) -> None:
+        if self.reader_window is None:
+            return
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("本地内容不可用")
+        dialog.setText(str(reason))
+        dialog.setInformativeText(
+            "是否改为在线读取这部漫画？只有确认后程序才会访问网络。"
+        )
+        online_button = dialog.addButton(
+            "转为在线阅读",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = dialog.addButton(
+            "取消",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        dialog.exec()
+        if dialog.clickedButton() is online_button:
+            self._open_reader(snapshot, source)
 
     def _start_reader_session(
         self,
@@ -731,6 +951,9 @@ class MainWindow(QMainWindow):
         self.reader_controller.request_shutdown(timeout=5.0)
 
     def _dispose_search(self) -> None:
+        self._local_read_route_generation += 1
+        self._invalidate_active_local_read_route()
+        self._local_read_route_requests.clear()
         download_page = self._pages.get("downloads")
         dispose_page = getattr(download_page, "dispose", None)
         if dispose_page is not None:

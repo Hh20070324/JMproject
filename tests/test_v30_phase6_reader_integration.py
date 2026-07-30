@@ -111,7 +111,7 @@ class ReaderEntryPointTests(unittest.TestCase):
 
         self.assertTrue(card.read_button.isEnabled())
         self.assertFalse(card.action_button.isEnabled())
-        self.assertEqual(card.read_button.text(), "在线阅读")
+        self.assertEqual(card.read_button.text(), "阅读")
         card.read_button.click()
         self.assertEqual(requests, ["100"])
         card.close()
