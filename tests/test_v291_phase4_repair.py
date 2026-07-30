@@ -192,7 +192,7 @@ class RepairTaskTests(unittest.TestCase):
         cbz_ids = ("2001", "2002")
         base = TaskConfig(
             download_engine="sync",
-            api_route="www.cdnaspa.vip",
+            api_route="www.cdngwc.club",
             package_format="images",
             image_format="png",
             image_concurrency=7,
@@ -223,7 +223,7 @@ class RepairTaskTests(unittest.TestCase):
                 task.selected_chapter_ids,
             )
             self.assertEqual(task.config.download_engine, "sync")
-            self.assertEqual(task.config.api_route, "www.cdnaspa.vip")
+            self.assertEqual(task.config.api_route, "www.cdngwc.club")
             self.assertEqual(task.config.image_format, "png")
             self.assertEqual(task.config.image_concurrency, 7)
             self.assertEqual(

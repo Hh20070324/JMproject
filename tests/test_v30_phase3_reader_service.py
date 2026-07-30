@@ -267,7 +267,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
         self.clients.append(client)
         service = self.make_service(
             lambda _cookies, _route: client,
-            api_route_provider=lambda: "www.cdnplaystation6.cc",
+            api_route_provider=lambda: "www.cdnhjk.net",
         )
 
         with self.assertRaises(ReaderServiceError) as caught:
@@ -277,7 +277,7 @@ class ReaderServiceTests(unittest.IsolatedAsyncioTestCase):
             caught.exception.kind,
             ReaderErrorKind.ROUTE_UNAVAILABLE,
         )
-        self.assertEqual(client.domains, ["www.cdnplaystation6.cc"])
+        self.assertEqual(client.domains, ["www.cdnhjk.net"])
 
     async def test_missing_or_invalid_chapter_never_requests_images(self):
         client = FakeReaderClient(album=make_album(), photo=make_photo())

@@ -8,7 +8,12 @@ import tempfile
 import threading
 import time
 
-from .models import MAX_CHAPTERS_PER_TASK, TaskConfig, TaskStatus
+from .models import (
+    MAX_CHAPTERS_PER_TASK,
+    TaskConfig,
+    TaskStatus,
+    migrate_legacy_api_route,
+)
 from .settings import (
     AppPaths,
     DEFAULT_PATHS,
@@ -237,7 +242,7 @@ class StoredTask:
             raise TaskStoreValidationError("任务记录缺少下载配置")
         config = TaskConfig(
             download_engine=value.get("engine"),
-            api_route=value.get("api_route"),
+            api_route=migrate_legacy_api_route(value.get("api_route")),
             package_format=value.get("package_format"),
             image_format=value.get("image_format"),
             image_concurrency=value.get("image_concurrency"),

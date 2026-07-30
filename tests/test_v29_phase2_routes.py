@@ -20,7 +20,7 @@ from jm_downloader.search import SearchService
 from jm_downloader.settings import AppPaths, AppSettings
 
 
-FIXED_ROUTE = "www.cdnaspa.club"
+FIXED_ROUTE = "www.cdngwc.cc"
 
 
 class V29ApiRouteTests(unittest.TestCase):

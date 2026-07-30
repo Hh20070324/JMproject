@@ -6,15 +6,15 @@ import time
 import jmcomic
 
 from .jmcomic_client import serialized_client_construction
-from .models import API_ROUTES
+from .models import API_ROUTES, QUERY_ENGINES
 
 
 API_ROUTE_LABELS = {
     "auto": "自动选择",
-    "www.cdnplaystation6.cc": "路线 1",
-    "www.cdnaspa.club": "路线 2",
-    "www.cdnplaystation6.vip": "路线 3",
-    "www.cdnaspa.vip": "路线 4",
+    "www.cdnhjk.net": "路线 1",
+    "www.cdngwc.cc": "路线 2",
+    "www.cdngwc.net": "路线 3",
+    "www.cdngwc.club": "路线 4",
 }
 
 
@@ -45,6 +45,27 @@ class ApiRouteState:
         route = validate_api_route(route)
         with self._lock:
             self._route = route
+
+
+def validate_query_engine(engine: str) -> str:
+    if not isinstance(engine, str) or engine not in QUERY_ENGINES:
+        raise ValueError("查询与同步引擎无效")
+    return engine
+
+
+class QueryEngineState:
+    def __init__(self, engine: str = "async"):
+        self._lock = threading.Lock()
+        self._engine = validate_query_engine(engine)
+
+    def get(self) -> str:
+        with self._lock:
+            return self._engine
+
+    def set(self, engine: str) -> None:
+        engine = validate_query_engine(engine)
+        with self._lock:
+            self._engine = engine
 
 
 def probe_api_route(

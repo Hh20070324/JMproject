@@ -2019,3 +2019,74 @@ QPushButton#chapterConfirmButton:disabled {
     border-color: #d0d8d3;
     color: #8a948e;
 }
+
+QToolButton[settingsChoice="true"] {
+    background: #ffffff;
+    border: 1px solid #aeb9b2;
+    border-radius: 6px;
+    color: #1d2320;
+    min-height: 34px;
+    padding: 0 10px;
+    text-align: left;
+}
+
+QToolButton[settingsChoice="true"]:hover {
+    background: #f2f7f4;
+    border-color: #7f9187;
+}
+
+QToolButton[settingsChoice="true"]:focus,
+QToolButton[settingsChoice="true"]:open,
+QToolButton[settingsChoice="true"]:pressed {
+    background: #eaf4ef;
+    border: 2px solid #2e7d57;
+    padding: 0 9px;
+}
+
+QToolButton[settingsChoice="true"]:disabled {
+    background: #eef1ef;
+    border-color: #d0d8d3;
+    color: #8a948e;
+}
+
+QToolButton[settingsChoice="true"]::menu-indicator {
+    image: none;
+    width: 0;
+}
+
+QMenu[settingsChoice="true"] {
+    background: #ffffff;
+    border: 1px solid #aeb9b2;
+    border-radius: 6px;
+    color: #1d2320;
+    padding: 4px;
+}
+
+QMenu[settingsChoice="true"]::item {
+    min-height: 28px;
+    margin: 2px;
+    padding: 5px 28px 5px 12px;
+    border-radius: 5px;
+}
+
+QMenu[settingsChoice="true"]::item:selected {
+    background: #dfeee6;
+    color: #174a32;
+}
+
+QMenu[settingsChoice="true"]::item:checked {
+    color: #2e7d57;
+    font-weight: 600;
+}
+
+QMenu[settingsChoice="true"]::indicator {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #2e7d57;
+    border-radius: 7px;
+    background: transparent;
+}
+
+QMenu[settingsChoice="true"]::indicator:checked {
+    background: #2e7d57;
+}

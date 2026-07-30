@@ -6,7 +6,6 @@ from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -145,6 +144,10 @@ class SettingsPage(SectionPage):
         )
         self.download_engine_button.setFixedSize(220, 36)
         self.download_engine_menu = QMenu(self.download_engine_button)
+        self._configure_choice(
+            self.download_engine_button,
+            self.download_engine_menu,
+        )
         self._download_engine_group = QActionGroup(self)
         self._download_engine_group.setExclusive(True)
         self._download_engine_actions = {}
@@ -165,6 +168,41 @@ class SettingsPage(SectionPage):
         engine_layout.addStretch(1)
         self._add_row(section, "下载引擎", engine_control)
 
+        query_control = QWidget(section)
+        query_layout = QHBoxLayout(query_control)
+        query_layout.setContentsMargins(0, 0, 0, 0)
+        self.query_engine_button = QToolButton(query_control)
+        self.query_engine_button.setObjectName("queryEngineButton")
+        self.query_engine_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.query_engine_button.setFixedSize(220, 36)
+        self.query_engine_button.setToolTip(
+            "选择搜索元数据与收藏同步所用的查询引擎"
+        )
+        self.query_engine_menu = QMenu(self.query_engine_button)
+        self._configure_choice(
+            self.query_engine_button,
+            self.query_engine_menu,
+        )
+        self._query_engine_group = QActionGroup(self)
+        self._query_engine_group.setExclusive(True)
+        self._query_engine_actions = {}
+        for label, value in (
+            ("异步查询（推荐）", "async"),
+            ("同步线程（兼容）", "sync"),
+        ):
+            action = self.query_engine_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._query_engine_group.addAction(action)
+            self._query_engine_actions[value] = action
+        self._query_engine_group.triggered.connect(self._select_query_engine)
+        self.query_engine_button.setMenu(self.query_engine_menu)
+        query_layout.addWidget(self.query_engine_button)
+        query_layout.addStretch(1)
+        self._add_row(section, "查询与同步引擎", query_control)
+
         route_control = QWidget(section)
         route_layout = QHBoxLayout(route_control)
         route_layout.setContentsMargins(0, 0, 0, 0)
@@ -176,6 +214,7 @@ class SettingsPage(SectionPage):
         )
         self.api_route_button.setFixedSize(220, 36)
         self.api_route_menu = QMenu(self.api_route_button)
+        self._configure_choice(self.api_route_button, self.api_route_menu)
         self._api_route_group = QActionGroup(self)
         self._api_route_group.setExclusive(True)
         self._api_route_actions = {}
@@ -207,6 +246,10 @@ class SettingsPage(SectionPage):
         )
         self.package_format_button.setFixedSize(220, 36)
         self.package_format_menu = QMenu(self.package_format_button)
+        self._configure_choice(
+            self.package_format_button,
+            self.package_format_menu,
+        )
         self._package_format_group = QActionGroup(self)
         self._package_format_group.setExclusive(True)
         self._package_format_actions = {}
@@ -238,6 +281,10 @@ class SettingsPage(SectionPage):
         )
         self.image_format_button.setFixedSize(220, 36)
         self.image_format_menu = QMenu(self.image_format_button)
+        self._configure_choice(
+            self.image_format_button,
+            self.image_format_menu,
+        )
         self._image_format_group = QActionGroup(self)
         self._image_format_group.setExclusive(True)
         self._image_format_actions = {}
@@ -304,6 +351,10 @@ class SettingsPage(SectionPage):
         self.multi_chapter_behavior_menu.setObjectName(
             "multiChapterBehaviorMenu"
         )
+        self._configure_choice(
+            self.multi_chapter_behavior_button,
+            self.multi_chapter_behavior_menu,
+        )
         self._multi_chapter_behavior_group = QActionGroup(self)
         self._multi_chapter_behavior_group.setExclusive(True)
         self._multi_chapter_behavior_actions: dict[str, QAction] = {}
@@ -346,38 +397,69 @@ class SettingsPage(SectionPage):
         remember_layout.addStretch(1)
         self._add_row(section, "登录凭据", remember_control)
 
-        self.log_level_combo = QComboBox(section)
-        self.log_level_combo.setObjectName("settingsComboBox")
+        log_level_control = QWidget(section)
+        log_level_layout = QHBoxLayout(log_level_control)
+        log_level_layout.setContentsMargins(0, 0, 0, 0)
+        self.log_level_button = QToolButton(log_level_control)
+        self.log_level_button.setObjectName("logLevelButton")
+        self.log_level_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.log_level_button.setFixedSize(220, 36)
+        self.log_level_menu = QMenu(self.log_level_button)
+        self._configure_choice(self.log_level_button, self.log_level_menu)
+        self._log_level_group = QActionGroup(self)
+        self._log_level_group.setExclusive(True)
+        self._log_level_actions = {}
         for label, value in (
             ("调试", "DEBUG"),
             ("信息", "INFO"),
             ("警告", "WARNING"),
             ("错误", "ERROR"),
         ):
-            self.log_level_combo.addItem(label, value)
-        log_level_control = self._combo_control(
-            section,
-            self.log_level_combo,
-            "logLevel",
-            "展开日志级别",
-        )
+            action = self.log_level_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._log_level_group.addAction(action)
+            self._log_level_actions[value] = action
+        self._log_level_group.triggered.connect(self._select_log_level)
+        self.log_level_button.setMenu(self.log_level_menu)
+        log_level_layout.addWidget(self.log_level_button)
+        log_level_layout.addStretch(1)
         self._add_row(section, "日志级别", log_level_control)
 
-        self.startup_page_combo = QComboBox(section)
-        self.startup_page_combo.setObjectName("settingsComboBox")
+        startup_page_control = QWidget(section)
+        startup_page_layout = QHBoxLayout(startup_page_control)
+        startup_page_layout.setContentsMargins(0, 0, 0, 0)
+        self.startup_page_button = QToolButton(startup_page_control)
+        self.startup_page_button.setObjectName("startupPageButton")
+        self.startup_page_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.startup_page_button.setFixedSize(220, 36)
+        self.startup_page_menu = QMenu(self.startup_page_button)
+        self._configure_choice(
+            self.startup_page_button,
+            self.startup_page_menu,
+        )
+        self._startup_page_group = QActionGroup(self)
+        self._startup_page_group.setExclusive(True)
+        self._startup_page_actions = {}
         for label, value in (
             ("搜索与下载", "downloads"),
             ("我的收藏", "favorites"),
             ("本地漫画库", "library"),
             ("设置", "settings"),
         ):
-            self.startup_page_combo.addItem(label, value)
-        startup_page_control = self._combo_control(
-            section,
-            self.startup_page_combo,
-            "startupPage",
-            "展开启动页面",
-        )
+            action = self.startup_page_menu.addAction(label)
+            action.setData(value)
+            action.setCheckable(True)
+            self._startup_page_group.addAction(action)
+            self._startup_page_actions[value] = action
+        self._startup_page_group.triggered.connect(self._select_startup_page)
+        self.startup_page_button.setMenu(self.startup_page_menu)
+        startup_page_layout.addWidget(self.startup_page_button)
+        startup_page_layout.addStretch(1)
         self._add_row(section, "启动页面", startup_page_control)
 
         size_control = QWidget(section)
@@ -517,6 +599,10 @@ class SettingsPage(SectionPage):
         self.reader_layout_button.setToolTip("选择在线阅读的默认视图")
         self.reader_layout_menu = QMenu(self.reader_layout_button)
         self.reader_layout_menu.setObjectName("settingsReaderLayoutMenu")
+        self._configure_choice(
+            self.reader_layout_button,
+            self.reader_layout_menu,
+        )
         self._reader_layout_group = QActionGroup(self)
         self._reader_layout_group.setExclusive(True)
         self._reader_layout_actions = {}
@@ -551,6 +637,10 @@ class SettingsPage(SectionPage):
         self.reader_zoom_button.setToolTip("选择在线阅读的默认缩放比例")
         self.reader_zoom_menu = QMenu(self.reader_zoom_button)
         self.reader_zoom_menu.setObjectName("settingsReaderZoomMenu")
+        self._configure_choice(
+            self.reader_zoom_button,
+            self.reader_zoom_menu,
+        )
         self._reader_zoom_group = QActionGroup(self)
         self._reader_zoom_group.setExclusive(True)
         self._reader_zoom_actions = {}
@@ -653,36 +743,12 @@ class SettingsPage(SectionPage):
         layout.addWidget(button)
         return control
 
-    def _combo_control(
-        self,
-        parent: QWidget,
-        combo: QComboBox,
-        name: str,
-        tooltip: str,
-    ) -> QWidget:
-        control = QWidget(parent)
-        control.setObjectName("settingsComboControl")
-        layout = QHBoxLayout(control)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        combo.setFixedWidth(150)
-        layout.addWidget(combo)
-
-        popup = QToolButton(control)
-        popup.setObjectName("settingsComboButton")
-        popup.setProperty("action", "expand")
-        popup.setToolTip(tooltip)
-        popup.setIcon(svg_icon("arrow-down"))
-        popup.setFixedSize(28, 28)
-        popup.clicked.connect(
-            lambda checked=False, target=combo: target.showPopup()
-        )
-        setattr(self, f"{name}_popup_button", popup)
-
-        layout.addWidget(popup)
-        layout.addStretch(1)
-        return control
+    @staticmethod
+    def _configure_choice(button: QToolButton, menu: QMenu) -> None:
+        button.setProperty("settingsChoice", True)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        button.setAccessibleName(button.toolTip() or "设置选项")
+        menu.setProperty("settingsChoice", True)
 
     def _stepper_control(
         self,
@@ -778,13 +844,14 @@ class SettingsPage(SectionPage):
         self.image_concurrency_spin.valueChanged.connect(self._mark_dirty)
         self.window_width_spin.valueChanged.connect(self._mark_dirty)
         self.window_height_spin.valueChanged.connect(self._mark_dirty)
-        self.log_level_combo.currentIndexChanged.connect(self._mark_dirty)
-        self.startup_page_combo.currentIndexChanged.connect(self._mark_dirty)
         self._multi_chapter_behavior_group.triggered.connect(self._mark_dirty)
         self._download_engine_group.triggered.connect(self._mark_dirty)
+        self._query_engine_group.triggered.connect(self._mark_dirty)
         self._api_route_group.triggered.connect(self._mark_dirty)
         self._package_format_group.triggered.connect(self._mark_dirty)
         self._image_format_group.triggered.connect(self._mark_dirty)
+        self._log_level_group.triggered.connect(self._mark_dirty)
+        self._startup_page_group.triggered.connect(self._mark_dirty)
         self._reader_layout_group.triggered.connect(self._mark_dirty)
         self._reader_zoom_group.triggered.connect(self._mark_dirty)
         self._theme_group.buttonClicked.connect(self._mark_dirty)
@@ -859,13 +926,14 @@ class SettingsPage(SectionPage):
                 self._selected_multi_chapter_behavior()
             ),
             download_engine=self._selected_download_engine(),
+            query_engine=self._selected_query_engine(),
             api_route=self._selected_api_route(),
             download_package_format=self._selected_package_format(),
             download_image_format=self._selected_image_format(),
-            log_level=str(self.log_level_combo.currentData()),
+            log_level=self._selected_log_level(),
             window_width=self.window_width_spin.value(),
             window_height=self.window_height_spin.value(),
-            startup_page=str(self.startup_page_combo.currentData()),
+            startup_page=self._selected_startup_page(),
             theme=checked_theme,
             reader_layout=self._selected_reader_layout(),
             reader_zoom_percent=self._selected_reader_zoom(),
@@ -896,13 +964,14 @@ class SettingsPage(SectionPage):
                 settings.multi_chapter_download_behavior
             )
             self._set_download_engine(settings.download_engine)
+            self._set_query_engine(settings.query_engine)
             self._set_api_route(settings.api_route)
             self._set_package_format(settings.download_package_format)
             self._set_image_format(settings.download_image_format)
             self.window_width_spin.setValue(settings.window_width)
             self.window_height_spin.setValue(settings.window_height)
-            self._select_combo(self.log_level_combo, settings.log_level)
-            self._select_combo(self.startup_page_combo, settings.startup_page)
+            self._set_log_level(settings.log_level)
+            self._set_startup_page(settings.startup_page)
             self.remember_credentials_checkbox.setChecked(
                 settings.remember_credentials
             )
@@ -911,12 +980,6 @@ class SettingsPage(SectionPage):
             self._sync_theme(settings.theme)
         finally:
             self._loading = False
-
-    @staticmethod
-    def _select_combo(combo: QComboBox, value: str) -> None:
-        index = combo.findData(str(value))
-        if index >= 0:
-            combo.setCurrentIndex(index)
 
     def _sync_theme(self, theme_value: str) -> None:
         try:
@@ -980,6 +1043,23 @@ class SettingsPage(SectionPage):
 
     def _selected_download_engine(self) -> str:
         checked = self._download_engine_group.checkedAction()
+        if checked is None:
+            return "async"
+        return str(checked.data())
+
+    def _select_query_engine(self, action: QAction) -> None:
+        self._set_query_engine(str(action.data()))
+
+    def _set_query_engine(self, engine: str) -> None:
+        action = self._query_engine_actions.get(
+            engine,
+            self._query_engine_actions["async"],
+        )
+        action.setChecked(True)
+        self.query_engine_button.setText(f"{action.text()} ▾")
+
+    def _selected_query_engine(self) -> str:
+        checked = self._query_engine_group.checkedAction()
         if checked is None:
             return "async"
         return str(checked.data())
@@ -1048,6 +1128,36 @@ class SettingsPage(SectionPage):
     def _selected_image_format(self) -> str:
         checked = self._image_format_group.checkedAction()
         return str(checked.data()) if checked is not None else "jpg"
+
+    def _select_log_level(self, action: QAction) -> None:
+        self._set_log_level(str(action.data()))
+
+    def _set_log_level(self, value: str) -> None:
+        action = self._log_level_actions.get(
+            value,
+            self._log_level_actions["INFO"],
+        )
+        action.setChecked(True)
+        self.log_level_button.setText(f"{action.text()} ▾")
+
+    def _selected_log_level(self) -> str:
+        checked = self._log_level_group.checkedAction()
+        return str(checked.data()) if checked is not None else "INFO"
+
+    def _select_startup_page(self, action: QAction) -> None:
+        self._set_startup_page(str(action.data()))
+
+    def _set_startup_page(self, value: str) -> None:
+        action = self._startup_page_actions.get(
+            value,
+            self._startup_page_actions["downloads"],
+        )
+        action.setChecked(True)
+        self.startup_page_button.setText(f"{action.text()} ▾")
+
+    def _selected_startup_page(self) -> str:
+        checked = self._startup_page_group.checkedAction()
+        return str(checked.data()) if checked is not None else "downloads"
 
     def _select_reader_layout(self, action: QAction) -> None:
         self._set_reader_layout(str(action.data()))

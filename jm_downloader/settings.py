@@ -6,9 +6,11 @@ import sys
 from .models import (
     API_ROUTES,
     DOWNLOAD_ENGINES,
+    QUERY_ENGINES,
     IMAGE_FORMATS,
     PACKAGE_FORMATS,
     TaskConfig,
+    migrate_legacy_api_route,
 )
 
 
@@ -90,6 +92,7 @@ class AppSettings:
     image_concurrency: int = 16
     multi_chapter_download_behavior: str = "parallel"
     download_engine: str = "async"
+    query_engine: str = "async"
     api_route: str = "auto"
     download_package_format: str = "pdf"
     download_image_format: str = "jpg"
@@ -136,6 +139,11 @@ class AppSettings:
             raise SettingsValidationError("多章漫画下载行为无效")
         if self.download_engine not in DOWNLOAD_ENGINES:
             raise SettingsValidationError("下载引擎无效")
+        if (
+            not isinstance(self.query_engine, str)
+            or self.query_engine not in QUERY_ENGINES
+        ):
+            raise SettingsValidationError("查询与同步引擎无效")
         if self.api_route not in API_ROUTES:
             raise SettingsValidationError("API 路线无效")
         if self.download_package_format not in PACKAGE_FORMATS:
@@ -220,6 +228,7 @@ class AppSettings:
                 "package_format": self.download_package_format,
                 "image_format": self.download_image_format,
             },
+            "query": {"engine": self.query_engine},
             "account": {"remember_credentials": self.remember_credentials},
             "logging": {"level": self.log_level},
             "window": {
@@ -255,6 +264,7 @@ class AppSettings:
 
         paths = cls._group(data, "paths")
         download = cls._group(data, "download")
+        query = cls._group(data, "query")
         logging = cls._group(data, "logging")
         window = cls._group(data, "window")
         appearance = cls._group(data, "appearance")
@@ -279,7 +289,10 @@ class AppSettings:
             download_engine=download.get(
                 "engine", defaults.download_engine
             ),
-            api_route=download.get("api_route", defaults.api_route),
+            query_engine=query.get("engine", defaults.query_engine),
+            api_route=migrate_legacy_api_route(
+                download.get("api_route", defaults.api_route)
+            ),
             download_package_format=download.get(
                 "package_format", defaults.download_package_format
             ),

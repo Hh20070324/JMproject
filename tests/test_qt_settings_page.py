@@ -10,6 +10,7 @@ if os.name != "nt":
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QLabel,
     QMenu,
     QMessageBox,
@@ -91,12 +92,11 @@ class SettingsPageTests(unittest.TestCase):
         behavior_actions = self.page.multi_chapter_behavior_menu.actions()
         self.assertTrue(behavior_actions[1].isChecked())
         self.assertIn("同时 1 章", self.page.multi_chapter_behavior_button.text())
-        self.assertEqual(self.page.log_level_combo.currentData(), "WARNING")
-        self.assertEqual(self.page.startup_page_combo.currentData(), "library")
-        favorites_index = self.page.startup_page_combo.findData("favorites")
-        self.assertGreaterEqual(favorites_index, 0)
+        self.assertEqual(self.page._selected_log_level(), "WARNING")
+        self.assertEqual(self.page._selected_startup_page(), "library")
+        favorites = self.page._startup_page_actions["favorites"]
         self.assertEqual(
-            self.page.startup_page_combo.itemText(favorites_index),
+            favorites.text(),
             "我的收藏",
         )
         self.assertEqual(self.page.window_width_spin.value(), 1280)
@@ -105,9 +105,8 @@ class SettingsPageTests(unittest.TestCase):
         self.assertFalse(
             self.page.settings_scroll.horizontalScrollBar().isVisible()
         )
-        downloads_index = self.page.startup_page_combo.findData("downloads")
         self.assertEqual(
-            self.page.startup_page_combo.itemText(downloads_index),
+            self.page._startup_page_actions["downloads"].text(),
             "搜索与下载",
         )
         labels = {
@@ -180,21 +179,19 @@ class SettingsPageTests(unittest.TestCase):
         self.assertTrue(decrease.isEnabled())
         self.assertFalse(increase.isEnabled())
 
-    def test_choice_combos_have_separate_safe_popup_targets(self):
-        controls = (
-            (self.page.log_level_combo, self.page.logLevel_popup_button),
-            (self.page.startup_page_combo, self.page.startupPage_popup_button),
-        )
-
-        for combo, popup_button in controls:
-            self.assertEqual(popup_button.size().toTuple(), (28, 28))
-            self.assertFalse(
-                popup_button.geometry().intersects(combo.geometry())
+    def test_application_choices_use_one_click_instant_popup_menus(self):
+        self.assertEqual(self.page.findChildren(QComboBox), [])
+        for button, menu in (
+            (self.page.log_level_button, self.page.log_level_menu),
+            (self.page.startup_page_button, self.page.startup_page_menu),
+        ):
+            self.assertIs(button.menu(), menu)
+            self.assertEqual(
+                button.popupMode(),
+                QToolButton.ToolButtonPopupMode.InstantPopup,
             )
-            self.assertFalse(popup_button.icon().isNull())
-            with patch.object(combo, "showPopup") as show_popup:
-                popup_button.click()
-                show_popup.assert_called_once_with()
+            self.assertTrue(button.property("settingsChoice"))
+            self.assertTrue(menu.property("settingsChoice"))
 
     def test_theme_buttons_show_distinct_icons_and_text(self):
         light_button = self.page.theme_button(Theme.LIGHT)
@@ -260,12 +257,8 @@ class SettingsPageTests(unittest.TestCase):
         self.page.max_concurrent_tasks_spin.setValue(4)
         self.page.image_concurrency_spin.setValue(32)
         self.page.multi_chapter_behavior_menu.actions()[0].trigger()
-        self.page.log_level_combo.setCurrentIndex(
-            self.page.log_level_combo.findData("DEBUG")
-        )
-        self.page.startup_page_combo.setCurrentIndex(
-            self.page.startup_page_combo.findData("settings")
-        )
+        self.page._log_level_actions["DEBUG"].trigger()
+        self.page._startup_page_actions["settings"].trigger()
         self.page.window_width_spin.setValue(1440)
         self.page.window_height_spin.setValue(900)
         self.page.theme_button(Theme.DARK).click()

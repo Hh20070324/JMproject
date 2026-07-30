@@ -20,7 +20,7 @@ from ..favorites import FavoritesService
 from ..jmcomic_logging import install_safe_jmcomic_logging
 from ..library import LibraryService
 from ..local_reader import LocalReaderService
-from ..option_config import ApiRouteState
+from ..option_config import ApiRouteState, QueryEngineState
 from ..protected_store import ProtectedStore
 from ..reader import (
     ReaderDiskCache,
@@ -240,6 +240,7 @@ def run_qt_app(
         download_controller = DownloadController(manager, library)
         library_controller = LibraryController(manager, library)
         api_route_state = ApiRouteState(settings.api_route)
+        query_engine_state = QueryEngineState(settings.query_engine)
         search_service = SearchService(
             paths=paths,
             api_route_provider=api_route_state.get,
@@ -320,6 +321,9 @@ def run_qt_app(
         )
         settings_controller.settings_changed.connect(
             lambda current: api_route_state.set(current.api_route)
+        )
+        settings_controller.settings_changed.connect(
+            lambda current: query_engine_state.set(current.query_engine)
         )
         settings_controller.settings_changed.connect(
             lambda current: account_controller.set_remember_credentials(

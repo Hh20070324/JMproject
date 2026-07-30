@@ -139,6 +139,8 @@ class AppSettingsTests(unittest.TestCase):
             ),
             replace(AppSettings(), log_level="TRACE"),
             replace(AppSettings(), log_level=[]),
+            replace(AppSettings(), query_engine="future"),
+            replace(AppSettings(), query_engine=[]),
             replace(AppSettings(), window_width=759),
             replace(AppSettings(), window_height=519),
             replace(AppSettings(), startup_page="missing"),

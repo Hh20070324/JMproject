@@ -5,9 +5,18 @@ from pathlib import Path
 
 MAX_CHAPTERS_PER_TASK = 10
 DOWNLOAD_ENGINES = frozenset({"async", "sync"})
+QUERY_ENGINES = frozenset({"async", "sync"})
 API_ROUTES = frozenset(
     {
         "auto",
+        "www.cdnhjk.net",
+        "www.cdngwc.cc",
+        "www.cdngwc.net",
+        "www.cdngwc.club",
+    }
+)
+LEGACY_API_ROUTES = frozenset(
+    {
         "www.cdnplaystation6.cc",
         "www.cdnaspa.club",
         "www.cdnplaystation6.vip",
@@ -136,6 +145,12 @@ class TaskConfig:
             raise ValueError("图片并发数必须在 1 到 64 之间")
         if self.multi_chapter_download_behavior not in {"parallel", "queued"}:
             raise ValueError("多章漫画下载行为无效")
+
+
+def migrate_legacy_api_route(route):
+    if isinstance(route, str) and route in LEGACY_API_ROUTES:
+        return "auto"
+    return route
 
 
 @dataclass(frozen=True, slots=True)

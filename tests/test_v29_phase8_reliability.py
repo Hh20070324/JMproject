@@ -21,7 +21,7 @@ from jm_downloader.task_store import StoredTask, TaskStore
 from jm_downloader.tasks import TaskManager
 
 
-FIXED_ROUTE = "www.cdnplaystation6.cc"
+FIXED_ROUTE = "www.cdnhjk.net"
 
 
 class ReliabilityProtector:
